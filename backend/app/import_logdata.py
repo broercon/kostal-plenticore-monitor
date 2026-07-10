@@ -226,7 +226,13 @@ def parse_logdata(
 
 
 async def _download(host: str, password: str, port: int, begin: datetime, end: datetime) -> str:
-    async with aiohttp.ClientSession() as session:
+    # aiohttp.ClientSession() nutzt ohne explizite Angabe ein Standard-Timeout
+    # von nur 5 Minuten fuer die komplette Anfrage. Bei einem sehr langen
+    # Zeitraum (z.B. AUTO_IMPORT_DAYS=unbegrenzt) kann der Wechselrichter
+    # (ein leistungsschwaches eingebettetes Geraet) laenger brauchen, um die
+    # Logdatei zusammenzustellen - daher hier grosszuegiger.
+    timeout = aiohttp.ClientTimeout(total=1800)  # 30 Minuten
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         client = ApiClient(session, host, port=port)
         await client.login(password)
         buf = io.StringIO()

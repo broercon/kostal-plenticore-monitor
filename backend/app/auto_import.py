@@ -56,8 +56,25 @@ async def _import_one_device(cfg: InverterConfig) -> None:
     )
     begin = end - timedelta(days=lookback_days)
 
+    logger.info(
+        "Lade Logdaten fuer %s (%s bis %s) - bei sehr langer Historie (z.B. "
+        "AUTO_IMPORT_DAYS=unbegrenzt) kann das je nach Wechselrichter mehrere "
+        "Minuten dauern ...",
+        cfg.name,
+        begin.date(),
+        end.date(),
+    )
     try:
         raw = await _download(cfg.host, cfg.password, cfg.port, begin, end)
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.warning(
+            "Automatischer Logdaten-Abgleich für %s (%s) abgebrochen: Zeitüberschreitung "
+            "beim Herunterladen (auch nach 30 Minuten). Bei sehr langer Historie ggf. "
+            "AUTO_IMPORT_DAYS auf einen kleineren Wert statt 'unbegrenzt' setzen.",
+            cfg.name,
+            cfg.host,
+        )
+        return
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Automatischer Logdaten-Abgleich für %s (%s) fehlgeschlagen: %s",

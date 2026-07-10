@@ -189,3 +189,36 @@ def day_profile(
         points = [buckets[bk] for bk in sorted(buckets.keys())]
         days.append({"date": date_str, "points": points})
     return days
+
+
+def daily_kwh_totals(
+    rows: list[Reading], field: str, timezone_name: str
+) -> list[dict]:
+    """Gruppiert Messwerte nach lokalem Kalendertag und integriert je Tag die
+    Energiemenge (kWh) fuer das gegebene Leistungsfeld (Trapezregel, siehe
+    integrate_kwh) - fuer Saeulendiagramme wie "Hausverbrauch pro Tag".
+
+    Anders als bei den heutigen Tages-Statistikkarten (get_today_summary)
+    wird hier NICHT auf vom Wechselrichter selbst mitgefuehrte Tageswerte
+    zurueckgegriffen, sondern immer direkt aus den gespeicherten Messwerten
+    integriert - das funktioniert daher auch fuer vergangene Tage und fuer
+    per Logdaten-Import nachtraeglich eingespielte Altdaten (home_power_w
+    ist dort im Gegensatz zu Netz-/Einspeisewerten verfuegbar).
+
+    Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float|None},
+    aufsteigend nach Datum sortiert.
+    """
+    tz = ZoneInfo(timezone_name)
+    by_date: dict[str, list[Reading]] = {}
+    for row in rows:
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        local = ts.astimezone(tz)
+        date_str = local.strftime("%Y-%m-%d")
+        by_date.setdefault(date_str, []).append(row)
+
+    return [
+        {"date": date_str, "kwh": integrate_kwh(day_rows, field)}
+        for date_str, day_rows in sorted(by_date.items())
+    ]

@@ -64,3 +64,13 @@ class DayProfileDay(BaseModel):
 class DayProfileOut(BaseModel):
     bucket_minutes: int
     days: list[DayProfileDay]
+
+
+class DailyTotalPoint(BaseModel):
+    date: str
+    kwh: float | None = None
+
+
+class DailyTotalsOut(BaseModel):
+    metric: str
+    days: list[DailyTotalPoint]
