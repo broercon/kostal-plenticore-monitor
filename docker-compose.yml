@@ -11,7 +11,7 @@ services:
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
       - TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
-      - AUTO_IMPORT_DAYS=${AUTO_IMPORT_DAYS:-7}
+      - AUTO_IMPORT_DAYS=${AUTO_IMPORT_DAYS:-35}
       - GRID_POWER_INVERTED=${GRID_POWER_INVERTED:-false}
     volumes:
       - ./data:/app/data
