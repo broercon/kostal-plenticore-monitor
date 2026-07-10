@@ -87,14 +87,16 @@ automatisch erneut.
 
 Solange der Container läuft, fragt der Hintergrund-Task alle
 `POLL_INTERVAL_SECONDS` Sekunden jeden konfigurierten Wechselrichter ab und
-schreibt einen Datensatz in `data/kostal.db`. Es gibt **keine rückwirkende
-Migration** alter Messwerte: Der Plenticore selbst stellt über seine
-REST-API nur Momentanwerte plus kumulierte Tages-/Monats-/Jahres-/
-Gesamtwerte bereit, aber keine minutengenaue Historie zum Nachladen. Die
-Zeitreihen-Diagramme bauen sich also erst mit der Zeit auf, seit dem
-Zeitpunkt, ab dem der Container läuft – der Server muss dafür dauerhaft
-aktiv sein (z.B. auf einem Raspberry Pi, der durchläuft), nicht nur beim
-Betrachten des Dashboards.
+schreibt einen Datensatz in `data/kostal.db`. Der Server muss dafür
+dauerhaft aktiv sein (z.B. auf einem Raspberry Pi, der durchläuft), nicht
+nur beim Betrachten des Dashboards – die normale REST-API des Plenticore
+liefert nur Momentanwerte plus kumulierte Tages-/Monats-/Jahres-/
+Gesamtwerte, keine minutengenaue Historie.
+
+Es gibt aber einen zweiten Weg für ältere Daten: Der Wechselrichter führt
+intern einen Datenlogger, dessen Aufzeichnungen sich über
+`backend/app/import_logdata.py` nachträglich importieren lassen – siehe
+Abschnitt "Alte Daten nachträglich importieren" unten.
 
 Die drei "heute"-Kacheln (PV-Ertrag, Verbrauch, Einspeisung) nutzen primär
 die vom Wechselrichter selbst mitgeführten Tageswerte. Manche Geräte/Logins
@@ -106,6 +108,42 @@ Leistungswerten hoch (Integration) – das braucht aber ebenfalls etwas
 Vorlauf seit Mitternacht, bis sinnvolle Werte erscheinen; bei einem frisch
 gestarteten Container mitten am Tag zeigt die selbst berechnete Kachel dann
 zunächst nur den Teil des Tages, der bereits erfasst wurde.
+
+## Alte Daten nachträglich importieren
+
+Der Plenticore führt intern einen Datenlogger (die gleiche Quelle, aus der
+auch die "Logdaten"-Ansicht in der Web-Oberfläche des Wechselrichters
+gespeist wird). Damit lassen sich Messwerte von vor der Inbetriebnahme
+dieser App nachträglich importieren – mit Einschränkungen:
+
+- Das genaue Spaltenformat ist von Kostal nicht offiziell dokumentiert und
+  basiert hier auf Berichten aus der Community, nicht auf offizieller
+  Doku. Es kann je nach Gerät/Firmware abweichen.
+- Einspeiseleistung lässt sich aus dem Log-Format nicht zuverlässig
+  auftrennen und bleibt bei importierten Altdaten leer. Hausverbrauch,
+  PV-Leistung, Netzbezug und Batterie-Ladezustand werden aber befüllt.
+- Wie weit der interne Logger zurückreicht, hängt vom Gerät ab.
+
+Nutzung (Container muss laufen):
+
+```bash
+# 1. Erst nur eine Vorschau ansehen (nichts wird gespeichert):
+docker compose exec kostal-monitor python -m app.import_logdata \
+  --host 192.168.1.50 --password DEIN_PASSWORT \
+  --device-id wr1 --begin 2026-06-01 --end 2026-07-10
+
+# 2. Wenn die Vorschau plausibel aussieht (z.B. Größenordnung passt zum
+#    Live-Dashboard), wirklich importieren:
+docker compose exec kostal-monitor python -m app.import_logdata \
+  --host 192.168.1.50 --password DEIN_PASSWORT \
+  --device-id wr1 --begin 2026-06-01 --end 2026-07-10 --commit
+```
+
+`--device-id` muss zu einer ID aus `config/inverters.json` passen. Ein
+erneuter Lauf überspringt bereits importierte Zeitstempel automatisch
+(kein doppelter Import). Falls die PV-Spalten falsch erkannt werden
+(Vorschau prüfen!), lassen sie sich mit `--pv-columns "DC0/P,DC1/P"`
+manuell vorgeben.
 
 ## Diagramm: mehrere Kurven ein-/ausblenden
 
