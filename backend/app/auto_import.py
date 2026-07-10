@@ -29,13 +29,13 @@ from .import_logdata import _download, import_rows, parse_logdata
 logger = logging.getLogger(__name__)
 
 
-def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, int]:
+def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, int, int]:
     """Laeuft in einem Worker-Thread (siehe unten), da CSV-Parsing und die
     DB-Schreibvorgaenge synchron sind und sonst den Event-Loop blockieren
     wuerden."""
     rows, _meta = parse_logdata(raw)
     if not rows:
-        return 0, 0
+        return 0, 0, 0
     return import_rows(device_id, device_name, rows)
 
 
@@ -56,7 +56,7 @@ async def _import_one_device(cfg: InverterConfig) -> None:
         return
 
     try:
-        inserted, skipped = await asyncio.to_thread(
+        inserted, updated, skipped = await asyncio.to_thread(
             _parse_and_import, raw, cfg.id, cfg.name
         )
     except Exception:  # noqa: BLE001
@@ -66,10 +66,11 @@ async def _import_one_device(cfg: InverterConfig) -> None:
         return
 
     logger.info(
-        "Automatischer Logdaten-Abgleich für %s: %d neue Zeilen, %d bereits vorhanden "
-        "(Zeitraum %s bis %s).",
+        "Automatischer Logdaten-Abgleich für %s: %d neue Zeilen, %d nachtraeglich "
+        "befuellt, %d unveraendert (Zeitraum %s bis %s).",
         cfg.name,
         inserted,
+        updated,
         skipped,
         begin.date(),
         end.date(),

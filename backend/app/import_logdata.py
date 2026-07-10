@@ -16,16 +16,23 @@ Lauf ueberspringt bereits vorhandene Zeitstempel (kein doppelter Import).
 
 WICHTIGER HINWEIS: Das genaue Spaltenformat des Kostal-Logdaten-Exports ist
 nicht offiziell dokumentiert und kann sich je nach Geraet/Firmware
-unterscheiden (diese Zuordnung basiert auf Community-Berichten, nicht auf
-Kostal-Dokumentation). Bitte IMMER zuerst ohne --commit laufen lassen und
-die Vorschau mit den Live-Werten im Dashboard plausibilisieren, bevor du
-committest. Falls die PV-Spalten falsch erkannt werden, kannst du sie mit
---pv-columns "DC0/P,DC1/P" manuell vorgeben.
+unterscheiden. Die Erkennung unten wurde anhand eines echten Exports
+(Plenticore Plus mit Batterie, Format "Zeit\tDC1 U\tDC1 I\tDC1 P\t...")
+empirisch gegen die Live-Werte im Dashboard abgeglichen. Bitte trotzdem
+IMMER zuerst ohne --commit laufen lassen und die Vorschau plausibilisieren,
+bevor du committest. Falls die PV-Spalten falsch erkannt werden, kannst du
+sie mit --pv-columns "DC1 P,DC2 P" manuell vorgeben.
 
-Einspeiseleistung (feed_in_power_w) laesst sich aus dem Log-Format nicht
-zuverlaessig auftrennen und bleibt bei importierten Altdaten daher leer -
-nur Hausverbrauch, PV-Leistung, Netzbezug und Batterie-Ladezustand werden
-befuellt.
+Die Datei enthaelt vor der eigentlichen Kopfzeile einen Metadaten-Block
+(Titel, Wechselrichter-Nr., Name, aktuelle Zeit, Einheiten-Legende) -
+dieser wird automatisch uebersprungen.
+
+Einspeiseleistung UND Netzbezug lassen sich aus diesem Log-Format nicht
+rekonstruieren - die Netzmessung kommt bei den meisten Installationen von
+einem separaten Smart Energy Meter (KSEM), das nicht in den internen
+Logger des Wechselrichters schreibt. Bei importierten Altdaten bleiben
+diese beiden Felder daher leer; nur Hausverbrauch, PV-Leistung und
+Batterie (Leistung + Ladezustand) werden befuellt.
 """
 from __future__ import annotations
 
@@ -42,13 +49,18 @@ from pykoplenti import ApiClient
 logger = logging.getLogger("import_logdata")
 
 # Spaltennamen-Kandidaten (normalisiert: klein geschrieben, ohne "/", "_",
-# Leerzeichen) pro Zielfeld, basierend auf Community-Berichten zum Kostal
-# Plenticore Logdaten-Export. Reihenfolge = Prioritaet.
+# Leerzeichen) pro Zielfeld. "sh1p"/"sc1p"/"hc2p" (SH1 P/SC1 P/HC2 P) und
+# "soch" (SOC H) stammen aus einem echten Export und wurden gegen die
+# Live-Werte im Dashboard verifiziert; die uebrigen sind Fallback-Kandidaten
+# fuer eventuell abweichende Formate/Firmwarestaende.
 TIMESTAMP_CANDIDATES = ["time", "timestamp", "zeit", "zeitstempel"]
-HOME_POWER_CANDIDATES = ["achome0p", "homep", "achomep"]
+HOME_POWER_CANDIDATES = ["sh1p", "sc1p", "hc2p", "achome0p", "homep", "achomep"]
 HOME_POWER_SUM_PARTS = ["achomebatp", "achomepvp", "achomegridp"]
 GRID_DRAW_CANDIDATES = ["achomegridp", "gridp"]
-BATTERY_SOC_CANDIDATES = ["batsoc", "batterysoc", "soc"]
+BATTERY_SOC_CANDIDATES = ["soch", "batsoc", "batterysoc", "soc"]
+# Spalte, die bei vorhandener Batterie deren Leistung enthaelt (beim
+# Plenticore i.d.R. der 3. DC-Eingang "DC3 P" - siehe Docstring oben).
+BATTERY_POWER_CANDIDATES = ["dc3p", "batp", "batteryp"]
 
 
 def _norm(col: str) -> str:
@@ -83,10 +95,27 @@ def parse_logdata(
     Spalten-Zuordnung, fuer die Vorschau.
     """
     reader = csv.reader(io.StringIO(raw), delimiter="\t")
-    try:
-        header = next(reader)
-    except StopIteration:
-        return [], {"error": "Datei ist leer", "columns_found": []}
+
+    # Vor der echten Kopfzeile steht bei manchen Geraeten ein Metadaten-Block
+    # (Titel, Wechselrichter-Nr., Name, aktuelle Zeit, Einheiten-Legende...).
+    # Wir suchen daher gezielt nach der Zeile, deren erste Spalte wie ein
+    # Zeitstempel-Feld heisst, statt blind die erste Zeile zu nehmen.
+    header: list[str] | None = None
+    for candidate_row in reader:
+        if not candidate_row:
+            continue
+        if _norm(candidate_row[0]) in TIMESTAMP_CANDIDATES:
+            header = candidate_row
+            break
+
+    if header is None:
+        return [], {
+            "error": (
+                "Konnte keine Kopfzeile finden (keine Zeile beginnt mit einem "
+                f"der Zeitstempel-Kandidaten {TIMESTAMP_CANDIDATES})."
+            ),
+            "columns_found": [],
+        }
 
     headers_norm = [_norm(h) for h in header]
 
@@ -101,6 +130,13 @@ def parse_logdata(
     grid_draw_idx = _find_column(headers_norm, GRID_DRAW_CANDIDATES)
     soc_idx = _find_column(headers_norm, BATTERY_SOC_CANDIDATES)
 
+    # Batterie nur dann annehmen, wenn ein Ladezustand (SoC) gefunden wurde -
+    # sonst koennte ein "DC3 P"-aehnliches Feld auch ein drittes PV-String sein.
+    has_battery = soc_idx is not None
+    battery_power_idx = (
+        _find_column(headers_norm, BATTERY_POWER_CANDIDATES) if has_battery else None
+    )
+
     if pv_columns:
         pv_idxs = [i for i, h in enumerate(header) if h.strip() in pv_columns]
     else:
@@ -109,6 +145,8 @@ def parse_logdata(
             for i, hn in enumerate(headers_norm)
             if hn.startswith("dc") and hn.endswith("p")
         ]
+        if battery_power_idx is not None and battery_power_idx in pv_idxs:
+            pv_idxs.remove(battery_power_idx)
 
     rows: list[dict] = []
     for line in reader:
@@ -142,6 +180,11 @@ def parse_logdata(
             if soc_idx is not None and soc_idx < len(line)
             else None
         )
+        battery_power = (
+            _to_float(line[battery_power_idx])
+            if battery_power_idx is not None and battery_power_idx < len(line)
+            else None
+        )
 
         pv_parts = [_to_float(line[i]) for i in pv_idxs if i < len(line)]
         pv_parts = [p for p in pv_parts if p is not None]
@@ -155,7 +198,7 @@ def parse_logdata(
                 "feed_in_power_w": None,
                 "pv_power_w": pv_power,
                 "battery_soc_percent": soc,
-                "battery_power_w": None,
+                "battery_power_w": battery_power,
             }
         )
 
@@ -173,6 +216,9 @@ def parse_logdata(
         ),
         "grid_draw_column": header[grid_draw_idx] if grid_draw_idx is not None else None,
         "battery_soc_column": header[soc_idx] if soc_idx is not None else None,
+        "battery_power_column": (
+            header[battery_power_idx] if battery_power_idx is not None else None
+        ),
         "pv_columns": [header[i] for i in pv_idxs],
         "row_count": len(rows),
     }
@@ -290,17 +336,36 @@ def main() -> None:
         )
         return
 
-    inserted, skipped = import_rows(args.device_id, args.device_name or args.device_id, rows)
+    inserted, updated, skipped = import_rows(
+        args.device_id, args.device_name or args.device_id, rows
+    )
     logger.info(
-        "Import fertig: %d neue Zeilen gespeichert, %d bereits vorhandene uebersprungen.",
+        "Import fertig: %d neue Zeilen gespeichert, %d bestehende Zeilen "
+        "nachtraeglich befuellt, %d unveraendert.",
         inserted,
+        updated,
         skipped,
     )
 
 
-def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int, int]:
-    """Schreibt geparste Logdaten-Zeilen in die DB, dedupliziert nach
-    (device_id, timestamp). Gibt (inserted, skipped) zurueck.
+ROW_FIELDS = [
+    "home_power_w",
+    "grid_draw_power_w",
+    "feed_in_power_w",
+    "pv_power_w",
+    "battery_soc_percent",
+    "battery_power_w",
+]
+
+
+def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int, int, int]:
+    """Schreibt geparste Logdaten-Zeilen in die DB. Gibt (inserted, updated,
+    skipped) zurueck.
+
+    Fuer bereits vorhandene Zeitstempel werden NUR Felder nachtraeglich
+    befuellt, die dort aktuell NULL sind (z.B. weil ein frueherer Import mit
+    falscher Spalten-Erkennung lief) - echte/live erfasste Werte werden nie
+    ueberschrieben.
 
     Wird sowohl vom CLI-Tool (main(), s.o.) als auch vom automatischen
     Hintergrund-Abgleich beim Start (app/auto_import.py) genutzt.
@@ -315,38 +380,46 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     try:
         # SQLite gibt DateTime-Werte beim Zurücklesen als "naive" datetime
         # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert haben.
-        # Fuer den Duplikat-Check auf beiden Seiten UTC-aware normalisieren.
-        existing = set()
-        for ts in session.scalars(
-            select(Reading.timestamp).where(Reading.device_id == device_id)
+        # Fuer den Abgleich auf beiden Seiten UTC-aware normalisieren.
+        existing_by_ts: dict[datetime, Reading] = {}
+        for reading in session.scalars(
+            select(Reading).where(Reading.device_id == device_id)
         ):
+            ts = reading.timestamp
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
-            existing.add(ts)
+            existing_by_ts[ts] = reading
 
         inserted = 0
+        updated = 0
         skipped = 0
         for r in rows:
-            if r["timestamp"] in existing:
-                skipped += 1
-                continue
-            session.add(
-                Reading(
+            ts = r["timestamp"]
+            existing = existing_by_ts.get(ts)
+            if existing is None:
+                new_reading = Reading(
                     device_id=device_id,
                     device_name=device_name,
-                    timestamp=r["timestamp"],
-                    home_power_w=r["home_power_w"],
-                    grid_draw_power_w=r["grid_draw_power_w"],
-                    feed_in_power_w=r["feed_in_power_w"],
-                    pv_power_w=r["pv_power_w"],
-                    battery_soc_percent=r["battery_soc_percent"],
-                    battery_power_w=r["battery_power_w"],
+                    timestamp=ts,
+                    **{f: r[f] for f in ROW_FIELDS},
                 )
-            )
-            existing.add(r["timestamp"])  # Schutz gegen Duplikate innerhalb derselben Datei
-            inserted += 1
+                session.add(new_reading)
+                existing_by_ts[ts] = new_reading  # Schutz gegen Duplikate in derselben Datei
+                inserted += 1
+                continue
+
+            changed = False
+            for f in ROW_FIELDS:
+                if getattr(existing, f) is None and r[f] is not None:
+                    setattr(existing, f, r[f])
+                    changed = True
+            if changed:
+                updated += 1
+            else:
+                skipped += 1
+
         session.commit()
-        return inserted, skipped
+        return inserted, updated, skipped
     finally:
         session.close()
 
