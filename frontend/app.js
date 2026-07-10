@@ -9,6 +9,10 @@ const state = {
     days: 7,
     chart: null,
   },
+  dailyTotals: {
+    days: 30,
+    chart: null,
+  },
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -454,6 +458,78 @@ function setupDayCompareControls() {
   });
 }
 
+// --- Tagesverbrauch: Saeulendiagramm mit taeglichen kWh-Summen ---
+
+async function refreshDailyTotalsChart() {
+  const params = new URLSearchParams({
+    metric: "home",
+    days: String(state.dailyTotals.days),
+  });
+  if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
+
+  const result = await fetchJson(`/api/readings/daily-totals?${params.toString()}`);
+  const labels = result.days.map((d) => shortDate(d.date));
+  const values = result.days.map((d) => d.kwh);
+
+  const dataset = {
+    label: "Hausverbrauch",
+    data: values,
+    backgroundColor: "#f8717199",
+    borderColor: "#f87171",
+    borderWidth: 1,
+    borderRadius: 3,
+  };
+
+  if (state.dailyTotals.chart) {
+    state.dailyTotals.chart.data.labels = labels;
+    state.dailyTotals.chart.data.datasets = [dataset];
+    state.dailyTotals.chart.update();
+    return;
+  }
+
+  const ctx = el("dailytotals-chart").getContext("2d");
+  state.dailyTotals.chart = new Chart(ctx, {
+    type: "bar",
+    data: { labels, datasets: [dataset] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 20 },
+          grid: { display: false },
+        },
+        y: {
+          ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+          grid: { color: "#334155" },
+          title: { display: true, text: "Hausverbrauch (kWh)", color: "#94a3b8" },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) =>
+              item.parsed.y === null ? "keine Daten" : `${item.parsed.y.toFixed(1)} kWh`,
+          },
+        },
+      },
+    },
+  });
+}
+
+function setupDailyTotalsControls() {
+  const container = el("dailytotals-day-buttons");
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-days]");
+    if (!btn) return;
+    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.dailyTotals.days = Number(btn.dataset.days);
+    refreshDailyTotalsChart().catch(console.error);
+  });
+}
+
 async function refreshAll() {
   try {
     await Promise.all([
@@ -461,6 +537,7 @@ async function refreshAll() {
       refreshSummaryCards(),
       refreshChart(),
       refreshDayCompareChart(),
+      refreshDailyTotalsChart(),
     ]);
   } catch (err) {
     console.error(err);
@@ -471,6 +548,7 @@ async function init() {
   await loadDevices();
   setupRangeButtons();
   setupDayCompareControls();
+  setupDailyTotalsControls();
   await refreshAll();
   setInterval(() => {
     refreshLiveCards().catch(console.error);
@@ -478,6 +556,7 @@ async function init() {
   }, 20000);
   setInterval(() => refreshChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
 }
 
 init();

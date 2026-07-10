@@ -116,6 +116,30 @@
       aktuellste Tag etwas dicker gezeichnet).
     </p>
   </section>
+
+  <section class="chart-section">
+    <div class="daycompare-header">
+      <h2>Tagesverbrauch</h2>
+      <p class="muted">
+        Hausverbrauch je Tag als Summe (kWh) – funktioniert auch für
+        vergangene Tage, die nur über den Logdaten-Import erfasst wurden.
+      </p>
+    </div>
+    <div class="chart-toolbar daycompare-toolbar">
+      <div class="range-buttons" id="dailytotals-day-buttons">
+        <button data-days="14">14 Tage</button>
+        <button data-days="30" class="active">30 Tage</button>
+        <button data-days="90">90 Tage</button>
+        <button data-days="365">365 Tage</button>
+      </div>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="dailytotals-chart"></canvas>
+    </div>
+    <p class="chart-hint muted">
+      Tipp: Maus über eine Säule halten, um den genauen Tageswert zu sehen.
+    </p>
+  </section>
 </main>
 
 <script src="app.js"></script>

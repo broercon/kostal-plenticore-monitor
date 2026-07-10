@@ -228,6 +228,17 @@ Drei Kennzahlen stehen zur Auswahl:
 Auch hier lässt sich per Klick auf die Legende ein einzelner Tag ein-/
 ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 
+## Tagesverbrauch: Säulendiagramm
+
+Ganz unten zeigt ein Säulendiagramm den Hausverbrauch je Tag als Summe
+(kWh) – wählbar über 14/30/90/365 Tage zurück. Anders als die
+"heute"-Kachel wird hier immer direkt aus den gespeicherten Messwerten
+integriert (Trapezregel), nicht aus vom Wechselrichter gemeldeten
+Tageswerten. Das funktioniert daher auch für vergangene Tage, die nur über
+den Logdaten-Import (nicht live) erfasst wurden, da Hausverbrauch (anders
+als Netzbezug/Einspeisung) auch in importierten Altdaten vorhanden ist.
+Für Tage ganz ohne Messwerte bleibt die Säule leer.
+
 ## Daten sichern
 
 Die komplette Historie liegt in `./data/kostal.db` (SQLite-Datei). Für ein
@@ -245,6 +256,9 @@ Container, damit keine Schreiboperation mittendrin ist).
 - `GET /api/readings/day-profile?device_id=&days=7&bucket_minutes=15` –
   Zeitreihen je Kalendertag (00:00–24:00 Uhr lokal) für den
   Tagesvergleich, inkl. Solar-/Batterie-Aufteilung des Hausverbrauchs.
+- `GET /api/readings/daily-totals?device_id=&metric=home&days=30` –
+  tägliche kWh-Summen für das Tagesverbrauchs-Säulendiagramm.
+  `metric`: `home`, `pv`, `grid_draw` oder `feed_in`.
 
 ## Grenzen / mögliche Erweiterungen
 

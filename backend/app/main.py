@@ -6,18 +6,34 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+from typing import Literal
+
 from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
-from .aggregation import aggregate_per_device, combine_devices, day_profile, integrate_kwh
+from .aggregation import (
+    aggregate_per_device,
+    combine_devices,
+    daily_kwh_totals,
+    day_profile,
+    integrate_kwh,
+)
 from .auto_import import run_auto_import_for_all_devices
 from .config import settings
 from .database import SessionLocal, init_db
 from .models import Reading
 from .poller import poller
-from .schemas import DayProfileOut, DeviceOut, HistoryPoint, ReadingOut, SummaryOut
+from .schemas import DailyTotalsOut, DayProfileOut, DeviceOut, HistoryPoint, ReadingOut, SummaryOut
 from .timeutil import local_midnight_utc
+
+# Metrik-Name (API-Parameter) -> Feld in Reading, fuer /api/readings/daily-totals.
+DAILY_TOTAL_FIELDS = {
+    "home": "home_power_w",
+    "pv": "pv_power_w",
+    "grid_draw": "grid_draw_power_w",
+    "feed_in": "feed_in_power_w",
+}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -203,6 +219,52 @@ def get_day_profile(
         days_data = day_profile(rows, bucket_minutes, settings.timezone_name)
 
     return DayProfileOut(bucket_minutes=bucket_minutes, days=days_data)
+
+
+@app.get("/api/readings/daily-totals", response_model=DailyTotalsOut)
+def get_daily_totals(
+    device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
+    metric: Literal["home", "pv", "grid_draw", "feed_in"] = Query(default="home"),
+    days: int = Query(default=30, ge=1, le=400, description="Anzahl Tage rueckwirkend inkl. heute"),
+) -> DailyTotalsOut:
+    """Liefert je Kalendertag die integrierte Energiemenge (kWh) fuer ein
+    Saeulendiagramm (z.B. Hausverbrauch pro Tag). Anders als die
+    "heute"-Kachel wird hier immer direkt aus den Messwerten integriert,
+    nicht aus vom Geraet gemeldeten Tageswerten - funktioniert daher auch
+    fuer vergangene, per Logdaten-Import nachtraeglich eingespielte Tage
+    (jedenfalls fuer home/pv - Netzwerte gibt es dort nicht, siehe README)."""
+    field = DAILY_TOTAL_FIELDS[metric]
+    since = local_midnight_utc() - timedelta(days=days - 1)
+
+    session = SessionLocal()
+    try:
+        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        if device_id:
+            stmt = stmt.where(Reading.device_id == device_id)
+        rows = list(session.scalars(stmt))
+    finally:
+        session.close()
+
+    if not device_id and len(settings.inverters) > 1:
+        # Wie bei /day-profile: fuer "alle Geraete" muessen Leistungswerte
+        # erst pro Geraet UND Zeitpunkt summiert werden, bevor pro Tag
+        # integriert wird - sonst wuerden Geraete mit leicht versetzten
+        # Polling-Zeitpunkten fehlerhaft einzeln integriert statt zeitgleich
+        # addiert.
+        per_device = aggregate_per_device(rows, bucket_seconds=60)
+        combined = combine_devices(per_device)
+        rows = [
+            Reading(
+                device_id="_combined_",
+                device_name="_combined_",
+                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+                **values,
+            )
+            for bk, values in combined.items()
+        ]
+
+    days_data = daily_kwh_totals(rows, field, settings.timezone_name)
+    return DailyTotalsOut(metric=metric, days=days_data)
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.
