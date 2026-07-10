@@ -3,7 +3,16 @@ const state = {
   selectedDeviceId: "", // "" bedeutet: alle Geraete summiert
   hours: 24,
   chart: null,
+  dayCompare: {
+    metric: "pv", // "pv" | "solar_battery" | "grid"
+    days: 7,
+    chart: null,
+  },
 };
+
+// Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
+// noch lesbar bleibt. Bei mehr Tagen wuerde die Legende zu unuebersichtlich.
+const SOLAR_BATTERY_MAX_DAYS = 7;
 
 const el = (id) => document.getElementById(id);
 
@@ -174,6 +183,7 @@ async function refreshChart() {
     data: { labels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
         x: {
@@ -207,9 +217,214 @@ function setupRangeButtons() {
   });
 }
 
+// --- Tagesvergleich: mehrere Tage auf einer festen 00:00-24:00-Achse ---
+
+function minutesToLabel(minute) {
+  const h = Math.floor(minute / 60);
+  const m = minute % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function shortDate(dateStr) {
+  const [y, m, d] = dateStr.split("-");
+  return `${d}.${m}.`;
+}
+
+// Farbe fuer den n-ten von insgesamt total Tagen (0 = aeltester Tag): aeltere
+// Tage blasser/transparenter, der aktuellste Tag kraeftig und dick, damit sich
+// der zeitliche Verlauf ueber die Tage hinweg intuitiv "einordnen" laesst.
+function dayColor(hue, index, total, alphaOverride) {
+  const alpha = alphaOverride ?? (total <= 1 ? 1 : 0.3 + 0.7 * (index / (total - 1)));
+  return `hsla(${hue}, 75%, 55%, ${alpha.toFixed(2)})`;
+}
+
+function buildDayCompareDatasets(days, metric) {
+  const datasets = [];
+  const total = days.length;
+
+  days.forEach((day, i) => {
+    const isLatest = i === total - 1;
+    const width = isLatest ? 2.5 : 1.5;
+    const dateLabel = shortDate(day.date);
+
+    if (metric === "pv") {
+      datasets.push({
+        label: dateLabel,
+        data: day.points.map((p) => ({ x: p.minute, y: p.pv_power_w })),
+        borderColor: dayColor(45, i, total), // gelb-orange = Sonne
+        backgroundColor: "transparent",
+        borderWidth: width,
+        tension: 0.25,
+        pointRadius: 0,
+      });
+    } else if (metric === "grid") {
+      datasets.push({
+        label: dateLabel,
+        data: day.points.map((p) => ({ x: p.minute, y: p.grid_draw_power_w })),
+        borderColor: dayColor(0, i, total), // rot = Netzbezug
+        backgroundColor: "transparent",
+        borderWidth: width,
+        tension: 0.25,
+        pointRadius: 0,
+      });
+    } else {
+      // solar_battery: zwei Kurven pro Tag - durchgezogen = Solaranteil,
+      // gestrichelt = Batterieanteil, jeweils in der gleichen Tagesfarbe.
+      const color = dayColor(150, i, total); // gruen = Solar/Batterie-Herkunft
+      datasets.push({
+        label: `${dateLabel} · Solar`,
+        data: day.points.map((p) => ({ x: p.minute, y: p.home_from_solar_w })),
+        borderColor: color,
+        backgroundColor: "transparent",
+        borderWidth: width,
+        borderDash: [],
+        tension: 0.25,
+        pointRadius: 0,
+      });
+      datasets.push({
+        label: `${dateLabel} · Batterie`,
+        data: day.points.map((p) => ({ x: p.minute, y: p.home_from_battery_w })),
+        borderColor: color,
+        backgroundColor: "transparent",
+        borderWidth: width,
+        borderDash: [6, 4],
+        tension: 0.25,
+        pointRadius: 0,
+      });
+    }
+  });
+
+  return datasets;
+}
+
+function updateDayCompareHint(metric) {
+  const hint = el("daycompare-hint");
+  if (metric === "solar_battery") {
+    hint.textContent =
+      `Durchgezogene Linie = Hausverbrauch aus Solar, gestrichelte Linie (gleiche ` +
+      `Farbe) = aus der Batterie. Nur bei live erfassten Daten verfügbar ` +
+      `(nicht bei importierten Altdaten ohne Netzmessung) und auf ${SOLAR_BATTERY_MAX_DAYS} ` +
+      `Tage begrenzt, damit die Legende lesbar bleibt.`;
+  } else {
+    hint.textContent =
+      "Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder auszublenden – " +
+      "hilfreich, um z.B. nur zwei bestimmte Tage gegenüberzustellen. Neuere Tage " +
+      "sind kräftiger eingefärbt, ältere blasser.";
+  }
+}
+
+async function refreshDayCompareChart() {
+  const { metric, days } = state.dayCompare;
+  const params = new URLSearchParams({
+    days: String(days),
+    bucket_minutes: "15",
+  });
+  if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
+
+  const result = await fetchJson(`/api/readings/day-profile?${params.toString()}`);
+  const datasets = buildDayCompareDatasets(result.days, metric);
+
+  const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Hausverbrauch";
+
+  if (state.dayCompare.chart) {
+    state.dayCompare.chart.data.datasets = datasets;
+    state.dayCompare.chart.update();
+    return;
+  }
+
+  const ctx = el("daycompare-chart").getContext("2d");
+  state.dayCompare.chart = new Chart(ctx, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      scales: {
+        x: {
+          type: "linear",
+          min: 0,
+          max: 1440,
+          ticks: {
+            color: "#94a3b8",
+            stepSize: 120,
+            callback: (v) => minutesToLabel(v),
+          },
+          grid: { color: "#334155" },
+          title: { display: true, text: "Uhrzeit", color: "#94a3b8" },
+        },
+        y: {
+          ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
+          grid: { color: "#334155" },
+          title: { display: true, text: yLabel, color: "#94a3b8" },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
+        tooltip: {
+          callbacks: {
+            title: (items) => (items.length ? minutesToLabel(items[0].parsed.x) : ""),
+            label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+          },
+        },
+      },
+    },
+  });
+}
+
+function setupDayCompareControls() {
+  const metricContainer = el("daycompare-metric-buttons");
+  const dayContainer = el("daycompare-day-buttons");
+
+  function applySolarBatteryDayLimit() {
+    const isSolarBattery = state.dayCompare.metric === "solar_battery";
+    for (const b of dayContainer.querySelectorAll("button")) {
+      const days = Number(b.dataset.days);
+      b.disabled = isSolarBattery && days > SOLAR_BATTERY_MAX_DAYS;
+    }
+    if (isSolarBattery && state.dayCompare.days > SOLAR_BATTERY_MAX_DAYS) {
+      state.dayCompare.days = SOLAR_BATTERY_MAX_DAYS;
+      for (const b of dayContainer.querySelectorAll("button")) {
+        b.classList.toggle("active", Number(b.dataset.days) === SOLAR_BATTERY_MAX_DAYS);
+      }
+    }
+  }
+
+  metricContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-metric]");
+    if (!btn) return;
+    for (const b of metricContainer.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.dayCompare.metric = btn.dataset.metric;
+    updateDayCompareHint(state.dayCompare.metric);
+    applySolarBatteryDayLimit();
+    // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
+    // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2).
+    if (state.dayCompare.chart) {
+      state.dayCompare.chart.destroy();
+      state.dayCompare.chart = null;
+    }
+    refreshDayCompareChart().catch(console.error);
+  });
+
+  dayContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-days]");
+    if (!btn || btn.disabled) return;
+    for (const b of dayContainer.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.dayCompare.days = Number(btn.dataset.days);
+    refreshDayCompareChart().catch(console.error);
+  });
+}
+
 async function refreshAll() {
   try {
-    await Promise.all([refreshLiveCards(), refreshSummaryCards(), refreshChart()]);
+    await Promise.all([
+      refreshLiveCards(),
+      refreshSummaryCards(),
+      refreshChart(),
+      refreshDayCompareChart(),
+    ]);
   } catch (err) {
     console.error(err);
   }
@@ -218,12 +433,14 @@ async function refreshAll() {
 async function init() {
   await loadDevices();
   setupRangeButtons();
+  setupDayCompareControls();
   await refreshAll();
   setInterval(() => {
     refreshLiveCards().catch(console.error);
     refreshSummaryCards().catch(console.error);
   }, 20000);
   setInterval(() => refreshChart().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
 }
 
 init();

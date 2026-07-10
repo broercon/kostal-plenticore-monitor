@@ -173,7 +173,34 @@ PV-Leistung übereinander. Auf einen Eintrag in der Legende klicken blendet
 die jeweilige Kurve ein oder aus (Standardverhalten von Chart.js). Über die
 Buttons oberhalb des Diagramms lässt sich der Zeitraum wechseln (24 Std,
 7 Tage, 30 Tage) – für die 7-Tage-Ansicht braucht es entsprechend ein paar
-Tage Laufzeit, bis sie vollständig gefüllt ist.
+Tage Laufzeit, bis sie vollständig gefüllt ist. Die "24 Std"-Ansicht startet
+immer an der letzten lokalen Mitternacht (nicht rollierend), damit der
+angezeigte Tag von Aufruf zu Aufruf gleich aussieht.
+
+## Tagesvergleich: Tage übereinanderlegen
+
+Unterhalb des normalen Diagramms gibt es einen zweiten Bereich
+("Tagesvergleich"), der einzelne Kalendertage direkt vergleichbar macht:
+die X-Achse zeigt immer fest 00:00–24:00 Uhr, und jeder ausgewählte Tag
+erscheint als eigene Kurve darüber gelegt (neuere Tage kräftiger
+eingefärbt, ältere blasser). Zeitraum wählbar von 1 Tag bis 30 Tage.
+
+Drei Kennzahlen stehen zur Auswahl:
+
+- **PV-Erzeugung** – reine PV-Leistungskurve je Tag.
+- **Verbrauch aus Solar & Batterie** – Hausverbrauch aufgeteilt in den
+  Anteil, der direkt aus PV gedeckt wurde (durchgezogene Linie), und den
+  Anteil aus der Batterie (gestrichelte Linie, gleiche Farbe wie der
+  zugehörige Tag). Die Aufteilung wird rein aus der Leistungsbilanz
+  berechnet (PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung) und
+  braucht daher Netzbezugs-/Einspeisungswerte – bei importierten Altdaten
+  ohne Netzmessung (KSEM-Limitation, siehe oben) bleibt sie leer, es
+  funktioniert nur mit live erfassten Daten. Aus Lesbarkeitsgründen ist der
+  Zeitraum hierfür auf 7 Tage begrenzt.
+- **Verbrauch aus dem Netz** – reine Netzbezugskurve je Tag.
+
+Auch hier lässt sich per Klick auf die Legende ein einzelner Tag ein-/
+ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 
 ## Daten sichern
 
@@ -189,6 +216,9 @@ Container, damit keine Schreiboperation mittendrin ist).
 - `GET /api/readings/history?device_id=&hours=24&bucket_minutes=5` – Zeitreihe
   für Diagramme. `device_id` weglassen, um beide Wechselrichter summiert zu
   bekommen.
+- `GET /api/readings/day-profile?device_id=&days=7&bucket_minutes=15` –
+  Zeitreihen je Kalendertag (00:00–24:00 Uhr lokal) für den
+  Tagesvergleich, inkl. Solar-/Batterie-Aufteilung des Hausverbrauchs.
 
 ## Grenzen / mögliche Erweiterungen
 

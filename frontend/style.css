@@ -128,7 +128,57 @@ canvas {
   width: 100% !important;
 }
 
+.chart-canvas-wrapper {
+  position: relative;
+  height: 420px;
+}
+
+@media (max-width: 640px) {
+  .chart-canvas-wrapper {
+    height: 320px;
+  }
+}
+
 .chart-hint {
   margin: 12px 0 0;
   font-size: 0.8rem;
+}
+
+.daycompare-section {
+  margin-top: 20px;
+}
+
+.daycompare-header h2 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.daycompare-header p {
+  margin: 0 0 14px;
+}
+
+.daycompare-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.metric-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.metric-buttons button.active {
+  background: var(--accent-purple);
+  color: #0f172a;
+  border-color: var(--accent-purple);
+  font-weight: 600;
+}
+
+.range-buttons button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }

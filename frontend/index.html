@@ -75,10 +75,45 @@
         <button data-hours="720">30 Tage</button>
       </div>
     </div>
-    <canvas id="power-chart" height="110"></canvas>
+    <div class="chart-canvas-wrapper">
+      <canvas id="power-chart"></canvas>
+    </div>
     <p class="chart-hint muted">
       Tipp: Auf einen Eintrag in der Legende klicken, um die jeweilige Kurve
       ein- oder auszublenden. Für die letzten 7 Tage oben "7 Tage" wählen.
+    </p>
+  </section>
+
+  <section class="chart-section daycompare-section">
+    <div class="daycompare-header">
+      <h2>Tagesvergleich</h2>
+      <p class="muted">
+        Jeder Tag als eigene Kurve auf einer festen 00:00–24:00-Achse –
+        so lassen sich einzelne Tage direkt übereinander vergleichen.
+      </p>
+    </div>
+    <div class="chart-toolbar daycompare-toolbar">
+      <div class="metric-buttons" id="daycompare-metric-buttons">
+        <button data-metric="pv" class="active">PV-Erzeugung</button>
+        <button data-metric="solar_battery">Verbrauch aus Solar &amp; Batterie</button>
+        <button data-metric="grid">Verbrauch aus dem Netz</button>
+      </div>
+      <div class="range-buttons" id="daycompare-day-buttons">
+        <button data-days="1">1 Tag</button>
+        <button data-days="3">3 Tage</button>
+        <button data-days="7" class="active">7 Tage</button>
+        <button data-days="14">14 Tage</button>
+        <button data-days="30">30 Tage</button>
+      </div>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="daycompare-chart"></canvas>
+    </div>
+    <p class="chart-hint muted" id="daycompare-hint">
+      Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder
+      auszublenden – hilfreich, um z.B. nur zwei bestimmte Tage
+      gegenüberzustellen. Neuere Tage sind kräftiger eingefärbt, ältere
+      blasser.
     </p>
   </section>
 </main>

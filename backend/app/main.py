@@ -10,13 +10,13 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
-from .aggregation import aggregate_per_device, combine_devices, integrate_kwh
+from .aggregation import aggregate_per_device, combine_devices, day_profile, integrate_kwh
 from .auto_import import run_auto_import_for_all_devices
 from .config import settings
 from .database import SessionLocal, init_db
 from .models import Reading
 from .poller import poller
-from .schemas import DeviceOut, HistoryPoint, ReadingOut, SummaryOut
+from .schemas import DayProfileOut, DeviceOut, HistoryPoint, ReadingOut, SummaryOut
 from .timeutil import local_midnight_utc
 
 logging.basicConfig(level=logging.INFO)
@@ -67,7 +67,14 @@ def get_history(
     hours: float = Query(default=24, ge=0.1, le=24 * 90),
     bucket_minutes: float = Query(default=5, ge=1, le=1440),
 ) -> list[HistoryPoint]:
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    if hours <= 24:
+        # Feste lokale Tagesgrenze statt rollierendem 24h-Fenster: sonst
+        # verschiebt sich der Start staendig mit der Uhrzeit (z.B. "seit
+        # gestern 20 Uhr" statt "seit Mitternacht"), was den Tag im
+        # Diagramm von Aufruf zu Aufruf unterschiedlich aussehen laesst.
+        since = local_midnight_utc()
+    else:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
     bucket_seconds = int(bucket_minutes * 60)
 
     session = SessionLocal()
@@ -147,6 +154,55 @@ def get_today_summary() -> list[SummaryOut]:
             )
         )
     return summaries
+
+
+@app.get("/api/readings/day-profile", response_model=DayProfileOut)
+def get_day_profile(
+    device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
+    days: int = Query(default=7, ge=1, le=30, description="Anzahl Tage rueckwirkend inkl. heute"),
+    bucket_minutes: int = Query(default=15, ge=5, le=60),
+) -> DayProfileOut:
+    """Liefert je Kalendertag (in TIMEZONE) eine Zeitreihe ueber 00:00-24:00
+    Uhr, damit sich mehrere Tage im Diagramm ueberlagern und direkt
+    vergleichen lassen (z.B. PV-Erzeugung heute vs. gestern vs. letzte
+    Woche). Enthaelt zusaetzlich eine Aufteilung des Hausverbrauchs in
+    Solar- und Batterie-Anteil (siehe aggregation.day_profile fuer die
+    Herleitung)."""
+    since = local_midnight_utc() - timedelta(days=days - 1)
+
+    session = SessionLocal()
+    try:
+        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        if device_id:
+            stmt = stmt.where(Reading.device_id == device_id)
+        rows = list(session.scalars(stmt))
+    finally:
+        session.close()
+
+    if not device_id and len(settings.inverters) > 1:
+        # Fuer "alle Geraete" muessen Leistungswerte erst pro Geraet UND
+        # Zeitpunkt summiert werden, bevor sie nach Tag/Uhrzeit gebucketet
+        # werden - sonst wuerden Messwerte verschiedener Geraete zu
+        # unterschiedlichen Zeitpunkten faelschlich einzeln gemittelt statt
+        # zeitgleich addiert. Wir nutzen dafuer die bestehende
+        # Sekunden-Bucket-Aggregation mit einem feinen Bucket (= Polling-
+        # Intervall) und bauen daraus synthetische Reading-aehnliche Objekte.
+        per_device = aggregate_per_device(rows, bucket_seconds=60)
+        combined = combine_devices(per_device)
+        synthetic_rows = [
+            Reading(
+                device_id="_combined_",
+                device_name="_combined_",
+                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+                **values,
+            )
+            for bk, values in combined.items()
+        ]
+        days_data = day_profile(synthetic_rows, bucket_minutes, settings.timezone_name)
+    else:
+        days_data = day_profile(rows, bucket_minutes, settings.timezone_name)
+
+    return DayProfileOut(bucket_minutes=bucket_minutes, days=days_data)
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.

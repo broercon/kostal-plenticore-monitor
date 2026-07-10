@@ -46,3 +46,21 @@ class SummaryOut(BaseModel):
     home_consumption_day_kwh: float | None = None
     energy_grid_day_kwh: float | None = None
     as_of: datetime | None = None
+
+
+class DayProfilePoint(BaseModel):
+    minute: int
+    pv_power_w: float | None = None
+    grid_draw_power_w: float | None = None
+    home_from_solar_w: float | None = None
+    home_from_battery_w: float | None = None
+
+
+class DayProfileDay(BaseModel):
+    date: str
+    points: list[DayProfilePoint]
+
+
+class DayProfileOut(BaseModel):
+    bucket_minutes: int
+    days: list[DayProfileDay]
