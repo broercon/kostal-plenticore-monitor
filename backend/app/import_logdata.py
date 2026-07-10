@@ -224,6 +224,17 @@ def main() -> None:
             "zum Herausfinden des tatsaechlichen Dateiformats, ohne zu parsen/speichern."
         ),
     )
+    parser.add_argument(
+        "--raw-tail",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Nur die letzten N rohen Zeilen der heruntergeladenen Datei anzeigen "
+            "(die aktuellsten Messpunkte) und beenden - zum Abgleich mit den "
+            "Live-Werten im Dashboard zum gleichen Zeitpunkt."
+        ),
+    )
     args = parser.parse_args()
 
     begin = datetime.strptime(args.begin, "%Y-%m-%d")
@@ -240,6 +251,13 @@ def main() -> None:
         lines = raw.splitlines()
         logger.info("--- Erste %d rohe Zeilen (repr) ---", args.raw_lines)
         for line in lines[: args.raw_lines]:
+            logger.info(repr(line))
+        return
+
+    if args.raw_tail > 0:
+        lines = raw.splitlines()
+        logger.info("--- Letzte %d rohe Zeilen (repr) ---", args.raw_tail)
+        for line in lines[-args.raw_tail :]:
             logger.info(repr(line))
         return
 
