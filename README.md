@@ -25,12 +25,15 @@ Pro Wechselrichter und Abfrage-Zyklus:
 - Batterieleistung und Ladezustand (falls vorhanden)
 - Tagessummen in kWh: PV-Ertrag, Hausverbrauch, Einspeisung
 
-**Wichtiger Hinweis zur Vorzeichen-Konvention:** `Grid_P` wird so
-interpretiert, dass ein negativer Wert Einspeisung ins Netz bedeutet und ein
-positiver Wert Bezug aus dem Netz. Das ist die gängige Konvention für den
-Plenticore, sollte sich das bei deinem Gerät anders verhalten, kannst du die
-Funktion `_split_grid_power` in `backend/app/plenticore_client.py` einfach
-umdrehen (schau dir dazu einfach die ersten paar Messwerte im Diagramm an).
+**Wichtiger Hinweis zur Vorzeichen-Konvention:** `Grid_P` wird standardmäßig
+so interpretiert, dass ein negativer Wert Einspeisung ins Netz bedeutet und
+ein positiver Wert Bezug aus dem Netz. Das kann je nach Installation/
+Zählerausrichtung aber andersherum sein. Im Dashboard gibt es dafür eine
+Kachel "Netzleistung (roh, Grid_P)" mit dem unveränderten Wert – zum
+Abgleich in der Web-Oberfläche des Wechselrichters selbst nachsehen, ob
+gerade Einspeisung oder Netzbezug angezeigt wird. Falls unsere Zuordnung
+vertauscht ist, in `.env` `GRID_POWER_INVERTED=true` setzen und neu
+starten (`docker compose up -d`).
 
 ## Einrichtung
 

@@ -17,7 +17,7 @@ from typing import Any
 import aiohttp
 from pykoplenti import ApiException, ExtendedApiClient
 
-from .config import InverterConfig
+from .config import InverterConfig, settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +42,16 @@ def _to_float(value: Any) -> float | None:
 
 
 def _split_grid_power(grid_p: float | None) -> tuple[float | None, float | None]:
-    """Teilt Grid_P in (Einspeiseleistung, Netzbezug) auf, beide >= 0."""
+    """Teilt Grid_P in (Einspeiseleistung, Netzbezug) auf, beide >= 0.
+
+    Die Vorzeichen-Konvention haengt von der Installation ab (Ausrichtung
+    des Stromzaehlers/CT-Clamps). Mit GRID_POWER_INVERTED=true (config.py)
+    laesst sich das umdrehen, falls Einspeisung/Netzbezug vertauscht
+    erscheinen."""
     if grid_p is None:
         return None, None
+    if settings.grid_power_inverted:
+        grid_p = -grid_p
     feed_in = max(0.0, -grid_p)
     grid_draw = max(0.0, grid_p)
     return feed_in, grid_draw

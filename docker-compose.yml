@@ -12,6 +12,7 @@ services:
       - TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
       - AUTO_IMPORT_DAYS=${AUTO_IMPORT_DAYS:-7}
+      - GRID_POWER_INVERTED=${GRID_POWER_INVERTED:-false}
     volumes:
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro

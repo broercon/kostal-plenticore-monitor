@@ -69,6 +69,14 @@ class Settings:
         ).strip().lower() not in ("false", "0", "no")
         self.auto_import_days = int(os.environ.get("AUTO_IMPORT_DAYS", "7"))
 
+        # Manche Installationen liefern Grid_P mit umgekehrtem Vorzeichen
+        # (haengt von der Ausrichtung des Stromzaehlers/CT-Clamps ab). Mit
+        # GRID_POWER_INVERTED=true die Interpretation von Einspeisung/Netzbezug
+        # umdrehen, falls sie im Dashboard vertauscht erscheinen.
+        self.grid_power_inverted = os.environ.get(
+            "GRID_POWER_INVERTED", "false"
+        ).strip().lower() in ("true", "1", "yes")
+
         self.inverters: list[InverterConfig] = []
         if self.config_path.is_file():
             try:

@@ -38,7 +38,19 @@
       <span class="card-label">Batterie</span>
       <span class="card-value" id="card-battery">–</span>
     </div>
+    <div class="card small">
+      <span class="card-label">Netzleistung (roh, Grid_P)</span>
+      <span class="card-value" id="card-grid-raw">–</span>
+    </div>
   </section>
+  <p class="chart-hint muted">
+    Debug-Hinweis: "Netzleistung (roh)" ist der unveränderte Grid_P-Wert vom
+    Wechselrichter. Zum Abgleich in der Web-Oberfläche des Wechselrichters
+    selbst (<code>http://&lt;wechselrichter-ip&gt;</code>) nachsehen, ob gerade
+    Einspeisung oder Netzbezug angezeigt wird. Falls unsere Zuordnung
+    vertauscht ist, in <code>.env</code> <code>GRID_POWER_INVERTED=true</code>
+    setzen und neu starten.
+  </p>
 
   <section class="cards" id="summary-cards">
     <div class="card small">

@@ -36,6 +36,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def no_cache_headers(request, call_next):
+    """Verhindert, dass Browser (v.a. Safari) API-Antworten oder die
+    Frontend-Dateien zwischenspeichern und dadurch veraltete/leere Daten
+    anzeigen, solange die App noch aktiv weiterentwickelt/aktualisiert wird."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    else:
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/api/devices", response_model=list[DeviceOut])
 def get_devices() -> list[DeviceOut]:
     return [

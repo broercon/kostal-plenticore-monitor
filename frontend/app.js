@@ -67,6 +67,10 @@ async function refreshLiveCards() {
   el("card-griddraw").textContent = fmtWatt(sumField(relevant, "grid_draw_power_w"));
   el("card-pv").textContent = fmtWatt(sumField(relevant, "pv_power_w"));
 
+  const gridRaw = sumField(relevant, "grid_power_w");
+  el("card-grid-raw").textContent =
+    gridRaw === null ? "–" : (gridRaw >= 0 ? "+" : "") + fmtWatt(gridRaw);
+
   const batteryEntries = relevant.filter(
     (r) => r.battery_soc_percent !== null && r.battery_soc_percent !== undefined
   );
