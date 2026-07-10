@@ -19,12 +19,21 @@ from .aggregation import (
     day_profile,
     integrate_kwh,
 )
-from .auto_import import run_auto_import_for_all_devices
+from .auto_import import get_import_status, run_auto_import_for_all_devices, trigger_manual_import
 from .config import settings
 from .database import SessionLocal, init_db
 from .models import Reading
 from .poller import poller
-from .schemas import DailyTotalsOut, DayProfileOut, DeviceOut, HistoryPoint, ReadingOut, SummaryOut
+from .schemas import (
+    DailyTotalsOut,
+    DayProfileOut,
+    DeviceOut,
+    HistoryPoint,
+    ImportStatusOut,
+    ImportTriggerOut,
+    ReadingOut,
+    SummaryOut,
+)
 from .timeutil import local_midnight_utc
 
 # Metrik-Name (API-Parameter) -> Feld in Reading, fuer /api/readings/daily-totals.
@@ -63,6 +72,26 @@ async def no_cache_headers(request, call_next):
     else:
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+@app.post("/api/admin/import-history", response_model=ImportTriggerOut)
+async def post_trigger_import_history() -> ImportTriggerOut:
+    """Stoesst den Logdaten-Abgleich sofort an, statt nur beim naechsten
+    Container-Start - z.B. um nach einer Konfigurationsaenderung (etwa
+    AUTO_IMPORT_DAYS) direkt zu pruefen, ob der Import durchlaeuft, ohne
+    extra neu starten zu muessen. Laeuft im Hintergrund; Fortschritt/Ergebnis
+    über GET /api/admin/import-history/status abrufbar."""
+    started = trigger_manual_import()
+    if started:
+        return ImportTriggerOut(started=True, message="Logdaten-Abgleich gestartet.")
+    return ImportTriggerOut(
+        started=False, message="Läuft bereits - bitte Status abwarten."
+    )
+
+
+@app.get("/api/admin/import-history/status", response_model=ImportStatusOut)
+def get_import_history_status() -> ImportStatusOut:
+    return ImportStatusOut(**get_import_status())
 
 
 @app.get("/api/devices", response_model=list[DeviceOut])

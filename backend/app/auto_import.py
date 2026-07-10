@@ -18,12 +18,18 @@ Anfrage-Datum ist also unproblematisch.
 
 Kann über die Umgebungsvariable AUTO_IMPORT_HISTORY=false komplett
 deaktiviert werden.
+
+Laesst sich zusaetzlich manuell ueber POST /api/admin/import-history
+anstossen (siehe trigger_manual_import), z.B. um nach einer
+Konfigurationsaenderung nicht extra den ganzen Container neu starten zu
+muessen. GET /api/admin/import-history/status zeigt den aktuellen
+Stand/das letzte Ergebnis (get_import_status).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import InverterConfig, settings
@@ -37,6 +43,49 @@ logger = logging.getLogger(__name__)
 # zurueck, wie er tatsaechlich noch gespeichert hat.
 UNLIMITED_LOOKBACK_DAYS = 3650
 
+# Haelt Status/letztes Ergebnis des Hintergrund-Abgleichs vor, damit das
+# Frontend (oder ein manueller API-Aufruf) sehen kann, ob gerade ein Lauf
+# aktiv ist und wie der letzte ausgegangen ist - ohne dafuer die
+# Container-Logs durchsuchen zu muessen.
+_state: dict = {
+    "running": False,
+    "last_started_at": None,
+    "last_finished_at": None,
+    "results": [],  # Liste von {"device_name", "status", "message", "inserted", "updated", "skipped"}
+}
+
+
+def get_import_status() -> dict:
+    return {**_state, "results": list(_state["results"])}
+
+
+def _try_acquire_run() -> bool:
+    """Prueft synchron (ohne await dazwischen, also race-frei innerhalb des
+    Event-Loops) und setzt bei Erfolg sofort running=True - so kann sich
+    kein zweiter, gleichzeitig gestarteter Lauf (z.B. zwei schnell
+    hintereinander gedrueckte Klicks) dazwischenschieben, bevor der erste
+    Lauf tatsaechlich zu arbeiten beginnt."""
+    if _state["running"]:
+        return False
+    _state["running"] = True
+    _state["last_started_at"] = datetime.now(timezone.utc)
+    return True
+
+
+def trigger_manual_import() -> bool:
+    """Stoesst einen Abgleich sofort an (statt nur beim Container-Start) -
+    unabhaengig von AUTO_IMPORT_HISTORY (das steuert nur den automatischen
+    Lauf beim Start, nicht diesen expliziten manuellen Anstoss). Gibt False
+    zurueck, wenn bereits ein Lauf aktiv ist (kein zweiter, parallel
+    laufender Import - sonst koennten zwei Laeufe gleichzeitig in die
+    SQLite-Datenbank schreiben)."""
+    if not settings.inverters:
+        return False
+    if not _try_acquire_run():
+        return False
+    asyncio.create_task(_run_import_body())
+    return True
+
 
 def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, int, int]:
     """Laeuft in einem Worker-Thread (siehe unten), da CSV-Parsing und die
@@ -48,7 +97,7 @@ def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, 
     return import_rows(device_id, device_name, rows)
 
 
-async def _import_one_device(cfg: InverterConfig) -> None:
+async def _import_one_device(cfg: InverterConfig) -> dict:
     tz = ZoneInfo(settings.timezone_name)
     end = datetime.now(tz)
     lookback_days = (
@@ -64,17 +113,27 @@ async def _import_one_device(cfg: InverterConfig) -> None:
         begin.date(),
         end.date(),
     )
+    result = {
+        "device_id": cfg.id,
+        "device_name": cfg.name,
+        "range_begin": begin.date().isoformat(),
+        "range_end": end.date().isoformat(),
+    }
     try:
         raw = await _download(cfg.host, cfg.password, cfg.port, begin, end)
     except (TimeoutError, asyncio.TimeoutError):
+        message = (
+            "Zeitüberschreitung beim Herunterladen (auch nach 30 Minuten). Bei sehr "
+            "langer Historie ggf. AUTO_IMPORT_DAYS auf einen kleineren Wert statt "
+            "'unbegrenzt' setzen."
+        )
         logger.warning(
-            "Automatischer Logdaten-Abgleich für %s (%s) abgebrochen: Zeitüberschreitung "
-            "beim Herunterladen (auch nach 30 Minuten). Bei sehr langer Historie ggf. "
-            "AUTO_IMPORT_DAYS auf einen kleineren Wert statt 'unbegrenzt' setzen.",
+            "Automatischer Logdaten-Abgleich für %s (%s) abgebrochen: %s",
             cfg.name,
             cfg.host,
+            message,
         )
-        return
+        return {**result, "status": "timeout", "message": message}
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Automatischer Logdaten-Abgleich für %s (%s) fehlgeschlagen: %s",
@@ -82,17 +141,17 @@ async def _import_one_device(cfg: InverterConfig) -> None:
             cfg.host,
             exc,
         )
-        return
+        return {**result, "status": "error", "message": str(exc)}
 
     try:
         inserted, updated, skipped = await asyncio.to_thread(
             _parse_and_import, raw, cfg.id, cfg.name
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.exception(
             "Automatischer Logdaten-Abgleich für %s: Fehler beim Verarbeiten.", cfg.name
         )
-        return
+        return {**result, "status": "error", "message": f"Fehler beim Verarbeiten: {exc}"}
 
     logger.info(
         "Automatischer Logdaten-Abgleich für %s: %d neue Zeilen, %d nachtraeglich "
@@ -104,21 +163,47 @@ async def _import_one_device(cfg: InverterConfig) -> None:
         begin.date(),
         end.date(),
     )
+    return {
+        **result,
+        "status": "ok",
+        "message": None,
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+    }
 
 
-async def run_auto_import_for_all_devices() -> None:
-    if not settings.auto_import_enabled or not settings.inverters:
-        return
+async def _run_import_body() -> None:
+    """Gemeinsamer Ablauf fuer den automatischen Start-Import UND den
+    manuellen Trigger. Erwartet, dass running bereits (synchron, ueber
+    _try_acquire_run) auf True gesetzt wurde."""
     if settings.auto_import_days is None:
         logger.info(
-            "Starte automatischen Logdaten-Abgleich (unbegrenzt zurueck, max. %d Tage) "
-            "im Hintergrund ...",
+            "Starte Logdaten-Abgleich (unbegrenzt zurueck, max. %d Tage) im Hintergrund ...",
             UNLIMITED_LOOKBACK_DAYS,
         )
     else:
         logger.info(
-            "Starte automatischen Logdaten-Abgleich (letzte %d Tage) im Hintergrund ...",
+            "Starte Logdaten-Abgleich (letzte %d Tage) im Hintergrund ...",
             settings.auto_import_days,
         )
-    for cfg in settings.inverters:
-        await _import_one_device(cfg)
+    try:
+        results = []
+        for cfg in settings.inverters:
+            results.append(await _import_one_device(cfg))
+        _state["results"] = results
+    finally:
+        _state["running"] = False
+        _state["last_finished_at"] = datetime.now(timezone.utc)
+
+
+async def run_auto_import_for_all_devices() -> None:
+    """Wird beim Container-Start aufgerufen (siehe main.py lifespan).
+    Respektiert AUTO_IMPORT_HISTORY=false - der manuelle Trigger
+    (trigger_manual_import) tut das bewusst NICHT, siehe dort."""
+    if not settings.auto_import_enabled or not settings.inverters:
+        return
+    if not _try_acquire_run():
+        logger.info("Logdaten-Abgleich uebersprungen: es laeuft bereits ein anderer Lauf.")
+        return
+    await _run_import_body()

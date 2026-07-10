@@ -157,6 +157,19 @@ kein passender Import gemacht wurde, zeigen die 14-/30-Tage-Ansichten nur
 so viele Tage, wie tatsächlich in der Datenbank vorhanden sind** – das
 liegt dann nicht an einem Anzeigefehler, sondern schlicht daran, dass die
 Werte für die fehlenden Tage noch nicht übertragen/importiert wurden.
+
+### Abgleich manuell anstoßen
+
+Im Dashboard gibt es oben den Button "Logdaten-Abgleich jetzt starten" –
+damit lässt sich der Abgleich sofort auslösen, ohne extra den Container
+neu zu starten (z.B. um nach einer Änderung von `AUTO_IMPORT_DAYS` direkt
+zu sehen, ob der Import durchläuft). Daneben steht der aktuelle Status
+("läuft …" bzw. Ergebnis des letzten Laufs je Wechselrichter: Anzahl neuer/
+nachträglich befüllter/unveränderter Zeilen, oder eine Fehlermeldung).
+Läuft bereits ein Abgleich, wird ein zweiter Klick ignoriert (kein
+paralleler Import). Das funktioniert auch, wenn `AUTO_IMPORT_HISTORY=false`
+gesetzt ist – diese Einstellung betrifft nur den automatischen Lauf beim
+Start, nicht den manuellen Button.
 Zusätzlich gilt: Netzbezug/Einspeisung (und damit auch die
 Solar/Batterie-Aufteilung im Tagesvergleich) lassen sich nur für Zeiträume
 befüllen, in denen die App live gepollt hat – der interne Logger liefert
@@ -259,6 +272,12 @@ Container, damit keine Schreiboperation mittendrin ist).
 - `GET /api/readings/daily-totals?device_id=&metric=home&days=30` –
   tägliche kWh-Summen für das Tagesverbrauchs-Säulendiagramm.
   `metric`: `home`, `pv`, `grid_draw` oder `feed_in`.
+- `POST /api/admin/import-history` – stößt den Logdaten-Abgleich sofort an
+  (auch bei `AUTO_IMPORT_HISTORY=false`); liefert `{"started": bool,
+  "message": str}`.
+- `GET /api/admin/import-history/status` – Status/Ergebnis des letzten
+  Abgleichs (`running`, `last_started_at`, `last_finished_at`, `results`
+  je Wechselrichter).
 
 ## Grenzen / mögliche Erweiterungen
 

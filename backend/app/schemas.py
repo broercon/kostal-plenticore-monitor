@@ -74,3 +74,27 @@ class DailyTotalPoint(BaseModel):
 class DailyTotalsOut(BaseModel):
     metric: str
     days: list[DailyTotalPoint]
+
+
+class ImportDeviceResult(BaseModel):
+    device_id: str
+    device_name: str
+    range_begin: str
+    range_end: str
+    status: str | None = None  # "ok" | "timeout" | "error" | None (Lauf noch nicht beendet)
+    message: str | None = None
+    inserted: int | None = None
+    updated: int | None = None
+    skipped: int | None = None
+
+
+class ImportStatusOut(BaseModel):
+    running: bool
+    last_started_at: datetime | None = None
+    last_finished_at: datetime | None = None
+    results: list[ImportDeviceResult] = []
+
+
+class ImportTriggerOut(BaseModel):
+    started: bool
+    message: str

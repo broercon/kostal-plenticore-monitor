@@ -69,6 +69,19 @@ main {
   margin-bottom: 20px;
 }
 
+.import-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.import-trigger button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--panel-border);

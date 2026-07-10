@@ -530,6 +530,84 @@ function setupDailyTotalsControls() {
   });
 }
 
+// --- Logdaten-Abgleich manuell anstossen + Status anzeigen ---
+
+let importPollTimer = null;
+
+function stopImportPolling() {
+  if (importPollTimer) {
+    clearInterval(importPollTimer);
+    importPollTimer = null;
+  }
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString("de-DE");
+}
+
+function summarizeImportResults(results) {
+  if (!results || results.length === 0) return "";
+  return results
+    .map((r) => {
+      if (r.status === "ok") {
+        return `${r.device_name}: ${r.inserted} neu, ${r.updated} befüllt, ${r.skipped} unverändert`;
+      }
+      if (r.status === "timeout") {
+        return `${r.device_name}: Zeitüberschreitung beim Download`;
+      }
+      return `${r.device_name}: Fehler (${r.message ?? "unbekannt"})`;
+    })
+    .join(" · ");
+}
+
+async function updateImportStatusUI() {
+  const status = await fetchJson("/api/admin/import-history/status");
+  const btn = el("trigger-import-btn");
+  const text = el("import-status-text");
+
+  if (status.running) {
+    btn.disabled = true;
+    const since = fmtDateTime(status.last_started_at);
+    text.textContent = `Logdaten-Abgleich läuft${since ? " (gestartet " + since + ")" : ""} …`;
+    if (!importPollTimer) {
+      importPollTimer = setInterval(() => updateImportStatusUI().catch(console.error), 4000);
+    }
+    return;
+  }
+
+  stopImportPolling();
+  btn.disabled = false;
+  if (!status.last_finished_at) {
+    text.textContent = "Noch nicht gelaufen.";
+    return;
+  }
+  const summary = summarizeImportResults(status.results);
+  text.textContent =
+    `Zuletzt abgeschlossen: ${fmtDateTime(status.last_finished_at)}` +
+    (summary ? ` – ${summary}` : "");
+}
+
+function setupImportTrigger() {
+  const btn = el("trigger-import-btn");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    el("import-status-text").textContent = "Wird gestartet …";
+    try {
+      const res = await fetch("/api/admin/import-history", { method: "POST" });
+      const data = await res.json();
+      if (!data.started) {
+        el("import-status-text").textContent = data.message || "Läuft bereits – bitte warten.";
+      }
+    } catch (err) {
+      console.error(err);
+      el("import-status-text").textContent = "Fehler beim Starten.";
+    }
+    updateImportStatusUI().catch(console.error);
+  });
+  updateImportStatusUI().catch(console.error);
+}
+
 async function refreshAll() {
   try {
     await Promise.all([
@@ -549,6 +627,7 @@ async function init() {
   setupRangeButtons();
   setupDayCompareControls();
   setupDailyTotalsControls();
+  setupImportTrigger();
   await refreshAll();
   setInterval(() => {
     refreshLiveCards().catch(console.error);
