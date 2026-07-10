@@ -14,7 +14,7 @@ ENV DB_PATH=/app/data/kostal.db \
     POLL_INTERVAL_SECONDS=15 \
     TIMEZONE=Europe/Berlin \
     AUTO_IMPORT_HISTORY=true \
-    AUTO_IMPORT_DAYS=7 \
+    AUTO_IMPORT_DAYS=35 \
     GRID_POWER_INVERTED=false
 
 EXPOSE 8000

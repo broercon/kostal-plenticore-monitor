@@ -67,7 +67,11 @@ class Settings:
         self.auto_import_enabled = os.environ.get(
             "AUTO_IMPORT_HISTORY", "true"
         ).strip().lower() not in ("false", "0", "no")
-        self.auto_import_days = int(os.environ.get("AUTO_IMPORT_DAYS", "7"))
+        # Standard 35 Tage (statt nur 7), damit der "30 Tage"-Button im
+        # Dashboard nach einem Neustart auch tatsaechlich Daten fuer den
+        # vollen Zeitraum zeigt (begrenzt durch die Speichertiefe des
+        # internen Loggers am Wechselrichter selbst, geraeteabhaengig).
+        self.auto_import_days = int(os.environ.get("AUTO_IMPORT_DAYS", "35"))
 
         # Manche Installationen liefern Grid_P mit umgekehrtem Vorzeichen
         # (haengt von der Ausrichtung des Stromzaehlers/CT-Clamps ab). Mit

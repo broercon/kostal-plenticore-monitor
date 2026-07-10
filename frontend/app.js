@@ -3,6 +3,7 @@ const state = {
   selectedDeviceId: "", // "" bedeutet: alle Geraete summiert
   hours: 24,
   chart: null,
+  chartMode: null, // "day" (feste 00:00-24:00 Achse) | "range" (rollierend, Datumslabels)
   dayCompare: {
     metric: "pv", // "pv" | "solar_battery" | "grid"
     days: 7,
@@ -118,7 +119,20 @@ function bucketMinutesForRange(hours) {
   return 180;
 }
 
+const CHART_METRIC_COLORS = {
+  home: "#f87171",
+  feedin: "#4ade80",
+  griddraw: "#facc15",
+  pv: "#60a5fa",
+};
+
+function minuteOfLocalDay(d) {
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+}
+
 async function refreshChart() {
+  const isDayMode = state.hours <= 24;
+  const mode = isDayMode ? "day" : "range";
   const bucketMinutes = bucketMinutesForRange(state.hours);
   const params = new URLSearchParams({
     hours: String(state.hours),
@@ -128,56 +142,66 @@ async function refreshChart() {
 
   const points = await fetchJson(`/api/readings/history?${params.toString()}`);
 
-  const useDate = state.hours > 24;
-  const labels = points.map((p) => {
-    const d = new Date(p.timestamp);
-    return useDate
-      ? d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  });
-  const datasets = [
-    {
-      label: "Hausverbrauch",
-      data: points.map((p) => p.home_power_w),
-      borderColor: "#f87171",
-      backgroundColor: "#f8717133",
-      tension: 0.25,
-      pointRadius: 0,
-    },
-    {
-      label: "Einspeisung",
-      data: points.map((p) => p.feed_in_power_w),
-      borderColor: "#4ade80",
-      backgroundColor: "#4ade8033",
-      tension: 0.25,
-      pointRadius: 0,
-    },
-    {
-      label: "Netzbezug",
-      data: points.map((p) => p.grid_draw_power_w),
-      borderColor: "#facc15",
-      backgroundColor: "#facc1533",
-      tension: 0.25,
-      pointRadius: 0,
-    },
-    {
-      label: "PV-Leistung",
-      data: points.map((p) => p.pv_power_w),
-      borderColor: "#60a5fa",
-      backgroundColor: "#60a5fa33",
-      tension: 0.25,
-      pointRadius: 0,
-    },
-  ];
+  let labels = null;
+  const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w" };
+  const metricLabel = { home: "Hausverbrauch", feedin: "Einspeisung", griddraw: "Netzbezug", pv: "PV-Leistung" };
 
-  if (state.chart) {
+  let datasets;
+  if (isDayMode) {
+    // Feste 00:00-24:00-Achse (wie beim Tagesvergleich): das Diagramm zeigt
+    // also immer den ganzen Tag, auch wenn aktuell erst z.B. 14 Uhr ist -
+    // der restliche Tag bleibt dann leer, statt dass die Achse "dynamisch"
+    // beim jeweils letzten Messwert endet.
+    datasets = Object.keys(fieldFor).map((key) => ({
+      label: metricLabel[key],
+      data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: p[fieldFor[key]] })),
+      borderColor: CHART_METRIC_COLORS[key],
+      backgroundColor: CHART_METRIC_COLORS[key] + "33",
+      tension: 0.25,
+      pointRadius: 0,
+    }));
+  } else {
+    labels = points.map((p) => {
+      const d = new Date(p.timestamp);
+      return d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    });
+    datasets = Object.keys(fieldFor).map((key) => ({
+      label: metricLabel[key],
+      data: points.map((p) => p[fieldFor[key]]),
+      borderColor: CHART_METRIC_COLORS[key],
+      backgroundColor: CHART_METRIC_COLORS[key] + "33",
+      tension: 0.25,
+      pointRadius: 0,
+    }));
+  }
+
+  if (state.chart && state.chartMode === mode) {
     state.chart.data.labels = labels;
     state.chart.data.datasets = datasets;
     state.chart.update();
     return;
   }
 
+  if (state.chart) {
+    state.chart.destroy();
+    state.chart = null;
+  }
+  state.chartMode = mode;
+
   const ctx = el("power-chart").getContext("2d");
+  const xScale = isDayMode
+    ? {
+        type: "linear",
+        min: 0,
+        max: 1440,
+        ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
+        grid: { color: "#334155" },
+      }
+    : {
+        ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+        grid: { color: "#334155" },
+      };
+
   state.chart = new Chart(ctx, {
     type: "line",
     data: { labels, datasets },
@@ -186,10 +210,7 @@ async function refreshChart() {
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: {
-          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
-          grid: { color: "#334155" },
-        },
+        x: xScale,
         y: {
           ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
           grid: { color: "#334155" },
@@ -198,7 +219,11 @@ async function refreshChart() {
       plugins: {
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
-          callbacks: { label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}` },
+          callbacks: {
+            title: (items) =>
+              isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
+            label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+          },
         },
       },
     },
@@ -230,12 +255,24 @@ function shortDate(dateStr) {
   return `${d}.${m}.`;
 }
 
-// Farbe fuer den n-ten von insgesamt total Tagen (0 = aeltester Tag): aeltere
-// Tage blasser/transparenter, der aktuellste Tag kraeftig und dick, damit sich
-// der zeitliche Verlauf ueber die Tage hinweg intuitiv "einordnen" laesst.
-function dayColor(hue, index, total, alphaOverride) {
-  const alpha = alphaOverride ?? (total <= 1 ? 1 : 0.3 + 0.7 * (index / (total - 1)));
-  return `hsla(${hue}, 75%, 55%, ${alpha.toFixed(2)})`;
+// Klar unterscheidbare Farbpalette, eine feste Farbe pro Tag (statt
+// verblassendem Farbverlauf) - bei mehr Tagen als Farben wird zyklisch
+// wiederverwendet.
+const DAY_COLORS = [
+  "#60a5fa", // blau
+  "#f87171", // rot
+  "#4ade80", // gruen
+  "#facc15", // gelb
+  "#c084fc", // lila
+  "#22d3ee", // cyan
+  "#fb923c", // orange
+  "#f472b6", // pink
+  "#a3e635", // limette
+  "#94a3b8", // grau-blau
+];
+
+function dayColor(index) {
+  return DAY_COLORS[index % DAY_COLORS.length];
 }
 
 function buildDayCompareDatasets(days, metric) {
@@ -251,7 +288,7 @@ function buildDayCompareDatasets(days, metric) {
       datasets.push({
         label: dateLabel,
         data: day.points.map((p) => ({ x: p.minute, y: p.pv_power_w })),
-        borderColor: dayColor(45, i, total), // gelb-orange = Sonne
+        borderColor: dayColor(i),
         backgroundColor: "transparent",
         borderWidth: width,
         tension: 0.25,
@@ -261,7 +298,7 @@ function buildDayCompareDatasets(days, metric) {
       datasets.push({
         label: dateLabel,
         data: day.points.map((p) => ({ x: p.minute, y: p.grid_draw_power_w })),
-        borderColor: dayColor(0, i, total), // rot = Netzbezug
+        borderColor: dayColor(i),
         backgroundColor: "transparent",
         borderWidth: width,
         tension: 0.25,
@@ -270,7 +307,7 @@ function buildDayCompareDatasets(days, metric) {
     } else {
       // solar_battery: zwei Kurven pro Tag - durchgezogen = Solaranteil,
       // gestrichelt = Batterieanteil, jeweils in der gleichen Tagesfarbe.
-      const color = dayColor(150, i, total); // gruen = Solar/Batterie-Herkunft
+      const color = dayColor(i);
       datasets.push({
         label: `${dateLabel} · Solar`,
         data: day.points.map((p) => ({ x: p.minute, y: p.home_from_solar_w })),
@@ -308,8 +345,8 @@ function updateDayCompareHint(metric) {
   } else {
     hint.textContent =
       "Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder auszublenden – " +
-      "hilfreich, um z.B. nur zwei bestimmte Tage gegenüberzustellen. Neuere Tage " +
-      "sind kräftiger eingefärbt, ältere blasser.";
+      "hilfreich, um z.B. nur zwei bestimmte Tage gegenüberzustellen. Jeder Tag hat " +
+      "eine eigene, feste Farbe (der aktuellste Tag etwas dicker gezeichnet).";
   }
 }
 

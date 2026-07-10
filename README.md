@@ -140,7 +140,22 @@ gefüllt, sobald der Server wieder läuft. In den Logs
 vorhanden".
 
 Mit `AUTO_IMPORT_HISTORY=false` (in `.env`) lässt sich das abschalten,
-mit `AUTO_IMPORT_DAYS` der Zeitraum anpassen.
+mit `AUTO_IMPORT_DAYS` der Zeitraum anpassen (Standard: 35 Tage, damit der
+"30 Tage"-Button im Dashboard mit etwas Puffer abgedeckt ist). Wichtig:
+Diese Einstellung wirkt erst ab dem nächsten Neustart (`docker compose up
+-d --build`) – erst dann holt die App den zusätzlichen Zeitraum vom
+internen Logger nach. **Solange die App noch keine 30 Tage lang lief UND
+kein passender Import gemacht wurde, zeigen die 14-/30-Tage-Ansichten nur
+so viele Tage, wie tatsächlich in der Datenbank vorhanden sind** – das
+liegt dann nicht an einem Anzeigefehler, sondern schlicht daran, dass die
+Werte für die fehlenden Tage noch nicht übertragen/importiert wurden.
+Zusätzlich gilt: Netzbezug/Einspeisung (und damit auch die
+Solar/Batterie-Aufteilung im Tagesvergleich) lassen sich nur für Zeiträume
+befüllen, in denen die App live gepollt hat – der interne Logger liefert
+dafür keine Werte (KSEM-Limitation, siehe oben). Für PV-Erzeugung und
+Hausverbrauch dagegen holt der automatische Abgleich auch länger
+zurückliegende Tage nach, sobald `AUTO_IMPORT_DAYS` erhöht ist und der
+interne Logger des Wechselrichters so weit zurückreicht.
 
 ### Manueller Import für einen größeren/bestimmten Zeitraum
 
@@ -173,17 +188,20 @@ PV-Leistung übereinander. Auf einen Eintrag in der Legende klicken blendet
 die jeweilige Kurve ein oder aus (Standardverhalten von Chart.js). Über die
 Buttons oberhalb des Diagramms lässt sich der Zeitraum wechseln (24 Std,
 7 Tage, 30 Tage) – für die 7-Tage-Ansicht braucht es entsprechend ein paar
-Tage Laufzeit, bis sie vollständig gefüllt ist. Die "24 Std"-Ansicht startet
-immer an der letzten lokalen Mitternacht (nicht rollierend), damit der
-angezeigte Tag von Aufruf zu Aufruf gleich aussieht.
+Tage Laufzeit, bis sie vollständig gefüllt ist. Die "24 Std"-Ansicht zeigt
+immer die feste Achse 00:00–24:00 Uhr des aktuellen Tages (lokale
+Mitternacht als Start, 24 Uhr als Ende) statt eines rollierenden
+24-Stunden-Fensters – der noch nicht vergangene Teil des Tages bleibt dabei
+einfach leer.
 
 ## Tagesvergleich: Tage übereinanderlegen
 
 Unterhalb des normalen Diagramms gibt es einen zweiten Bereich
 ("Tagesvergleich"), der einzelne Kalendertage direkt vergleichbar macht:
 die X-Achse zeigt immer fest 00:00–24:00 Uhr, und jeder ausgewählte Tag
-erscheint als eigene Kurve darüber gelegt (neuere Tage kräftiger
-eingefärbt, ältere blasser). Zeitraum wählbar von 1 Tag bis 30 Tage.
+erscheint als eigene Kurve darüber gelegt, jeweils in einer eigenen, festen
+Farbe (der aktuellste Tag etwas dicker gezeichnet). Zeitraum wählbar von
+1 Tag bis 30 Tage.
 
 Drei Kennzahlen stehen zur Auswahl:
 
