@@ -141,7 +141,15 @@ vorhanden".
 
 Mit `AUTO_IMPORT_HISTORY=false` (in `.env`) lässt sich das abschalten,
 mit `AUTO_IMPORT_DAYS` der Zeitraum anpassen (Standard: 35 Tage, damit der
-"30 Tage"-Button im Dashboard mit etwas Puffer abgedeckt ist). Wichtig:
+"30 Tage"-Button im Dashboard mit etwas Puffer abgedeckt ist). Mit
+`AUTO_IMPORT_DAYS=unbegrenzt` (oder `0`/`all`) wird stattdessen so weit
+wie möglich zurück abgeglichen – der Wechselrichter liefert dabei ohnehin
+nur so viel Historie zurück, wie sein interner Logger tatsächlich noch
+gespeichert hat, ein zu weit zurückreichendes Anfragedatum ist also
+unproblematisch. Das läuft im Hintergrund und blockiert das Dashboard
+nicht, kann bei sehr langer Gerätehistorie aber ein paar Minuten dauern,
+bis der komplette Datensatz einmal heruntergeladen und importiert ist.
+Wichtig:
 Diese Einstellung wirkt erst ab dem nächsten Neustart (`docker compose up
 -d --build`) – erst dann holt die App den zusätzlichen Zeitraum vom
 internen Logger nach. **Solange die App noch keine 30 Tage lang lief UND

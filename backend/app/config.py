@@ -71,7 +71,17 @@ class Settings:
         # Dashboard nach einem Neustart auch tatsaechlich Daten fuer den
         # vollen Zeitraum zeigt (begrenzt durch die Speichertiefe des
         # internen Loggers am Wechselrichter selbst, geraeteabhaengig).
-        self.auto_import_days = int(os.environ.get("AUTO_IMPORT_DAYS", "35"))
+        #
+        # Mit "unbegrenzt" (oder "0"/"all") wird stattdessen so weit wie
+        # moeglich zurueck abgeglichen (siehe auto_import.py) - dann liefert
+        # der Wechselrichter beim naechsten Neustart einfach so viel Historie,
+        # wie sein interner Logger tatsaechlich noch vorhaelt.
+        raw_days = os.environ.get("AUTO_IMPORT_DAYS", "35").strip().lower()
+        self.auto_import_days: int | None
+        if raw_days in ("unbegrenzt", "unlimited", "all", "0", "-1"):
+            self.auto_import_days = None
+        else:
+            self.auto_import_days = int(raw_days)
 
         # Manche Installationen liefern Grid_P mit umgekehrtem Vorzeichen
         # (haengt von der Ausrichtung des Stromzaehlers/CT-Clamps ab). Mit

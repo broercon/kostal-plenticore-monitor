@@ -4,14 +4,17 @@ Wechselrichter beim Start der Anwendung.
 Läuft im Hintergrund (blockiert das Bereitstellen der Web-Oberfläche
 nicht) und importiert für jeden konfigurierten Wechselrichter die letzten
 `AUTO_IMPORT_DAYS` Tage aus dessen internem Datenlogger. Dank der
-Dedup-Logik in `import_logdata.py` ist das bei jedem Neustart gefahrlos
-wiederholbar (bereits vorhandene Zeitstempel werden übersprungen) - so
-werden z.B. Lücken durch Ausfallzeiten des Servers automatisch
-nachträglich gefüllt, sobald er wieder läuft.
+Dedup-/Selbstheilungs-Logik in `import_logdata.py` ist das bei jedem
+Neustart gefahrlos wiederholbar (bereits vollstaendig befuellte
+Zeitstempel werden uebersprungen) - so werden z.B. Luecken durch
+Ausfallzeiten des Servers automatisch nachtraeglich gefuellt, sobald er
+wieder laeuft.
 
-Für einen initialen Import weiter zurückliegender Daten (mehr als
-`AUTO_IMPORT_DAYS` Tage) weiterhin `python -m app.import_logdata`
-manuell mit einem größeren Zeitraum verwenden (siehe README).
+Mit `AUTO_IMPORT_DAYS=unbegrenzt` (oder "0"/"all") wird stattdessen so
+weit wie moeglich zurueck abgeglichen (siehe UNLIMITED_LOOKBACK_DAYS
+unten) - der Wechselrichter liefert dann ohnehin nur so viel Historie, wie
+sein interner Logger tatsaechlich noch vorhaelt, ein zu weit reichendes
+Anfrage-Datum ist also unproblematisch.
 
 Kann über die Umgebungsvariable AUTO_IMPORT_HISTORY=false komplett
 deaktiviert werden.
@@ -28,6 +31,12 @@ from .import_logdata import _download, import_rows, parse_logdata
 
 logger = logging.getLogger(__name__)
 
+# Als "unbegrenzt" interpretierte Rueckschau, falls AUTO_IMPORT_DAYS=unbegrenzt
+# gesetzt ist. 10 Jahre sind praktisch immer laenger als die Speichertiefe
+# des internen Loggers - der Wechselrichter liefert dann einfach so viel
+# zurueck, wie er tatsaechlich noch gespeichert hat.
+UNLIMITED_LOOKBACK_DAYS = 3650
+
 
 def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, int, int]:
     """Laeuft in einem Worker-Thread (siehe unten), da CSV-Parsing und die
@@ -42,7 +51,10 @@ def _parse_and_import(raw: str, device_id: str, device_name: str) -> tuple[int, 
 async def _import_one_device(cfg: InverterConfig) -> None:
     tz = ZoneInfo(settings.timezone_name)
     end = datetime.now(tz)
-    begin = end - timedelta(days=settings.auto_import_days)
+    lookback_days = (
+        UNLIMITED_LOOKBACK_DAYS if settings.auto_import_days is None else settings.auto_import_days
+    )
+    begin = end - timedelta(days=lookback_days)
 
     try:
         raw = await _download(cfg.host, cfg.password, cfg.port, begin, end)
@@ -80,9 +92,16 @@ async def _import_one_device(cfg: InverterConfig) -> None:
 async def run_auto_import_for_all_devices() -> None:
     if not settings.auto_import_enabled or not settings.inverters:
         return
-    logger.info(
-        "Starte automatischen Logdaten-Abgleich (letzte %d Tage) im Hintergrund ...",
-        settings.auto_import_days,
-    )
+    if settings.auto_import_days is None:
+        logger.info(
+            "Starte automatischen Logdaten-Abgleich (unbegrenzt zurueck, max. %d Tage) "
+            "im Hintergrund ...",
+            UNLIMITED_LOOKBACK_DAYS,
+        )
+    else:
+        logger.info(
+            "Starte automatischen Logdaten-Abgleich (letzte %d Tage) im Hintergrund ...",
+            settings.auto_import_days,
+        )
     for cfg in settings.inverters:
         await _import_one_device(cfg)
