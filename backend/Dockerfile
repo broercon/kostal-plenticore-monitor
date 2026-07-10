@@ -12,7 +12,9 @@ ENV DB_PATH=/app/data/kostal.db \
     CONFIG_PATH=/app/config/inverters.json \
     FRONTEND_DIR=/app/frontend \
     POLL_INTERVAL_SECONDS=15 \
-    TIMEZONE=Europe/Berlin
+    TIMEZONE=Europe/Berlin \
+    AUTO_IMPORT_HISTORY=true \
+    AUTO_IMPORT_DAYS=7
 
 EXPOSE 8000
 

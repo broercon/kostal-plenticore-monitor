@@ -10,6 +10,8 @@ services:
     environment:
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
       - TIMEZONE=${TIMEZONE:-Europe/Berlin}
+      - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
+      - AUTO_IMPORT_DAYS=${AUTO_IMPORT_DAYS:-7}
     volumes:
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro

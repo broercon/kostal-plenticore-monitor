@@ -62,6 +62,13 @@ class Settings:
         # Fuer die Berechnung von "heute" (Tagessummen) bei lokaler Mitternacht statt UTC.
         self.timezone_name = os.environ.get("TIMEZONE", "Europe/Berlin")
 
+        # Automatischer Abgleich mit dem internen Datenlogger der Wechselrichter
+        # beim Start der Anwendung (fuellt z.B. Luecken durch Ausfallzeiten).
+        self.auto_import_enabled = os.environ.get(
+            "AUTO_IMPORT_HISTORY", "true"
+        ).strip().lower() not in ("false", "0", "no")
+        self.auto_import_days = int(os.environ.get("AUTO_IMPORT_DAYS", "7"))
+
         self.inverters: list[InverterConfig] = []
         if self.config_path.is_file():
             try:

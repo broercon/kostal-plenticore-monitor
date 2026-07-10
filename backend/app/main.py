@@ -1,6 +1,7 @@
 """FastAPI-Anwendung: dient die REST-API und das statische Frontend aus."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from .aggregation import aggregate_per_device, combine_devices, integrate_kwh
+from .auto_import import run_auto_import_for_all_devices
 from .config import settings
 from .database import SessionLocal, init_db
 from .models import Reading
@@ -25,7 +27,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     poller.start()
+    auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
     yield
+    auto_import_task.cancel()
     await poller.stop()
 
 

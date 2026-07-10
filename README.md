@@ -121,10 +121,28 @@ dieser App nachträglich importieren – mit Einschränkungen:
   Doku. Es kann je nach Gerät/Firmware abweichen.
 - Einspeiseleistung lässt sich aus dem Log-Format nicht zuverlässig
   auftrennen und bleibt bei importierten Altdaten leer. Hausverbrauch,
-  PV-Leistung, Netzbezug und Batterie-Ladezustand werden aber befüllt.
+  PV-Leistung, Netzbezug und Batterie-Ladestand werden aber befüllt.
 - Wie weit der interne Logger zurückreicht, hängt vom Gerät ab.
 
-Nutzung (Container muss laufen):
+### Automatischer Abgleich bei jedem Start
+
+Die App macht das jetzt automatisch: bei jedem Start wird im Hintergrund
+(ohne das Dashboard zu blockieren) für jeden konfigurierten Wechselrichter
+der interne Logger der letzten `AUTO_IMPORT_DAYS` Tage (Standard: 7)
+abgeglichen. Das ist dank der Dedup-Logik gefahrlos bei jedem Neustart –
+so werden z.B. Lücken durch Ausfallzeiten automatisch nachträglich
+gefüllt, sobald der Server wieder läuft. In den Logs
+(`docker compose logs -f`) siehst du nach jedem Start eine Zeile wie
+"Automatischer Logdaten-Abgleich für ...: X neue Zeilen, Y bereits
+vorhanden".
+
+Mit `AUTO_IMPORT_HISTORY=false` (in `.env`) lässt sich das abschalten,
+mit `AUTO_IMPORT_DAYS` der Zeitraum anpassen.
+
+### Manueller Import für einen größeren/bestimmten Zeitraum
+
+Für einen initialen Import weiter zurückliegender Daten (mehr als
+`AUTO_IMPORT_DAYS` Tage) weiterhin manuell aufrufen:
 
 ```bash
 # 1. Erst nur eine Vorschau ansehen (nichts wird gespeichert):

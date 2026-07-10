@@ -254,7 +254,21 @@ def main() -> None:
         )
         return
 
-    # Import in die DB
+    inserted, skipped = import_rows(args.device_id, args.device_name or args.device_id, rows)
+    logger.info(
+        "Import fertig: %d neue Zeilen gespeichert, %d bereits vorhandene uebersprungen.",
+        inserted,
+        skipped,
+    )
+
+
+def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int, int]:
+    """Schreibt geparste Logdaten-Zeilen in die DB, dedupliziert nach
+    (device_id, timestamp). Gibt (inserted, skipped) zurueck.
+
+    Wird sowohl vom CLI-Tool (main(), s.o.) als auch vom automatischen
+    Hintergrund-Abgleich beim Start (app/auto_import.py) genutzt.
+    """
     from sqlalchemy import select
 
     from .database import SessionLocal, init_db
@@ -268,12 +282,12 @@ def main() -> None:
         # Fuer den Duplikat-Check auf beiden Seiten UTC-aware normalisieren.
         existing = set()
         for ts in session.scalars(
-            select(Reading.timestamp).where(Reading.device_id == args.device_id)
+            select(Reading.timestamp).where(Reading.device_id == device_id)
         ):
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             existing.add(ts)
-        device_name = args.device_name or args.device_id
+
         inserted = 0
         skipped = 0
         for r in rows:
@@ -282,7 +296,7 @@ def main() -> None:
                 continue
             session.add(
                 Reading(
-                    device_id=args.device_id,
+                    device_id=device_id,
                     device_name=device_name,
                     timestamp=r["timestamp"],
                     home_power_w=r["home_power_w"],
@@ -293,13 +307,10 @@ def main() -> None:
                     battery_power_w=r["battery_power_w"],
                 )
             )
+            existing.add(r["timestamp"])  # Schutz gegen Duplikate innerhalb derselben Datei
             inserted += 1
         session.commit()
-        logger.info(
-            "Import fertig: %d neue Zeilen gespeichert, %d bereits vorhandene uebersprungen.",
-            inserted,
-            skipped,
-        )
+        return inserted, skipped
     finally:
         session.close()
 
