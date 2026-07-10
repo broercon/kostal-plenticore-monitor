@@ -1,0 +1,14 @@
+services:
+  kostal-monitor:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: kostal-monitor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
+    volumes:
+      - ./data:/app/data
+      - ./config/inverters.json:/app/config/inverters.json:ro
