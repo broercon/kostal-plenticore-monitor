@@ -550,13 +550,17 @@ function summarizeImportResults(results) {
   if (!results || results.length === 0) return "";
   return results
     .map((r) => {
+      // Zeigt den tatsaechlich abgefragten Zeitraum mit an, damit sich sofort
+      // erkennen laesst, ob z.B. AUTO_IMPORT_DAYS wirklich "unbegrenzt" bzw.
+      // der erwartete Wert war (statt Logs durchsuchen zu muessen).
+      const range = ` (Zeitraum ${r.range_begin} bis ${r.range_end})`;
       if (r.status === "ok") {
-        return `${r.device_name}: ${r.inserted} neu, ${r.updated} befüllt, ${r.skipped} unverändert`;
+        return `${r.device_name}: ${r.inserted} neu, ${r.updated} befüllt, ${r.skipped} unverändert${range}`;
       }
       if (r.status === "timeout") {
-        return `${r.device_name}: Zeitüberschreitung beim Download`;
+        return `${r.device_name}: Zeitüberschreitung beim Download${range}`;
       }
-      return `${r.device_name}: Fehler (${r.message ?? "unbekannt"})`;
+      return `${r.device_name}: Fehler (${r.message ?? "unbekannt"})${range}`;
     })
     .join(" · ");
 }
