@@ -213,6 +213,17 @@ def main() -> None:
         action="store_true",
         help="Ohne dieses Flag: nur Vorschau (Dry-Run), nichts wird gespeichert",
     )
+    parser.add_argument(
+        "--raw-lines",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Nur die ersten N rohen Zeilen der heruntergeladenen Datei anzeigen "
+            "(mit repr(), damit Tabs/Sonderzeichen sichtbar sind) und beenden - "
+            "zum Herausfinden des tatsaechlichen Dateiformats, ohne zu parsen/speichern."
+        ),
+    )
     args = parser.parse_args()
 
     begin = datetime.strptime(args.begin, "%Y-%m-%d")
@@ -224,6 +235,13 @@ def main() -> None:
     logger.info("Lade Logdaten von %s (%s bis %s) ...", args.host, args.begin, args.end)
     raw = asyncio.run(_download(args.host, args.password, args.port, begin, end))
     logger.info("Heruntergeladen: %d Zeichen", len(raw))
+
+    if args.raw_lines > 0:
+        lines = raw.splitlines()
+        logger.info("--- Erste %d rohe Zeilen (repr) ---", args.raw_lines)
+        for line in lines[: args.raw_lines]:
+            logger.info(repr(line))
+        return
 
     rows, meta = parse_logdata(raw, pv_columns=pv_columns)
 
