@@ -59,6 +59,8 @@ class Settings:
         self.db_path = Path(os.environ.get("DB_PATH", "/app/data/kostal.db"))
         self.poll_interval_seconds = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))
         self.frontend_dir = Path(os.environ.get("FRONTEND_DIR", "/app/frontend"))
+        # Fuer die Berechnung von "heute" (Tagessummen) bei lokaler Mitternacht statt UTC.
+        self.timezone_name = os.environ.get("TIMEZONE", "Europe/Berlin")
 
         self.inverters: list[InverterConfig] = []
         if self.config_path.is_file():

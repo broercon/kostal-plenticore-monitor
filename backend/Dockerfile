@@ -11,7 +11,8 @@ COPY frontend /app/frontend
 ENV DB_PATH=/app/data/kostal.db \
     CONFIG_PATH=/app/config/inverters.json \
     FRONTEND_DIR=/app/frontend \
-    POLL_INTERVAL_SECONDS=15
+    POLL_INTERVAL_SECONDS=15 \
+    TIMEZONE=Europe/Berlin
 
 EXPOSE 8000
 

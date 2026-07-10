@@ -53,14 +53,15 @@ Einträge in der Liste lassen, für einen nur einen Eintrag:
 Das Passwort ist dasselbe, mit dem du dich auch an der Web-Oberfläche des
 Wechselrichters (`http://<ip-des-wechselrichters>`) anmeldest.
 
-### 2. Optional: Abfrageintervall anpassen
+### 2. Optional: Abfrageintervall/Zeitzone anpassen
 
 ```bash
 cp .env.example .env
 ```
 
 `POLL_INTERVAL_SECONDS` steuert, wie oft (in Sekunden) abgefragt wird.
-Standard: 15 Sekunden.
+Standard: 15 Sekunden. `TIMEZONE` legt fest, wann der Tag für die
+"heute"-Kacheln beginnt (Standard: `Europe/Berlin`).
 
 ### 3. Starten
 
@@ -81,6 +82,39 @@ docker compose logs -f
 Verbindungsprobleme zu einem Wechselrichter werden dort als Warnung geloggt,
 ohne dass die Anwendung abstürzt – der nächste Abfrage-Zyklus versucht es
 automatisch erneut.
+
+## Wie werden die Daten gefüllt?
+
+Solange der Container läuft, fragt der Hintergrund-Task alle
+`POLL_INTERVAL_SECONDS` Sekunden jeden konfigurierten Wechselrichter ab und
+schreibt einen Datensatz in `data/kostal.db`. Es gibt **keine rückwirkende
+Migration** alter Messwerte: Der Plenticore selbst stellt über seine
+REST-API nur Momentanwerte plus kumulierte Tages-/Monats-/Jahres-/
+Gesamtwerte bereit, aber keine minutengenaue Historie zum Nachladen. Die
+Zeitreihen-Diagramme bauen sich also erst mit der Zeit auf, seit dem
+Zeitpunkt, ab dem der Container läuft – der Server muss dafür dauerhaft
+aktiv sein (z.B. auf einem Raspberry Pi, der durchläuft), nicht nur beim
+Betrachten des Dashboards.
+
+Die drei "heute"-Kacheln (PV-Ertrag, Verbrauch, Einspeisung) nutzen primär
+die vom Wechselrichter selbst mitgeführten Tageswerte. Manche Geräte/Logins
+liefern diese aber nicht vollständig (z.B. wenn der normale Nutzer-Login
+keinen Zugriff auf das Statistik-Modul hat, oder der virtuelle
+Einspeise-Tageswert eine Batterie voraussetzt). In diesem Fall rechnet die
+Anwendung automatisch aus den seit lokaler Mitternacht gespeicherten
+Leistungswerten hoch (Integration) – das braucht aber ebenfalls etwas
+Vorlauf seit Mitternacht, bis sinnvolle Werte erscheinen; bei einem frisch
+gestarteten Container mitten am Tag zeigt die selbst berechnete Kachel dann
+zunächst nur den Teil des Tages, der bereits erfasst wurde.
+
+## Diagramm: mehrere Kurven ein-/ausblenden
+
+Das Diagramm zeigt bereits Hausverbrauch, Einspeisung, Netzbezug und
+PV-Leistung übereinander. Auf einen Eintrag in der Legende klicken blendet
+die jeweilige Kurve ein oder aus (Standardverhalten von Chart.js). Über die
+Buttons oberhalb des Diagramms lässt sich der Zeitraum wechseln (24 Std,
+7 Tage, 30 Tage) – für die 7-Tage-Ansicht braucht es entsprechend ein paar
+Tage Laufzeit, bis sie vollständig gefüllt ist.
 
 ## Daten sichern
 

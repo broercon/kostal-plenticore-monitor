@@ -9,6 +9,7 @@ services:
       - "8000:8000"
     environment:
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
+      - TIMEZONE=${TIMEZONE:-Europe/Berlin}
     volumes:
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro

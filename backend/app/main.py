@@ -9,12 +9,13 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
-from .aggregation import aggregate_per_device, combine_devices
+from .aggregation import aggregate_per_device, combine_devices, integrate_kwh
 from .config import settings
 from .database import SessionLocal, init_db
 from .models import Reading
 from .poller import poller
 from .schemas import DeviceOut, HistoryPoint, ReadingOut, SummaryOut
+from .timeutil import local_midnight_utc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,20 +81,52 @@ def get_history(
 
 @app.get("/api/readings/today-summary", response_model=list[SummaryOut])
 def get_today_summary() -> list[SummaryOut]:
+    """Tagessummen je Wechselrichter.
+
+    Bevorzugt die vom Geraet selbst gelieferten Tages-Statistikwerte. Manche
+    Geraete/Logins liefern diese aber nicht (z.B. eingeschraenkter
+    Nutzer-Login ohne Statistik-Modul, oder der virtuelle Einspeise-Wert
+    braucht eigentlich eine Batterie). In diesem Fall werden die fehlenden
+    Werte aus den seit lokaler Mitternacht gespeicherten Messwerten
+    hochgerechnet (Integration der Leistungswerte).
+    """
+    since = local_midnight_utc()
     summaries = []
+
     for cfg in settings.inverters:
         reading = poller.latest.get(cfg.id)
-        if reading is None:
-            summaries.append(SummaryOut(device_id=cfg.id, device_name=cfg.name))
-            continue
+        yield_kwh = reading.get("yield_day_kwh") if reading else None
+        home_kwh = reading.get("home_consumption_day_kwh") if reading else None
+        grid_kwh = reading.get("energy_grid_day_kwh") if reading else None
+
+        if yield_kwh is None or home_kwh is None or grid_kwh is None:
+            session = SessionLocal()
+            try:
+                rows = list(
+                    session.scalars(
+                        select(Reading)
+                        .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
+                        .order_by(Reading.timestamp)
+                    )
+                )
+            finally:
+                session.close()
+
+            if yield_kwh is None:
+                yield_kwh = integrate_kwh(rows, "pv_power_w")
+            if home_kwh is None:
+                home_kwh = integrate_kwh(rows, "home_power_w")
+            if grid_kwh is None:
+                grid_kwh = integrate_kwh(rows, "feed_in_power_w")
+
         summaries.append(
             SummaryOut(
                 device_id=cfg.id,
                 device_name=cfg.name,
-                yield_day_kwh=reading.get("yield_day_kwh"),
-                home_consumption_day_kwh=reading.get("home_consumption_day_kwh"),
-                energy_grid_day_kwh=reading.get("energy_grid_day_kwh"),
-                as_of=reading.get("timestamp"),
+                yield_day_kwh=yield_kwh,
+                home_consumption_day_kwh=home_kwh,
+                energy_grid_day_kwh=grid_kwh,
+                as_of=reading.get("timestamp") if reading else None,
             )
         )
     return summaries

@@ -127,3 +127,8 @@ main {
 canvas {
   width: 100% !important;
 }
+
+.chart-hint {
+  margin: 12px 0 0;
+  font-size: 0.8rem;
+}

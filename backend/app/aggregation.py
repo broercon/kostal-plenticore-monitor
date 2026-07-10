@@ -73,3 +73,32 @@ def combine_devices(
             merged[field] = total
         combined[bk] = merged
     return combined
+
+
+def integrate_kwh(rows: list[Reading], field: str) -> float | None:
+    """Integriert eine Leistungs-Zeitreihe (Watt) zu einer Energiemenge (kWh),
+    per Trapezregel ueber die vorhandenen Messpunkte.
+
+    Wird als Fallback genutzt, wenn der Wechselrichter selbst keinen
+    passenden Tages-Statistikwert liefert (z.B. eingeschraenkter Nutzer-Login
+    ohne Zugriff auf das Statistik-Modul, oder fehlende Batterie fuer den
+    virtuellen Einspeise-Wert).
+    """
+    points = sorted(
+        (
+            (row.timestamp, getattr(row, field))
+            for row in rows
+            if getattr(row, field) is not None
+        ),
+        key=lambda p: p[0],
+    )
+    if len(points) < 2:
+        return None
+
+    energy_wh = 0.0
+    for (t0, p0), (t1, p1) in zip(points, points[1:]):
+        dt_hours = (t1 - t0).total_seconds() / 3600
+        if dt_hours <= 0:
+            continue
+        energy_wh += (p0 + p1) / 2 * dt_hours
+    return round(energy_wh / 1000, 3)
