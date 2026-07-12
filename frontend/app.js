@@ -763,6 +763,11 @@ async function refreshHourlyCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
+      // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
+      // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
+      // nur der eine, direkt getroffene Balken.
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: {
           stacked: true,
@@ -784,6 +789,13 @@ async function refreshHourlyCompareChart() {
               item.parsed.y === null
                 ? `${item.dataset.label}: keine Daten`
                 : `${item.dataset.label}: ${item.parsed.y.toFixed(2)} kWh`,
+            // Zeigt zusaetzlich die Summe aller Wechselrichter fuer diese
+            // Stunde an, damit man neben den Einzelwerten auch den
+            // Gesamtertrag auf einen Blick sieht.
+            footer: (items) => {
+              const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
+              return `Gesamt: ${total.toFixed(2)} kWh`;
+            },
           },
         },
       },
