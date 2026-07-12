@@ -13,8 +13,55 @@
   <div class="topbar-right">
     <select id="device-select"></select>
     <span id="last-update" class="muted"></span>
+    <span id="user-info" class="muted"></span>
+    <button id="change-password-btn" type="button">Passwort ändern</button>
+    <button id="admin-panel-btn" type="button" class="hidden">Benutzerverwaltung</button>
+    <button id="logout-btn" type="button">Abmelden</button>
   </div>
 </header>
+
+<!-- Passwort-Aenderungs-Dialog: fuer alle angemeldeten Nutzer (jede Rolle),
+     aendert nur das eigene Passwort und verlangt dafuer das aktuelle. -->
+<div id="change-password-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Passwort ändern</h2>
+    <form id="change-password-form">
+      <label for="cp-current">Aktuelles Passwort</label>
+      <input type="password" id="cp-current" autocomplete="current-password" required />
+
+      <label for="cp-new">Neues Passwort</label>
+      <input type="password" id="cp-new" autocomplete="new-password" minlength="6" required />
+
+      <div class="modal-actions">
+        <button type="button" id="cp-cancel">Abbrechen</button>
+        <button type="submit" id="cp-submit">Speichern</button>
+      </div>
+      <p class="login-error muted" id="cp-error"></p>
+    </form>
+  </div>
+</div>
+
+<!-- Admin-Panel: nur sichtbar/nutzbar fuer Rolle "admin" (server-seitig
+     ueber /api/admin/... zusaetzlich abgesichert), zum Zuruecksetzen der
+     Passwoerter anderer Nutzer (z.B. wenn betreiber1/betreiber2 ihr Passwort
+     vergessen haben). -->
+<div id="admin-panel-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Benutzerverwaltung</h2>
+    <p class="muted">Passwort eines Nutzers zurücksetzen. Das neue Passwort wird einmalig angezeigt
+      und muss beim nächsten Login vom Nutzer geändert werden.</p>
+    <table class="user-table" id="admin-user-table">
+      <thead>
+        <tr><th>Benutzername</th><th>Rolle</th><th></th></tr>
+      </thead>
+      <tbody id="admin-user-table-body"></tbody>
+    </table>
+    <p class="muted" id="admin-reset-result"></p>
+    <div class="modal-actions">
+      <button type="button" id="admin-panel-close">Schließen</button>
+    </div>
+  </div>
+</div>
 
 <main>
   <div class="import-trigger">

@@ -195,3 +195,94 @@ canvas {
   opacity: 0.35;
   cursor: not-allowed;
 }
+
+/* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
+
+.hidden {
+  display: none !important;
+}
+
+#user-info {
+  white-space: nowrap;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.modal form,
+.modal {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal label {
+  margin: 10px 0 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.modal input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.login-error {
+  color: var(--accent-red);
+  min-height: 1.1em;
+  margin: 10px 0 0;
+}
+
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 0.9rem;
+}
+
+.user-table th,
+.user-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.user-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}

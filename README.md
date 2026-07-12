@@ -261,6 +261,80 @@ entsprechend schmaler (mit Tooltip trotzdem einzeln ablesbar). Bei nur
 einem konfigurierten Wechselrichter zeigt das Diagramm entsprechend nur
 eine Farbe.
 
+## Benutzerverwaltung / Login
+
+Das Dashboard ist jetzt durchgängig durch einen Login geschützt – ohne
+gültige Anmeldung liefert die API überall `401` und das Frontend leitet
+automatisch zur Login-Seite um. Es gibt zwei Rollen:
+
+- **admin** – volle Rechte, zusätzlich Zugriff auf die Benutzerverwaltung
+  (Nutzer auflisten, Passwörter anderer Nutzer zurücksetzen).
+- **betreiber** – normaler Zugriff auf Dashboard/Diagramme, kann nur das
+  eigene Passwort ändern.
+
+### Erste Anmeldung
+
+Beim allerersten Start (wenn die `users`-Tabelle noch leer ist) legt die App
+automatisch drei Nutzer an: `admin` (Rolle admin), `betreiber1` und `betreiber2`
+(Rolle betreiber) – jeweils mit einem zufällig erzeugten Initial-Passwort.
+Diese Passwörter werden **einmalig** in den Logs ausgegeben:
+
+```bash
+docker compose logs -f kostal-monitor
+```
+
+Dort erscheint ein Block wie:
+
+```
+======================================================================
+ERSTE ANMELDEDATEN (nur jetzt im Log sichtbar - bitte notieren
+und nach dem ersten Login ueber "Passwort aendern" ersetzen):
+  Benutzername: admin       Passwort: xxxxxxxxxxxxxx
+  Benutzername: betreiber1    Passwort: xxxxxxxxxxxxxx
+  Benutzername: betreiber2    Passwort: xxxxxxxxxxxxxx
+======================================================================
+```
+
+Bitte notieren und danach über den Button "Passwort ändern" (oben rechts im
+Dashboard) durch ein eigenes Passwort ersetzen – bei diesen drei
+Initial-Konten öffnet sich der Passwort-Ändern-Dialog beim ersten Login
+automatisch.
+
+### Passwort ändern / vergessen
+
+Jeder angemeldete Nutzer kann über "Passwort ändern" (Topbar) sein eigenes
+Passwort setzen – dafür muss das aktuelle Passwort bekannt sein. Hat jemand
+sein Passwort vergessen, kann ein Admin es über die Benutzerverwaltung
+("Benutzerverwaltung"-Button, nur für Rolle admin sichtbar) zurücksetzen:
+dort wird ein neues, zufälliges Passwort angezeigt (nur einmal – merken
+oder direkt an die Person weitergeben), das beim nächsten Login sofort
+geändert werden muss.
+
+### Technische Details
+
+- Passwörter werden nicht im Klartext gespeichert, sondern als
+  PBKDF2-HMAC-SHA256-Hash (200.000 Iterationen) mit individuellem Salt je
+  Nutzer.
+- Sitzungen laufen über ein httponly-Cookie (kein Zugriff per JavaScript,
+  schützt gegen einfaches Auslesen durch eingeschleusten Code) und sind
+  serverseitig gespeichert – ein Logout oder Passwort-Wechsel invalidiert
+  die Sitzung sofort, ein Container-Neustart meldet bereits angemeldete
+  Nutzer nicht ab (Sitzungen sind 30 Tage gültig).
+- Diese Nutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
+  Passwort-Reset per E-Mail) – für den Heimgebrauch im eigenen Netz
+  gedacht. Falls das Dashboard von außerhalb des eigenen Netzes erreichbar
+  sein soll, zusätzlich HTTPS (z.B. über einen Reverse Proxy) davorschalten,
+  damit Zugangsdaten nicht unverschlüsselt übertragen werden.
+
+### Update von einer Version ohne Benutzerverwaltung
+
+Bereits vorhandene Messwerte (`data/kostal.db`) bleiben beim Update
+vollständig erhalten: die App legt beim Start nur die neu hinzugekommenen
+Tabellen (`users`, `sessions`) an, die bestehende `readings`-Tabelle wird
+dabei nicht angefasst. Ein einfaches `docker compose up -d --build` reicht
+aus, um die neuen Tabellen zu ergänzen und die drei Standardnutzer
+anzulegen – die komplette bisherige Historie bleibt wie gewohnt abrufbar.
+
 ## Daten sichern
 
 Die komplette Historie liegt in `./data/kostal.db` (SQLite-Datei). Für ein
@@ -269,6 +343,22 @@ Container, damit keine Schreiboperation mittendrin ist).
 
 ## API (für eigene Auswertungen)
 
+Alle Endpunkte außer `/api/auth/login` erfordern eine gültige Anmeldung
+(Session-Cookie) – ohne diese liefern sie `401`. Für eigene Skripte zuerst
+gegen `/api/auth/login` einloggen und das Cookie mitsenden (z.B. `curl -c
+cookies.txt -b cookies.txt ...`).
+
+- `POST /api/auth/login` – `{"username": ..., "password": ...}`, setzt bei
+  Erfolg das Session-Cookie.
+- `POST /api/auth/logout` – beendet die aktuelle Sitzung.
+- `GET /api/auth/me` – aktueller Nutzer (`id`, `username`, `role`,
+  `must_change_password`).
+- `POST /api/auth/change-password` – eigenes Passwort ändern
+  (`current_password`, `new_password`).
+- `GET /api/admin/users` – (nur Rolle admin) alle Nutzer auflisten.
+- `POST /api/admin/users/{id}/reset-password` – (nur Rolle admin) Passwort
+  eines Nutzers zurücksetzen; ohne `new_password` im Body wird eines
+  zufällig erzeugt und in der Antwort zurückgegeben.
 - `GET /api/devices` – konfigurierte Wechselrichter
 - `GET /api/readings/latest` – letzter bekannter Messwert je Wechselrichter
 - `GET /api/readings/today-summary` – Tagessummen (PV-Ertrag, Verbrauch, Einspeisung)
@@ -291,6 +381,32 @@ Container, damit keine Schreiboperation mittendrin ist).
   Abgleichs (`running`, `last_started_at`, `last_finished_at`, `results`
   je Wechselrichter).
 
+## Tests
+
+Die Benutzerverwaltung (Login, Rollen, Passwort-Änderung, Session-Handling)
+sowie die Update-Sicherheit für Bestandsdaten sind mit automatisierten
+Tests abgedeckt (`backend/tests/`, pytest + FastAPI TestClient – echte
+HTTP-Requests gegen die App inkl. Cookies, nicht nur isolierte
+Funktionsaufrufe). Lokal ausführen:
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+Die Tests laufen gegen eine temporäre, isolierte SQLite-Datenbank (nicht
+gegen `data/kostal.db`) und starten bewusst keinen echten Poller/Import
+gegen einen Wechselrichter. Abgedeckt sind u.a.: Standard-Nutzer werden nur
+einmal angelegt, falsches/unbekanntes Passwort wird abgelehnt, erfolgreicher
+Login setzt ein Cookie und schaltet die API frei, Logout invalidiert die
+Sitzung, eigenes Passwort ändern (inkl. Ablehnung bei falschem aktuellem
+Passwort), Admin-Endpunkte sind für die Rolle betreiber gesperrt (403),
+Admin kann Nutzer auflisten und deren Passwort zurücksetzen, sowie: ein
+`init_db()`-Lauf auf einer Bestandsdatenbank (nur `readings`-Tabelle,
+noch ohne Benutzerverwaltung) ergänzt lediglich die fehlenden Tabellen und
+lässt vorhandene Messwerte unverändert.
+
 ## Grenzen / mögliche Erweiterungen
 
 - Aktuell wird nur eine feste Auswahl an Prozessdaten erfasst (Verbrauch,
@@ -300,6 +416,7 @@ Container, damit keine Schreiboperation mittendrin ist).
   11.000 Zeilen/Tag). Für viele Jahre Historie wäre irgendwann ein Umzug auf
   PostgreSQL oder eine Zeitreihen-DB sinnvoll – die Datenzugriffsschicht ist
   bewusst einfach gehalten, damit das leicht austauschbar bleibt.
-- Kein Login/Auth auf dem Dashboard selbst – für den Heimgebrauch im eigenen
-  Netz gedacht. Falls von außen erreichbar, unbedingt hinter einen Reverse
-  Proxy mit Authentifizierung stellen.
+- Die Benutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
+  Passwort-Reset per E-Mail, feste Rollen admin/betreiber) – siehe Abschnitt
+  "Benutzerverwaltung / Login" oben für Details und Empfehlungen bei
+  Zugriff von außerhalb des eigenen Netzes.

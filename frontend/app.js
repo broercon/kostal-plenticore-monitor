@@ -1,4 +1,5 @@
 const state = {
+  currentUser: null, // {id, username, role, must_change_password}, gesetzt in checkAuth()
   devices: [],
   selectedDeviceId: "", // "" bedeutet: alle Geraete summiert
   hours: 24,
@@ -41,10 +42,171 @@ function fmtPercent(value) {
   return Math.round(value) + " %";
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url);
+async function fetchJson(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    // Sitzung nicht (mehr) gueltig - z.B. nach Ablauf, Logout in einem
+    // anderen Tab, oder Container-Neustart mit geleerter Session-Tabelle -
+    // zurueck zur Login-Seite statt kryptischer Fehlermeldungen im Dashboard.
+    window.location.href = "login.html";
+    // Nie aufloesende Promise, damit nachfolgender Code (der die Antwort
+    // verarbeiten wuerde) nicht mehr ausgefuehrt wird, waehrend der Browser
+    // zur Login-Seite navigiert.
+    return new Promise(() => {});
+  }
   if (!res.ok) throw new Error(`Request an ${url} fehlgeschlagen: ${res.status}`);
   return res.json();
+}
+
+// --- Anmeldung: Nutzerinfo pruefen, Topbar fuellen, Logout/Passwort-Aenderung
+// und (fuer Admins) Benutzerverwaltung einrichten. ---
+
+async function checkAuth() {
+  const res = await fetch("/api/auth/me");
+  if (!res.ok) {
+    window.location.href = "login.html";
+    return new Promise(() => {}); // init() haelt hier an, s.o.
+  }
+  state.currentUser = await res.json();
+
+  const roleLabel = state.currentUser.role === "admin" ? "Admin" : "Betreiber";
+  el("user-info").textContent = `${state.currentUser.username} (${roleLabel})`;
+
+  if (state.currentUser.role === "admin") {
+    el("admin-panel-btn").classList.remove("hidden");
+  }
+
+  if (state.currentUser.must_change_password) {
+    openChangePasswordModal(
+      "Bitte vergeben Sie jetzt ein eigenes Passwort (aktuell ist noch das " +
+        "initiale/zurückgesetzte Passwort aktiv)."
+    );
+  }
+}
+
+function openChangePasswordModal(hintText) {
+  el("cp-error").textContent = hintText || "";
+  el("cp-current").value = "";
+  el("cp-new").value = "";
+  el("change-password-overlay").classList.remove("hidden");
+  el("cp-current").focus();
+}
+
+function closeChangePasswordModal() {
+  el("change-password-overlay").classList.add("hidden");
+}
+
+function setupChangePassword() {
+  el("change-password-btn").addEventListener("click", () => openChangePasswordModal());
+  el("cp-cancel").addEventListener("click", closeChangePasswordModal);
+
+  el("change-password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errorEl = el("cp-error");
+    const submitBtn = el("cp-submit");
+    errorEl.textContent = "";
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_password: el("cp-current").value,
+          new_password: el("cp-new").value,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errorEl.textContent = data.detail || "Passwort konnte nicht geändert werden.";
+        return;
+      }
+      state.currentUser.must_change_password = false;
+      closeChangePasswordModal();
+    } catch (err) {
+      console.error(err);
+      errorEl.textContent = "Verbindung zum Server fehlgeschlagen.";
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+function setupLogout() {
+  el("logout-btn").addEventListener("click", async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      console.error(err);
+    }
+    window.location.href = "login.html";
+  });
+}
+
+// --- Admin-Panel: Liste aller Nutzer, Passwort-Reset ---
+
+async function loadAdminUserTable() {
+  const users = await fetchJson("/api/admin/users");
+  const tbody = el("admin-user-table-body");
+  tbody.innerHTML = "";
+  for (const user of users) {
+    const tr = document.createElement("tr");
+
+    const nameTd = document.createElement("td");
+    nameTd.textContent = user.username;
+    tr.appendChild(nameTd);
+
+    const roleTd = document.createElement("td");
+    roleTd.textContent = user.role === "admin" ? "Admin" : "Betreiber";
+    tr.appendChild(roleTd);
+
+    const actionTd = document.createElement("td");
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.textContent = "Passwort zurücksetzen";
+    resetBtn.addEventListener("click", async () => {
+      if (!confirm(`Neues zufälliges Passwort für "${user.username}" setzen?`)) return;
+      resetBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/admin/users/${user.id}/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          el("admin-reset-result").textContent = data.detail || "Fehler beim Zurücksetzen.";
+          return;
+        }
+        el("admin-reset-result").textContent =
+          `Neues Passwort für ${data.username}: ${data.new_password} ` +
+          `(bitte notieren und weitergeben – wird nicht erneut angezeigt).`;
+      } catch (err) {
+        console.error(err);
+        el("admin-reset-result").textContent = "Verbindung zum Server fehlgeschlagen.";
+      } finally {
+        resetBtn.disabled = false;
+      }
+    });
+    actionTd.appendChild(resetBtn);
+    tr.appendChild(actionTd);
+
+    tbody.appendChild(tr);
+  }
+}
+
+function setupAdminPanel() {
+  el("admin-panel-btn").addEventListener("click", async () => {
+    el("admin-reset-result").textContent = "";
+    el("admin-panel-overlay").classList.remove("hidden");
+    try {
+      await loadAdminUserTable();
+    } catch (err) {
+      console.error(err);
+    }
+  });
+  el("admin-panel-close").addEventListener("click", () => {
+    el("admin-panel-overlay").classList.add("hidden");
+  });
 }
 
 async function loadDevices() {
@@ -713,6 +875,10 @@ async function refreshAll() {
 }
 
 async function init() {
+  await checkAuth(); // leitet bei fehlender/ungueltiger Sitzung zu login.html um
+  setupChangePassword();
+  setupLogout();
+  setupAdminPanel();
   await loadDevices();
   setupRangeButtons();
   setupDayCompareControls();

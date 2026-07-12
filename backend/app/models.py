@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -35,3 +35,34 @@ class Reading(Base):
     yield_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     home_consumption_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     energy_grid_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class User(Base):
+    """Ein Benutzer der Weboberflaeche (Login/Passwort, Rolle)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # PBKDF2-HMAC-SHA256: Salt und Hash getrennt als Hex-Strings gespeichert
+    # (siehe auth.py), keine externe Hashing-Bibliothek noetig.
+    password_salt: Mapped[str] = mapped_column(String(32), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # "admin" (volle Rechte inkl. Nutzerverwaltung) oder "betreiber" (normaler
+    # Zugriff auf die Daten, kann nur das eigene Passwort aendern).
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="betreiber")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Session(Base):
+    """Angemeldete Sitzung (Cookie-Token -> Benutzer), serverseitig
+    gespeichert, damit sie sich gezielt invalidieren laesst (Logout,
+    Passwort-Aenderung) und Logins Container-Neustarts ueberleben."""
+
+    __tablename__ = "sessions"
+
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

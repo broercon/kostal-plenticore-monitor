@@ -114,3 +114,44 @@ class HourlyPerDeviceOut(BaseModel):
     metric: str
     devices: list[HourlyDeviceInfo]
     buckets: list[HourlyBucket]
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class MeOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    must_change_password: bool
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class ChangePasswordOut(BaseModel):
+    success: bool
+    message: str
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    must_change_password: bool
+
+
+class AdminResetPasswordIn(BaseModel):
+    # Leer lassen, um automatisch ein zufaelliges neues Passwort zu
+    # generieren (wird in der Antwort zurueckgegeben).
+    new_password: str | None = None
+
+
+class AdminResetPasswordOut(BaseModel):
+    username: str
+    new_password: str
+    message: str

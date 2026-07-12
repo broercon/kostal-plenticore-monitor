@@ -8,10 +8,11 @@ from datetime import datetime, timedelta, timezone
 
 from typing import Literal
 
-from fastapi import FastAPI, Query
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
+from . import auth
 from .aggregation import (
     aggregate_per_device,
     combine_devices,
@@ -23,9 +24,14 @@ from .aggregation import (
 from .auto_import import get_import_status, run_auto_import_for_all_devices, trigger_manual_import
 from .config import settings
 from .database import SessionLocal, init_db
-from .models import Reading
+from .models import Reading, User
 from .poller import poller
 from .schemas import (
+    AdminResetPasswordIn,
+    AdminResetPasswordOut,
+    AdminUserOut,
+    ChangePasswordIn,
+    ChangePasswordOut,
     DailyTotalsOut,
     DayProfileOut,
     DeviceOut,
@@ -33,6 +39,8 @@ from .schemas import (
     HourlyPerDeviceOut,
     ImportStatusOut,
     ImportTriggerOut,
+    LoginIn,
+    MeOut,
     ReadingOut,
     SummaryOut,
 )
@@ -53,6 +61,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    auth.seed_default_users()
     poller.start()
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
     yield
@@ -76,8 +85,81 @@ async def no_cache_headers(request, call_next):
     return response
 
 
+@app.post("/api/auth/login", response_model=MeOut)
+def post_login(payload: LoginIn, response: Response) -> MeOut:
+    user = auth.login(payload.username, payload.password, response)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Benutzername oder Passwort falsch."
+        )
+    return MeOut(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        must_change_password=user.must_change_password,
+    )
+
+
+@app.post("/api/auth/logout")
+def post_logout(response: Response, kpm_session: str | None = Cookie(default=None)) -> dict:
+    auth.logout(kpm_session, response)
+    return {"success": True}
+
+
+@app.get("/api/auth/me", response_model=MeOut)
+def get_me(user: User = Depends(auth.get_current_user)) -> MeOut:
+    return MeOut(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        must_change_password=user.must_change_password,
+    )
+
+
+@app.post("/api/auth/change-password", response_model=ChangePasswordOut)
+def post_change_password(
+    payload: ChangePasswordIn, user: User = Depends(auth.get_current_user)
+) -> ChangePasswordOut:
+    ok = auth.change_own_password(user.id, payload.current_password, payload.new_password)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Aktuelles Passwort ist falsch."
+        )
+    return ChangePasswordOut(success=True, message="Passwort geändert.")
+
+
+@app.get("/api/admin/users", response_model=list[AdminUserOut])
+def get_admin_users(_admin: User = Depends(auth.require_admin)) -> list[AdminUserOut]:
+    return [
+        AdminUserOut(
+            id=u.id, username=u.username, role=u.role, must_change_password=u.must_change_password
+        )
+        for u in auth.list_users()
+    ]
+
+
+@app.post("/api/admin/users/{user_id}/reset-password", response_model=AdminResetPasswordOut)
+def post_admin_reset_password(
+    user_id: int, payload: AdminResetPasswordIn, _admin: User = Depends(auth.require_admin)
+) -> AdminResetPasswordOut:
+    result = auth.admin_reset_password(user_id, payload.new_password)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nutzer nicht gefunden.")
+    user, new_password = result
+    return AdminResetPasswordOut(
+        username=user.username,
+        new_password=new_password,
+        message=(
+            f"Neues Passwort für {user.username} gesetzt. Muss beim naechsten Login "
+            "geaendert werden."
+        ),
+    )
+
+
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)
-async def post_trigger_import_history() -> ImportTriggerOut:
+async def post_trigger_import_history(
+    _user: User = Depends(auth.get_current_user),
+) -> ImportTriggerOut:
     """Stoesst den Logdaten-Abgleich sofort an, statt nur beim naechsten
     Container-Start - z.B. um nach einer Konfigurationsaenderung (etwa
     AUTO_IMPORT_DAYS) direkt zu pruefen, ob der Import durchlaeuft, ohne
@@ -92,19 +174,19 @@ async def post_trigger_import_history() -> ImportTriggerOut:
 
 
 @app.get("/api/admin/import-history/status", response_model=ImportStatusOut)
-def get_import_history_status() -> ImportStatusOut:
+def get_import_history_status(_user: User = Depends(auth.get_current_user)) -> ImportStatusOut:
     return ImportStatusOut(**get_import_status())
 
 
 @app.get("/api/devices", response_model=list[DeviceOut])
-def get_devices() -> list[DeviceOut]:
+def get_devices(_user: User = Depends(auth.get_current_user)) -> list[DeviceOut]:
     return [
         DeviceOut(id=cfg.id, name=cfg.name, host=cfg.host) for cfg in settings.inverters
     ]
 
 
 @app.get("/api/readings/latest", response_model=list[ReadingOut])
-def get_latest() -> list[ReadingOut]:
+def get_latest(_user: User = Depends(auth.get_current_user)) -> list[ReadingOut]:
     return [ReadingOut(**reading) for reading in poller.latest.values()]
 
 
@@ -113,6 +195,7 @@ def get_history(
     device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
     hours: float = Query(default=24, ge=0.1, le=24 * 90),
     bucket_minutes: float = Query(default=5, ge=1, le=1440),
+    _user: User = Depends(auth.get_current_user),
 ) -> list[HistoryPoint]:
     if hours <= 24:
         # Feste lokale Tagesgrenze statt rollierendem 24h-Fenster: sonst
@@ -151,7 +234,7 @@ def get_history(
 
 
 @app.get("/api/readings/today-summary", response_model=list[SummaryOut])
-def get_today_summary() -> list[SummaryOut]:
+def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[SummaryOut]:
     """Tagessummen je Wechselrichter.
 
     Bevorzugt die vom Geraet selbst gelieferten Tages-Statistikwerte. Manche
@@ -208,6 +291,7 @@ def get_day_profile(
     device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
     days: int = Query(default=7, ge=1, le=30, description="Anzahl Tage rueckwirkend inkl. heute"),
     bucket_minutes: int = Query(default=15, ge=5, le=60),
+    _user: User = Depends(auth.get_current_user),
 ) -> DayProfileOut:
     """Liefert je Kalendertag (in TIMEZONE) eine Zeitreihe ueber 00:00-24:00
     Uhr, damit sich mehrere Tage im Diagramm ueberlagern und direkt
@@ -257,6 +341,7 @@ def get_daily_totals(
     device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
     metric: Literal["home", "pv", "grid_draw", "feed_in"] = Query(default="home"),
     days: int = Query(default=30, ge=1, le=400, description="Anzahl Tage rueckwirkend inkl. heute"),
+    _user: User = Depends(auth.get_current_user),
 ) -> DailyTotalsOut:
     """Liefert je Kalendertag die integrierte Energiemenge (kWh) fuer ein
     Saeulendiagramm (z.B. Hausverbrauch pro Tag). Anders als die
@@ -302,6 +387,7 @@ def get_daily_totals(
 def get_hourly_per_device(
     metric: Literal["feed_in", "pv", "home", "grid_draw"] = Query(default="feed_in"),
     days: int = Query(default=1, ge=1, le=30, description="Anzahl Tage rueckwirkend inkl. heute"),
+    _user: User = Depends(auth.get_current_user),
 ) -> HourlyPerDeviceOut:
     """Liefert stuendliche kWh-Summen JE Wechselrichter (nicht summiert) -
     fuer ein gestapeltes Saeulendiagramm, in dem sich z.B. die Einspeisung
