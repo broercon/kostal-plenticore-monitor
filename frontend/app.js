@@ -255,9 +255,16 @@ async function refreshLiveCards() {
   } else {
     el("card-battery-wrapper").style.display = "";
     const batteryPower = fmtWatt(sumField(relevant, "battery_power_w"));
-    const socText = batteryEntries
-      .map((r) => `${r.device_name}: ${fmtPercent(r.battery_soc_percent)}`)
-      .join(" · ");
+    // Geraetename nur anzeigen, wenn mehrere Batterien gleichzeitig sichtbar
+    // sind (z.B. "Alle (Summe)" mit zwei Wechselrichtern mit Batterie) - bei
+    // nur einem Eintrag ist die Zuordnung schon durch den Filter oben
+    // eindeutig, der Name waere redundant.
+    const socText =
+      batteryEntries.length > 1
+        ? batteryEntries
+            .map((r) => `${r.device_name}: ${fmtPercent(r.battery_soc_percent)}`)
+            .join(" · ")
+        : fmtPercent(batteryEntries[0].battery_soc_percent);
     el("card-battery").textContent = `${batteryPower} (${socText})`;
   }
 
@@ -692,9 +699,15 @@ function setupDailyTotalsControls() {
   });
 }
 
-// --- Wechselrichter-Vergleich: gestapeltes Saeulendiagramm, Einspeisung pro
+// --- Wechselrichter-Vergleich: gestapeltes Saeulendiagramm, PV-Ertrag pro
 // Stunde je Wechselrichter (nicht summiert), damit sich die Geraete direkt
-// farblich vergleichen lassen. ---
+// farblich vergleichen lassen. Nutzt die Metrik "pv" (gesamte erzeugte
+// Energie), nicht "feed_in" (nur die Einspeisung) - der Nutzer will den
+// kompletten Ertrag sehen, egal ob eingespeist oder direkt im Haus
+// verbraucht. Ergibt nur einen Sinn, wenn oben "Alle (Summe)" ausgewaehlt
+// ist (mehrere Wechselrichter zum Vergleichen) - bei einem einzelnen
+// ausgewaehlten Geraet wird der ganze Abschnitt ausgeblendet, siehe
+// updateHourlyCompareVisibility(). ---
 
 function hourLabel(bucketIso, multiDay) {
   // bucketIso z.B. "2026-07-12T14:00:00" (lokale Zeit, ohne Offset)
@@ -705,9 +718,22 @@ function hourLabel(bucketIso, multiDay) {
   return `${d}.${m}. ${hour}h`;
 }
 
+function updateHourlyCompareVisibility() {
+  // Der Vergleich zwischen Wechselrichtern ergibt nur Sinn, wenn oben
+  // "Alle (Summe)" ausgewaehlt ist (selectedDeviceId === "") UND es
+  // ueberhaupt mehr als einen Wechselrichter gibt - bei einem einzelnen
+  // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
+  // vergleichen.
+  const visible = state.selectedDeviceId === "" && state.devices.length > 1;
+  el("hourly-section").classList.toggle("hidden", !visible);
+  return visible;
+}
+
 async function refreshHourlyCompareChart() {
+  if (!updateHourlyCompareVisibility()) return;
+
   const days = state.hourlyCompare.days;
-  const params = new URLSearchParams({ metric: "feed_in", days: String(days) });
+  const params = new URLSearchParams({ metric: "pv", days: String(days) });
 
   const result = await fetchJson(`/api/readings/hourly-per-device?${params.toString()}`);
   const multiDay = days > 1;
@@ -720,7 +746,7 @@ async function refreshHourlyCompareChart() {
     borderColor: dayColor(i),
     borderWidth: 1,
     borderRadius: 2,
-    stack: "einspeisung",
+    stack: "ertrag",
   }));
 
   if (state.hourlyCompare.chart) {
@@ -747,7 +773,7 @@ async function refreshHourlyCompareChart() {
           stacked: true,
           ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
           grid: { color: "#334155" },
-          title: { display: true, text: "Einspeisung (kWh)", color: "#94a3b8" },
+          title: { display: true, text: "PV-Ertrag (kWh)", color: "#94a3b8" },
         },
       },
       plugins: {

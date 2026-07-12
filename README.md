@@ -251,15 +251,20 @@ den Logdaten-Import (nicht live) erfasst wurden, da Hausverbrauch (anders
 als Netzbezug/Einspeisung) auch in importierten Altdaten vorhanden ist.
 Für Tage ganz ohne Messwerte bleibt die Säule leer.
 
-## Wechselrichter-Vergleich: Einspeisung pro Stunde
+## Wechselrichter-Vergleich: PV-Ertrag pro Stunde
 
-Ganz unten zeigt ein gestapeltes Säulendiagramm die Einspeisung je Stunde,
+Ganz unten zeigt ein gestapeltes Säulendiagramm den PV-Ertrag je Stunde,
 farblich getrennt nach Wechselrichter – so lässt sich direkt sehen, welches
-Gerät wie viel zur Einspeisung in einer bestimmten Stunde beigetragen hat.
-Zeitraum wählbar über 1/7/30 Tage; bei mehr Tagen werden die Balken
-entsprechend schmaler (mit Tooltip trotzdem einzeln ablesbar). Bei nur
-einem konfigurierten Wechselrichter zeigt das Diagramm entsprechend nur
-eine Farbe.
+Gerät wie viel zum Gesamtertrag in einer bestimmten Stunde beigetragen hat.
+Gezeigt wird die gesamte erzeugte Energie (`pv_power_w`), unabhängig davon,
+ob sie eingespeist oder direkt im Haus verbraucht wurde – nicht nur die
+Einspeisung. Zeitraum wählbar über 1/7/30 Tage; bei mehr Tagen werden die
+Balken entsprechend schmaler (mit Tooltip trotzdem einzeln ablesbar).
+
+Dieser Abschnitt ist nur sichtbar, wenn oben "Alle (Summe)" ausgewählt ist
+und mehr als ein Wechselrichter konfiguriert ist – bei einem einzelnen
+ausgewählten (oder einzigen vorhandenen) Gerät gäbe es nichts zu
+vergleichen, entsprechend bleibt der Abschnitt dann ausgeblendet.
 
 ## Benutzerverwaltung / Login
 
