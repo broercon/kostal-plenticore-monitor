@@ -43,19 +43,7 @@
       <span class="card-label">Batterie</span>
       <span class="card-value" id="card-battery">–</span>
     </div>
-    <div class="card small">
-      <span class="card-label">Netzleistung (roh, Grid_P)</span>
-      <span class="card-value" id="card-grid-raw">–</span>
-    </div>
   </section>
-  <p class="chart-hint muted">
-    Debug-Hinweis: "Netzleistung (roh)" ist der unveränderte Grid_P-Wert vom
-    Wechselrichter. Zum Abgleich in der Web-Oberfläche des Wechselrichters
-    selbst (<code>http://&lt;wechselrichter-ip&gt;</code>) nachsehen, ob gerade
-    Einspeisung oder Netzbezug angezeigt wird. Falls unsere Zuordnung
-    vertauscht ist, in <code>.env</code> <code>GRID_POWER_INVERTED=true</code>
-    setzen und neu starten.
-  </p>
 
   <section class="cards" id="summary-cards">
     <div class="card small">
@@ -143,6 +131,32 @@
     </div>
     <p class="chart-hint muted">
       Tipp: Maus über eine Säule halten, um den genauen Tageswert zu sehen.
+    </p>
+  </section>
+
+  <section class="chart-section">
+    <div class="daycompare-header">
+      <h2>Wechselrichter-Vergleich</h2>
+      <p class="muted">
+        Einspeisung pro Stunde, je Wechselrichter farblich getrennt
+        gestapelt – so lässt sich der Beitrag der einzelnen Wechselrichter
+        direkt vergleichen.
+      </p>
+    </div>
+    <div class="chart-toolbar daycompare-toolbar">
+      <div class="range-buttons" id="hourly-day-buttons">
+        <button data-days="1" class="active">1 Tag</button>
+        <button data-days="7">7 Tage</button>
+        <button data-days="30">30 Tage</button>
+      </div>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="hourly-chart"></canvas>
+    </div>
+    <p class="chart-hint muted">
+      Tipp: Bei 7 oder 30 Tagen werden die Balken entsprechend schmal – Maus
+      über eine Säule halten zeigt trotzdem die genaue Stunde und den
+      genauen Wert je Wechselrichter.
     </p>
   </section>
 </main>

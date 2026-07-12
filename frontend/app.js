@@ -13,6 +13,10 @@ const state = {
     days: 30,
     chart: null,
   },
+  hourlyCompare: {
+    days: 1,
+    chart: null,
+  },
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -80,10 +84,6 @@ async function refreshLiveCards() {
   el("card-feedin").textContent = fmtWatt(sumField(relevant, "feed_in_power_w"));
   el("card-griddraw").textContent = fmtWatt(sumField(relevant, "grid_draw_power_w"));
   el("card-pv").textContent = fmtWatt(sumField(relevant, "pv_power_w"));
-
-  const gridRaw = sumField(relevant, "grid_power_w");
-  el("card-grid-raw").textContent =
-    gridRaw === null ? "–" : (gridRaw >= 0 ? "+" : "") + fmtWatt(gridRaw);
 
   const batteryEntries = relevant.filter(
     (r) => r.battery_soc_percent !== null && r.battery_soc_percent !== undefined
@@ -530,6 +530,91 @@ function setupDailyTotalsControls() {
   });
 }
 
+// --- Wechselrichter-Vergleich: gestapeltes Saeulendiagramm, Einspeisung pro
+// Stunde je Wechselrichter (nicht summiert), damit sich die Geraete direkt
+// farblich vergleichen lassen. ---
+
+function hourLabel(bucketIso, multiDay) {
+  // bucketIso z.B. "2026-07-12T14:00:00" (lokale Zeit, ohne Offset)
+  const [datePart, timePart] = bucketIso.split("T");
+  const hour = timePart.slice(0, 2);
+  if (!multiDay) return `${hour} Uhr`;
+  const [, m, d] = datePart.split("-");
+  return `${d}.${m}. ${hour}h`;
+}
+
+async function refreshHourlyCompareChart() {
+  const days = state.hourlyCompare.days;
+  const params = new URLSearchParams({ metric: "feed_in", days: String(days) });
+
+  const result = await fetchJson(`/api/readings/hourly-per-device?${params.toString()}`);
+  const multiDay = days > 1;
+  const labels = result.buckets.map((b) => hourLabel(b.bucket, multiDay));
+
+  const datasets = result.devices.map((device, i) => ({
+    label: device.device_name,
+    data: result.buckets.map((b) => b.values[device.device_id]),
+    backgroundColor: dayColor(i),
+    borderColor: dayColor(i),
+    borderWidth: 1,
+    borderRadius: 2,
+    stack: "einspeisung",
+  }));
+
+  if (state.hourlyCompare.chart) {
+    state.hourlyCompare.chart.data.labels = labels;
+    state.hourlyCompare.chart.data.datasets = datasets;
+    state.hourlyCompare.chart.update();
+    return;
+  }
+
+  const ctx = el("hourly-chart").getContext("2d");
+  state.hourlyCompare.chart = new Chart(ctx, {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          stacked: true,
+          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
+          grid: { display: false },
+        },
+        y: {
+          stacked: true,
+          ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+          grid: { color: "#334155" },
+          title: { display: true, text: "Einspeisung (kWh)", color: "#94a3b8" },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e2e8f0" } },
+        tooltip: {
+          callbacks: {
+            label: (item) =>
+              item.parsed.y === null
+                ? `${item.dataset.label}: keine Daten`
+                : `${item.dataset.label}: ${item.parsed.y.toFixed(2)} kWh`,
+          },
+        },
+      },
+    },
+  });
+}
+
+function setupHourlyCompareControls() {
+  const container = el("hourly-day-buttons");
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-days]");
+    if (!btn) return;
+    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.hourlyCompare.days = Number(btn.dataset.days);
+    refreshHourlyCompareChart().catch(console.error);
+  });
+}
+
 // --- Logdaten-Abgleich manuell anstossen + Status anzeigen ---
 
 let importPollTimer = null;
@@ -620,6 +705,7 @@ async function refreshAll() {
       refreshChart(),
       refreshDayCompareChart(),
       refreshDailyTotalsChart(),
+      refreshHourlyCompareChart(),
     ]);
   } catch (err) {
     console.error(err);
@@ -631,6 +717,7 @@ async function init() {
   setupRangeButtons();
   setupDayCompareControls();
   setupDailyTotalsControls();
+  setupHourlyCompareControls();
   setupImportTrigger();
   await refreshAll();
   setInterval(() => {
@@ -640,6 +727,7 @@ async function init() {
   setInterval(() => refreshChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
 }
 
 init();

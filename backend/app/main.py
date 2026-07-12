@@ -17,6 +17,7 @@ from .aggregation import (
     combine_devices,
     daily_kwh_totals,
     day_profile,
+    hourly_kwh_per_device,
     integrate_kwh,
 )
 from .auto_import import get_import_status, run_auto_import_for_all_devices, trigger_manual_import
@@ -29,6 +30,7 @@ from .schemas import (
     DayProfileOut,
     DeviceOut,
     HistoryPoint,
+    HourlyPerDeviceOut,
     ImportStatusOut,
     ImportTriggerOut,
     ReadingOut,
@@ -294,6 +296,33 @@ def get_daily_totals(
 
     days_data = daily_kwh_totals(rows, field, settings.timezone_name)
     return DailyTotalsOut(metric=metric, days=days_data)
+
+
+@app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)
+def get_hourly_per_device(
+    metric: Literal["feed_in", "pv", "home", "grid_draw"] = Query(default="feed_in"),
+    days: int = Query(default=1, ge=1, le=30, description="Anzahl Tage rueckwirkend inkl. heute"),
+) -> HourlyPerDeviceOut:
+    """Liefert stuendliche kWh-Summen JE Wechselrichter (nicht summiert) -
+    fuer ein gestapeltes Saeulendiagramm, in dem sich z.B. die Einspeisung
+    mehrerer Wechselrichter pro Stunde direkt farblich vergleichen laesst.
+    Bei nur einem konfigurierten Geraet zeigt es entsprechend nur eine
+    Farbe/Reihe."""
+    field = DAILY_TOTAL_FIELDS[metric]
+    since = local_midnight_utc() - timedelta(days=days - 1)
+
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    result = hourly_kwh_per_device(rows, field, settings.timezone_name)
+    return HourlyPerDeviceOut(metric=metric, **result)
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.

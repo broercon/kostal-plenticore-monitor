@@ -222,3 +222,51 @@ def daily_kwh_totals(
         {"date": date_str, "kwh": integrate_kwh(day_rows, field)}
         for date_str, day_rows in sorted(by_date.items())
     ]
+
+
+def hourly_kwh_per_device(
+    rows: list[Reading], field: str, timezone_name: str
+) -> dict:
+    """Gruppiert Messwerte nach Geraet UND lokaler Stunde und integriert je
+    Stunde die Energiemenge (kWh) - fuer ein gestapeltes Saeulendiagramm, in
+    dem sich z.B. die Einspeisung mehrerer Wechselrichter pro Stunde direkt
+    vergleichen laesst (anders als bei den summierten Diagrammen wird hier
+    NICHT device-uebergreifend addiert).
+
+    Rueckgabe: {"devices": [{"device_id","device_name"}, ...], "buckets":
+    [{"bucket": "YYYY-MM-DDTHH:00:00" (lokale Stundengrenze), "values":
+    {device_id: kwh|None}}, ...]}, Buckets aufsteigend sortiert. Jeder
+    Bucket enthaelt fuer JEDES bekannte Geraet einen Eintrag (None, wenn
+    fuer dieses Geraet in der Stunde keine Messwerte vorliegen), damit das
+    Frontend ein sauberes gestapeltes Balkendiagramm ohne Luecken bauen
+    kann.
+    """
+    tz = ZoneInfo(timezone_name)
+    groups: dict[tuple[str, str], list[Reading]] = {}
+    device_names: dict[str, str] = {}
+    all_buckets: set[str] = set()
+
+    for row in rows:
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        local = ts.astimezone(tz)
+        bucket_local = local.replace(minute=0, second=0, microsecond=0)
+        bucket_key = bucket_local.strftime("%Y-%m-%dT%H:%M:%S")
+        all_buckets.add(bucket_key)
+        device_names[row.device_id] = row.device_name
+        groups.setdefault((row.device_id, bucket_key), []).append(row)
+
+    buckets = []
+    for bucket_key in sorted(all_buckets):
+        values = {}
+        for device_id in device_names:
+            group_rows = groups.get((device_id, bucket_key))
+            values[device_id] = integrate_kwh(group_rows, field) if group_rows else None
+        buckets.append({"bucket": bucket_key, "values": values})
+
+    devices = [
+        {"device_id": device_id, "device_name": name}
+        for device_id, name in device_names.items()
+    ]
+    return {"devices": devices, "buckets": buckets}

@@ -28,12 +28,11 @@ Pro Wechselrichter und Abfrage-Zyklus:
 **Wichtiger Hinweis zur Vorzeichen-Konvention:** `Grid_P` wird standardmäßig
 so interpretiert, dass ein negativer Wert Einspeisung ins Netz bedeutet und
 ein positiver Wert Bezug aus dem Netz. Das kann je nach Installation/
-Zählerausrichtung aber andersherum sein. Im Dashboard gibt es dafür eine
-Kachel "Netzleistung (roh, Grid_P)" mit dem unveränderten Wert – zum
-Abgleich in der Web-Oberfläche des Wechselrichters selbst nachsehen, ob
-gerade Einspeisung oder Netzbezug angezeigt wird. Falls unsere Zuordnung
-vertauscht ist, in `.env` `GRID_POWER_INVERTED=true` setzen und neu
-starten (`docker compose up -d`).
+Zählerausrichtung aber andersherum sein – zum Abgleich in der
+Web-Oberfläche des Wechselrichters selbst nachsehen, ob gerade Einspeisung
+oder Netzbezug angezeigt wird. Falls unsere Zuordnung vertauscht ist, in
+`.env` `GRID_POWER_INVERTED=true` setzen und neu starten
+(`docker compose up -d`).
 
 ## Einrichtung
 
@@ -252,6 +251,16 @@ den Logdaten-Import (nicht live) erfasst wurden, da Hausverbrauch (anders
 als Netzbezug/Einspeisung) auch in importierten Altdaten vorhanden ist.
 Für Tage ganz ohne Messwerte bleibt die Säule leer.
 
+## Wechselrichter-Vergleich: Einspeisung pro Stunde
+
+Ganz unten zeigt ein gestapeltes Säulendiagramm die Einspeisung je Stunde,
+farblich getrennt nach Wechselrichter – so lässt sich direkt sehen, welches
+Gerät wie viel zur Einspeisung in einer bestimmten Stunde beigetragen hat.
+Zeitraum wählbar über 1/7/30 Tage; bei mehr Tagen werden die Balken
+entsprechend schmaler (mit Tooltip trotzdem einzeln ablesbar). Bei nur
+einem konfigurierten Wechselrichter zeigt das Diagramm entsprechend nur
+eine Farbe.
+
 ## Daten sichern
 
 Die komplette Historie liegt in `./data/kostal.db` (SQLite-Datei). Für ein
@@ -272,6 +281,9 @@ Container, damit keine Schreiboperation mittendrin ist).
 - `GET /api/readings/daily-totals?device_id=&metric=home&days=30` –
   tägliche kWh-Summen für das Tagesverbrauchs-Säulendiagramm.
   `metric`: `home`, `pv`, `grid_draw` oder `feed_in`.
+- `GET /api/readings/hourly-per-device?metric=feed_in&days=1` – stündliche
+  kWh-Summen JE Wechselrichter (nicht summiert) für den
+  Wechselrichter-Vergleich.
 - `POST /api/admin/import-history` – stößt den Logdaten-Abgleich sofort an
   (auch bei `AUTO_IMPORT_HISTORY=false`); liefert `{"started": bool,
   "message": str}`.

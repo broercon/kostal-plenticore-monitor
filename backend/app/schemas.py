@@ -98,3 +98,19 @@ class ImportStatusOut(BaseModel):
 class ImportTriggerOut(BaseModel):
     started: bool
     message: str
+
+
+class HourlyDeviceInfo(BaseModel):
+    device_id: str
+    device_name: str
+
+
+class HourlyBucket(BaseModel):
+    bucket: str  # ISO-Zeitstempel (lokale Stundengrenze, ohne Zeitzonen-Suffix)
+    values: dict[str, float | None]  # device_id -> kWh
+
+
+class HourlyPerDeviceOut(BaseModel):
+    metric: str
+    devices: list[HourlyDeviceInfo]
+    buckets: list[HourlyBucket]
