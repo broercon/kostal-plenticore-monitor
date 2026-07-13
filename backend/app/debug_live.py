@@ -16,7 +16,14 @@ achten - die Werte aendern sich staendig).
 
 Rein lesend, es wird nichts veraendert oder gespeichert.
 
-Nutzung (innerhalb des laufenden Containers):
+Nutzung (innerhalb des laufenden Containers) - einfachste Variante, holt
+Host/Passwort automatisch aus der schon vorhandenen config/inverters.json:
+
+    docker compose exec kostal-monitor python -m app.debug_live --device-id wr1
+
+Ohne Argumente zeigt es die konfigurierten Geraete-IDs zur Auswahl an.
+Alternativ lassen sich Host/Passwort auch direkt angeben (z.B. fuer ein
+Geraet, das (noch) nicht in der Konfiguration steht):
 
     docker compose exec kostal-monitor python -m app.debug_live \\
         --host 192.168.1.50 --password DEIN_PASSWORT
@@ -28,9 +35,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 
 import aiohttp
 from pykoplenti import ExtendedApiClient
+
+from .config import settings
 
 
 async def _run(host: str, password: str, port: int) -> None:
@@ -62,6 +72,13 @@ async def _run(host: str, password: str, port: int) -> None:
         )
 
 
+def _resolve_from_config(device_id: str) -> tuple[str, str, int] | None:
+    for cfg in settings.inverters:
+        if cfg.id == device_id:
+            return cfg.host, cfg.password, cfg.port
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -69,14 +86,40 @@ def main() -> None:
             "an (Diagnose-Werkzeug, rein lesend)."
         )
     )
-    parser.add_argument("--host", required=True, help="IP-Adresse des Wechselrichters")
     parser.add_argument(
-        "--password", required=True, help="Geraetepasswort (wie im Kostal-Webinterface)"
+        "--device-id",
+        help="ID aus config/inverters.json - Host/Passwort werden dann automatisch daraus geholt",
+    )
+    parser.add_argument("--host", help="IP-Adresse des Wechselrichters (Alternative zu --device-id)")
+    parser.add_argument(
+        "--password", help="Geraetepasswort, wie im Kostal-Webinterface (Alternative zu --device-id)"
     )
     parser.add_argument("--port", type=int, default=80)
     args = parser.parse_args()
 
-    asyncio.run(_run(args.host, args.password, args.port))
+    host, password, port = args.host, args.password, args.port
+
+    if args.device_id:
+        resolved = _resolve_from_config(args.device_id)
+        if resolved is None:
+            known = ", ".join(cfg.id for cfg in settings.inverters) or "(keine konfiguriert)"
+            print(f"Unbekannte --device-id '{args.device_id}'. Bekannte IDs: {known}")
+            sys.exit(1)
+        host, password, port = resolved
+
+    if not host or not password:
+        if settings.inverters:
+            print("Bitte --device-id angeben. Konfigurierte Geraete:")
+            for cfg in settings.inverters:
+                print(f"  {cfg.id}: {cfg.name} ({cfg.host})")
+        else:
+            print(
+                "Keine Wechselrichter in config/inverters.json gefunden - bitte "
+                "stattdessen --host und --password direkt angeben."
+            )
+        sys.exit(1)
+
+    asyncio.run(_run(host, password, port))
 
 
 if __name__ == "__main__":
