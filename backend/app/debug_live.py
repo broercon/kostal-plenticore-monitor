@@ -54,7 +54,12 @@ async def _run(host: str, password: str, port: int) -> None:
         for module, keys in sorted(available.items()):
             print(f"  {module}: {', '.join(sorted(keys))}")
 
-        values = await client.get_process_data_values(available)
+        # Module ohne Kennungen (z.B. scb:snapshot, scb:diagnostics) duerfen
+        # NICHT mit angefragt werden - die API lehnt das mit "Invalid
+        # combination of module_id and processdata_id" ab.
+        request = {module: keys for module, keys in available.items() if keys}
+
+        values = await client.get_process_data_values(request)
         print("=" * 70)
         print("Aktuelle Werte (jetzt gerade - bitte mit dem Kostal-Portal zur")
         print("gleichen Zeit vergleichen):")
@@ -63,12 +68,39 @@ async def _run(host: str, password: str, port: int) -> None:
                 item = values[module][key]
                 unit = getattr(item, "unit", None) or ""
                 print(f"  {module}/{key} = {item.value} {unit}".rstrip())
+
+        # Besonders relevante Felder fuer die Mehr-Wechselrichter-Diagnose
+        # noch einmal separat und gut lesbar herausstellen.
+        highlight = [
+            ("devices:local", "Grid_P"),
+            ("devices:local", "Home_P"),
+            ("devices:local", "HomeGrid_P"),
+            ("devices:local", "HomeOwn_P"),
+            ("devices:local", "HomePv_P"),
+            ("devices:local", "HomeBat_P"),
+            ("devices:local", "Grid2Bat_P"),
+            ("devices:local", "Bat2Grid_P"),
+            ("devices:local", "PV2Bat_P"),
+            ("devices:local", "Dc_P"),
+            ("devices:local:battery", "P"),
+            ("devices:local:battery", "SoC"),
+            ("devices:local:powermeter", "P"),
+            ("devices:local:powermeter", "Imp_E"),
+            ("devices:local:powermeter", "Exp_E"),
+        ]
         print("=" * 70)
+        print("Fuer die Diagnose besonders relevante Felder:")
+        for module, key in highlight:
+            item = values.get(module, {}).get(key)
+            value = item.value if item is not None else "(nicht verfuegbar)"
+            print(f"  {module}/{key} = {value}")
         print(
-            "Besonders interessant fuer die Diagnose: devices:local/Grid_P\n"
-            "(vergleiche den Wert mit dem, was das Kostal-Portal gerade als\n"
-            "echten Netzbezug/Einspeisung anzeigt - z.B. die kleine Zahl neben\n"
-            "dem Strommast-Symbol, NICHT die Zahl am Wechselrichter-Symbol)."
+            "\nVergleiche devices:local/Grid_P mit dem echten Netzwert im "
+            "Kostal-Portal (kleine Zahl neben dem Strommast-Symbol, NICHT die "
+            "Zahl am Wechselrichter-Symbol). Falls devices:local:powermeter "
+            "Werte liefert (nicht 'nicht verfuegbar'), sind das vermutlich die "
+            "direkt durchgereichten KSEM-Messwerte - moeglicherweise die "
+            "zuverlaessigere Quelle fuer den echten Netzbezug/die Einspeisung."
         )
 
 
