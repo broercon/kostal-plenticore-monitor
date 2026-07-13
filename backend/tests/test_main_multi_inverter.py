@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.config import InverterConfig
 from app.config import settings as app_settings
 from app.poller import poller as poller_singleton
@@ -157,3 +159,135 @@ def test_get_today_summary_appends_corrected_combined_entry(client, monkeypatch)
     # positiv statt wie bei WR1 allein negativ.
     assert combined["home_consumption_day_kwh"] is not None
     assert combined["home_consumption_day_kwh"] > 0
+
+
+def _insert_two_device_readings(now):
+    """Legt fuer WR1 (Batterie, echter Zaehler) und WR2 (kein Zaehler, laedt
+    WR1s Batterie per AC mit) je zwei Messwerte an - dieselben Werte wie in
+    den anderen Tests dieser Datei (WR1s eigener Home_P ist kaputt/negativ,
+    WR2 erfindet Grid-Werte). Fuer History/Tagesverbrauch-Tests, die pruefen,
+    dass bei ausgewaehltem Einzelgeraet trotzdem die hausweite, korrigierte
+    Energiebilanz verwendet wird."""
+    from app.database import SessionLocal
+    from app.models import Reading
+
+    db = SessionLocal()
+    try:
+        db.add_all(
+            [
+                Reading(
+                    device_id="wr1",
+                    device_name=WR1.name,
+                    timestamp=now - timedelta(minutes=10),
+                    home_power_w=-1371.8,
+                    grid_draw_power_w=40.7,
+                    feed_in_power_w=0.0,
+                    pv_power_w=1332.9,
+                    battery_power_w=-2597.5,
+                ),
+                Reading(
+                    device_id="wr1",
+                    device_name=WR1.name,
+                    timestamp=now,
+                    home_power_w=-1371.8,
+                    grid_draw_power_w=40.7,
+                    feed_in_power_w=0.0,
+                    pv_power_w=1332.9,
+                    battery_power_w=-2597.5,
+                ),
+                Reading(
+                    device_id="wr2",
+                    device_name=WR2.name,
+                    timestamp=now - timedelta(minutes=10),
+                    home_power_w=500.0,
+                    grid_draw_power_w=9999.0,
+                    feed_in_power_w=0.0,
+                    pv_power_w=1300.0,
+                ),
+                Reading(
+                    device_id="wr2",
+                    device_name=WR2.name,
+                    timestamp=now,
+                    home_power_w=500.0,
+                    grid_draw_power_w=9999.0,
+                    feed_in_power_w=0.0,
+                    pv_power_w=1300.0,
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_get_history_uses_house_wide_home_for_single_device_selection(client, monkeypatch):
+    """Kernstueck des Fixes: bei ausgewaehltem Einzelgeraet (z.B. "Dach Sued"
+    mit Batterie) muss das Hauptdiagramm trotzdem den korrigierten,
+    hausweiten Hausverbrauch zeigen (nicht WR1s eigenen, kaputten/negativen
+    Home_P) - PV-Leistung bleibt dagegen die von WR1 selbst."""
+    monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
+    _login(client)
+    now = datetime.now(timezone.utc)
+    _insert_two_device_readings(now)
+
+    res = client.get("/api/readings/history?device_id=wr1&hours=1&bucket_minutes=60")
+    assert res.status_code == 200
+    points = res.json()
+    assert len(points) >= 1
+    point = points[-1]
+
+    # Nicht mehr WR1s kaputter Rohwert (-1371.8), sondern die hausweite
+    # Energiebilanz ueber beide Geraete.
+    expected_home = (1332.9 + 1300.0) + 40.7 - 0.0 + (-2597.5)
+    assert point["home_power_w"] == pytest.approx(expected_home)
+    assert point["grid_draw_power_w"] == pytest.approx(40.7)
+    # PV bleibt WR1s eigene Erzeugung, nicht die Summe beider Geraete.
+    assert point["pv_power_w"] == pytest.approx(1332.9)
+
+
+def test_get_daily_totals_home_metric_ignores_device_id_when_multi(client, monkeypatch):
+    """Fuer die hausweite Metrik "home" muss /daily-totals denselben Wert
+    liefern, egal ob device_id=wr1 mitgegeben wird oder nicht - Hausverbrauch
+    laesst sich nicht sinnvoll einem einzelnen Wechselrichter zuordnen."""
+    monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
+    _login(client)
+    now = datetime.now(timezone.utc)
+    _insert_two_device_readings(now)
+
+    res_all = client.get("/api/readings/daily-totals?metric=home&days=1")
+    res_wr1 = client.get("/api/readings/daily-totals?metric=home&device_id=wr1&days=1")
+    assert res_all.status_code == res_wr1.status_code == 200
+    assert res_all.json()["days"] == res_wr1.json()["days"]
+
+    # Fuer "pv" bleibt device_id dagegen wirksam (WR1 liefert weniger als die
+    # Summe beider Geraete).
+    res_pv_all = client.get("/api/readings/daily-totals?metric=pv&days=1")
+    res_pv_wr1 = client.get("/api/readings/daily-totals?metric=pv&device_id=wr1&days=1")
+    kwh_all = res_pv_all.json()["days"][0]["kwh"]
+    kwh_wr1 = res_pv_wr1.json()["days"][0]["kwh"]
+    assert kwh_all is not None and kwh_wr1 is not None
+    assert kwh_wr1 < kwh_all
+
+
+def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeypatch):
+    """Die drei Anteile (PV/Speicher/Netz) muessen sich zum bekannten,
+    korrigierten Gesamt-Hausverbrauch aufsummieren (fuer den gestapelten
+    Balken im Tagesverbrauch-Diagramm)."""
+    monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
+    _login(client)
+    now = datetime.now(timezone.utc)
+    _insert_two_device_readings(now)
+
+    res_breakdown = client.get("/api/readings/daily-home-breakdown?days=1")
+    res_total = client.get("/api/readings/daily-totals?metric=home&days=1")
+    assert res_breakdown.status_code == res_total.status_code == 200
+
+    day = res_breakdown.json()["days"][0]
+    total_kwh = res_total.json()["days"][0]["kwh"]
+    assert total_kwh is not None
+    assert day["pv_kwh"] is not None
+    assert day["battery_kwh"] is not None
+    assert day["grid_kwh"] is not None
+    assert (day["pv_kwh"] + day["battery_kwh"] + day["grid_kwh"]) == pytest.approx(
+        total_kwh, abs=0.01
+    )

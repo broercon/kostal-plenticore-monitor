@@ -196,6 +196,27 @@ canvas {
   cursor: not-allowed;
 }
 
+/* ---- Wechselrichter-Auswahl (Tabs statt Dropdown, ein Klick zum Wechseln) ---- */
+
+.device-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.device-tabs button {
+  border-radius: 20px;
+  padding: 6px 16px;
+}
+
+.device-tabs button.active {
+  background: var(--accent-blue);
+  color: #0f172a;
+  border-color: var(--accent-blue);
+  font-weight: 600;
+}
+
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
 
 .hidden {

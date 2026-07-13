@@ -249,14 +249,22 @@ ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 
 ## Tagesverbrauch: Säulendiagramm
 
-Ganz unten zeigt ein Säulendiagramm den Hausverbrauch je Tag als Summe
-(kWh) – wählbar über 14/30/90/365 Tage zurück. Anders als die
-"heute"-Kachel wird hier immer direkt aus den gespeicherten Messwerten
-integriert (Trapezregel), nicht aus vom Wechselrichter gemeldeten
+Ganz unten zeigt ein gestapeltes Säulendiagramm den Hausverbrauch je Tag als
+Summe (kWh) – wählbar über 14/30/90/365 Tage zurück. Jede Säule ist danach
+eingefärbt, zu welchem Anteil der Verbrauch aus PV (direkt), Speicher
+(Batterieentladung) bzw. Netzbezug gedeckt wurde (gleiche Farbgebung wie
+beim Tagesvergleich "Verbrauch aus Solar & Batterie"/"aus dem Netz") – Maus
+über eine Säule zeigt die genaue Aufteilung samt Gesamtsumme im Tooltip.
+Anders als die "heute"-Kachel wird hier immer direkt aus den gespeicherten
+Messwerten integriert (Trapezregel), nicht aus vom Wechselrichter gemeldeten
 Tageswerten. Das funktioniert daher auch für vergangene Tage, die nur über
-den Logdaten-Import (nicht live) erfasst wurden, da Hausverbrauch (anders
-als Netzbezug/Einspeisung) auch in importierten Altdaten vorhanden ist.
-Für Tage ganz ohne Messwerte bleibt die Säule leer.
+den Logdaten-Import (nicht live) erfasst wurden – die Aufteilung nach
+Quelle braucht allerdings Netzbezugs-/Einspeisewerte und bleibt daher bei
+importierten Altdaten ohne Netzmessung leer (siehe KSEM-Limitation oben).
+Für Tage ganz ohne Messwerte bleibt die Säule leer. Hausverbrauch ist eine
+hausweite Größe (siehe Abschnitt "Mehrere Wechselrichter" oben) – bei
+mehreren konfigurierten Wechselrichtern zeigt dieses Diagramm daher immer
+die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
 
 ## Wechselrichter-Vergleich: PV-Ertrag pro Stunde
 
@@ -459,6 +467,17 @@ Geräte unverändert `true`) bleibt das bisherige Verhalten (einfache Summe)
 unverändert erhalten – es ändert sich nichts an bestehenden
 Ein-Geräte-Installationen.
 
+Diese korrigierte Berechnung gilt für Hausverbrauch, Netzbezug und
+Einspeisung **überall im Dashboard** – auch in den Live-Kacheln, dem
+Hauptdiagramm, dem Tagesvergleich und dem Tagesverbrauch, und zwar
+unabhängig davon, welcher Tab oben (welches Einzelgerät oder "Alle
+(Summe)") gerade ausgewählt ist. Grund: Hausverbrauch/Netzbezug/Einspeisung
+sind hausweite Größen, die sich keinem einzelnen Wechselrichter sinnvoll
+zuordnen lassen – der eigene, potenziell falsche Rohwert eines einzelnen
+Geräts wird daher nie mehr angezeigt. Nur die PV-Erzeugung (und, falls
+vorhanden, die Batterie) bleiben bei einem ausgewählten Einzelgerät auch
+dessen eigene Werte.
+
 Falls die Batterie-Vorzeichen-Konvention bei einem Gerät umgekehrt sein
 sollte (positiv = Laden statt Entladen), zusätzlich
 `"battery_power_inverted": true` bei diesem Gerät setzen (wirkt sich nur
@@ -534,14 +553,26 @@ cookies.txt -b cookies.txt ...`).
 - `GET /api/readings/today-summary` – Tagessummen (PV-Ertrag, Verbrauch,
   Einspeisung); ebenfalls mit `"_all_"`-Eintrag bei mehreren Geräten
 - `GET /api/readings/history?device_id=&hours=24&bucket_minutes=5` – Zeitreihe
-  für Diagramme. `device_id` weglassen, um beide Wechselrichter summiert zu
-  bekommen.
+  für Diagramme. `device_id` weglassen, um alle Wechselrichter summiert zu
+  bekommen. Bei mehreren konfigurierten Geräten liefert `home_power_w`/
+  `feed_in_power_w`/`grid_draw_power_w` IMMER die hausweite Energiebilanz,
+  auch mit gesetztem `device_id` (siehe "Mehrere Wechselrichter" oben) –
+  nur `pv_power_w`/`battery_power_w` sind dann geräteeigen.
 - `GET /api/readings/day-profile?device_id=&days=7&bucket_minutes=15` –
   Zeitreihen je Kalendertag (00:00–24:00 Uhr lokal) für den
   Tagesvergleich, inkl. Solar-/Batterie-Aufteilung des Hausverbrauchs.
+  Netzbezug und Solar-/Batterie-Aufteilung sind ebenfalls hausweit (siehe
+  oben), nur die PV-Kurve bleibt bei gesetztem `device_id` geräteeigen.
 - `GET /api/readings/daily-totals?device_id=&metric=home&days=30` –
   tägliche kWh-Summen für das Tagesverbrauchs-Säulendiagramm.
-  `metric`: `home`, `pv`, `grid_draw` oder `feed_in`.
+  `metric`: `home`, `pv`, `grid_draw` oder `feed_in`. Bei `home`/`grid_draw`/
+  `feed_in` wird `device_id` bei mehreren Geräten ignoriert (hausweite
+  Summe); nur bei `pv` bleibt es wirksam.
+- `GET /api/readings/daily-home-breakdown?days=30` – wie `daily-totals`
+  (`metric=home`), aber zusätzlich aufgeschlüsselt nach Deckungsanteil:
+  `pv_kwh`, `battery_kwh`, `grid_kwh` je Tag (Summe ergibt den gesamten
+  Hausverbrauch) – Grundlage für die gestapelte Einfärbung im
+  Tagesverbrauchs-Diagramm. Kein `device_id`-Parameter, da hausweit.
 - `GET /api/readings/hourly-per-device?metric=feed_in&days=1` – stündliche
   kWh-Summen JE Wechselrichter (nicht summiert) für den
   Wechselrichter-Vergleich.

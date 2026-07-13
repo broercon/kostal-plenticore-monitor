@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from .models import Reading
@@ -415,3 +416,78 @@ def hourly_kwh_per_device(
         for device_id, name in device_names.items()
     ]
     return {"devices": devices, "buckets": buckets}
+
+
+def daily_home_source_breakdown_kwh(
+    rows: list[Reading], timezone_name: str
+) -> list[dict]:
+    """Wie daily_kwh_totals(field="home_power_w"), aber zusaetzlich
+    aufgeschluesselt danach, zu welchen Anteilen der taegliche Hausverbrauch
+    aus PV (direkt), Speicher (Batterieentladung) bzw. Netzbezug gedeckt
+    wurde - fuer den gestapelt eingefaerbten Balken im
+    "Tagesverbrauch"-Diagramm (dieselbe Faerbung/Aufteilung wie beim
+    Tagesvergleich "Verbrauch aus Solar & Batterie"/"aus dem Netz").
+
+    Nutzt dieselbe Energiebilanz-Logik wie day_profile() (siehe dortigen
+    Docstring: PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung, ohne
+    von einer bestimmten Vorzeichen-Konvention der Batterieleistung
+    auszugehen), aber direkt auf den unveraenderten Messzeitpunkten
+    (nicht auf 15-Minuten-Mittelwerte gebucketet) und ueber den ganzen
+    Kalendertag hinweg integriert statt nur gemittelt - fuer eine
+    Energiemenge (kWh) statt einer Momentanleistung.
+
+    Rueckgabe: Liste von {"date": "YYYY-MM-DD", "pv_kwh": float|None,
+    "battery_kwh": float|None, "grid_kwh": float|None}, aufsteigend nach
+    Datum sortiert. Die drei Werte summieren sich (bis auf Rundung) zum
+    gesamten Hausverbrauch des Tages. Fehlen fuer einen Messpunkt PV-,
+    Haus-, Netzbezugs- oder Einspeisewerte (z.B. bei importierten Altdaten
+    ohne Netzmessung), wird dieser Punkt uebersprungen - bei zu wenigen
+    verbleibenden Punkten liefert ein Tag entsprechend None-Werte.
+    """
+    tz = ZoneInfo(timezone_name)
+    by_date: dict[str, list[tuple[datetime, float, float, float]]] = {}
+
+    for row in rows:
+        home = row.home_power_w
+        grid_draw = row.grid_draw_power_w
+        pv = row.pv_power_w
+        feed_in = row.feed_in_power_w
+        if home is None or grid_draw is None or pv is None or feed_in is None:
+            continue
+
+        # Gleiche Herleitung wie in day_profile(): Anteil direkt aus dem Netz
+        # kann Hausverbrauch nicht uebersteigen, Rest wird zwischen PV und
+        # Batterie aufgeteilt (Batterie nur, wenn sie gerade tatsaechlich
+        # per Energiebilanz Leistung abgibt - battery_net > 0).
+        remaining_home = max(0.0, home - grid_draw)
+        battery_net = home + feed_in - pv - grid_draw
+        battery_share = min(remaining_home, battery_net) if battery_net > 0 else 0.0
+        home_from_battery = battery_share
+        home_from_pv = remaining_home - battery_share
+        home_from_grid = home - remaining_home
+
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        local = ts.astimezone(tz)
+        date_str = local.strftime("%Y-%m-%d")
+        by_date.setdefault(date_str, []).append(
+            (row.timestamp, home_from_pv, home_from_battery, home_from_grid)
+        )
+
+    def _integrate(series: list[tuple[datetime, float]]) -> float | None:
+        objs = [SimpleNamespace(timestamp=ts, value=v) for ts, v in series]
+        return integrate_kwh(objs, "value")
+
+    result = []
+    for date_str in sorted(by_date.keys()):
+        entries = by_date[date_str]
+        result.append(
+            {
+                "date": date_str,
+                "pv_kwh": _integrate([(ts, pv) for ts, pv, _bat, _grid in entries]),
+                "battery_kwh": _integrate([(ts, bat) for ts, _pv, bat, _grid in entries]),
+                "grid_kwh": _integrate([(ts, grid) for ts, _pv, _bat, grid in entries]),
+            }
+        )
+    return result

@@ -17,6 +17,7 @@ from .aggregation import (
     aggregate_per_device,
     combine_devices,
     combine_latest_readings,
+    daily_home_source_breakdown_kwh,
     daily_kwh_totals,
     day_profile,
     hourly_kwh_per_device,
@@ -33,6 +34,7 @@ from .schemas import (
     AdminUserOut,
     ChangePasswordIn,
     ChangePasswordOut,
+    DailyHomeBreakdownOut,
     DailyTotalsOut,
     DayProfileOut,
     DeviceOut,
@@ -236,6 +238,17 @@ def get_history(
     bucket_minutes: float = Query(default=5, ge=1, le=1440),
     _user: User = Depends(auth.get_current_user),
 ) -> list[HistoryPoint]:
+    """Zeitreihe fuer das Hauptdiagramm.
+
+    Hausverbrauch/Einspeisung/Netzbezug sind hausweite Groessen - bei
+    mehreren konfigurierten Wechselrichtern werden sie IMMER aus der ueber
+    alle Geraete korrigierten Energiebilanz genommen (siehe
+    aggregation.combine_devices), auch wenn oben ein einzelnes Geraet
+    ausgewaehlt ist. Grund: der eigene Home_P-Wert eines einzelnen
+    Wechselrichters kann bei einem zweiten, unbeachteten Wechselrichter am
+    selben Hausanschluss stark falsch/negativ sein (siehe README). Nur
+    PV-Leistung und Batterieleistung bleiben pro ausgewaehltem Geraet.
+    """
     if hours <= 24:
         # Feste lokale Tagesgrenze statt rollierendem 24h-Fenster: sonst
         # verschiebt sich der Start staendig mit der Uhrzeit (z.B. "seit
@@ -245,11 +258,12 @@ def get_history(
     else:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
     bucket_seconds = int(bucket_minutes * 60)
+    multi = len(settings.inverters) > 1
 
     session = SessionLocal()
     try:
         stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-        if device_id:
+        if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = list(session.scalars(stmt))
     finally:
@@ -257,10 +271,25 @@ def get_history(
 
     per_device = aggregate_per_device(rows, bucket_seconds)
 
-    if device_id:
+    if device_id and not multi:
         buckets = per_device.get(device_id, {})
     else:
-        buckets = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        combined_all = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        if device_id:
+            own = per_device.get(device_id, {})
+            buckets = {}
+            for bk in set(combined_all) | set(own):
+                c = combined_all.get(bk, {})
+                o = own.get(bk, {})
+                buckets[bk] = {
+                    "home_power_w": c.get("home_power_w"),
+                    "feed_in_power_w": c.get("feed_in_power_w"),
+                    "grid_draw_power_w": c.get("grid_draw_power_w"),
+                    "pv_power_w": o.get("pv_power_w"),
+                    "battery_power_w": o.get("battery_power_w"),
+                }
+        else:
+            buckets = combined_all
 
     points = [
         HistoryPoint(
@@ -368,6 +397,31 @@ def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[Summ
     return summaries
 
 
+def _merge_day_profile_own_pv(combined_days: list[dict], device_days: list[dict]) -> list[dict]:
+    """Ersetzt in combined_days (hausweite Energiebilanz ueber alle Geraete)
+    die pv_power_w-Werte durch die aus device_days (nur das ausgewaehlte
+    Einzelgeraet) - Netzbezug und Solar-/Batterie-Aufteilung bleiben hausweit
+    korrekt, die PV-Kurve zeigt dann aber gezielt nur die Erzeugung des
+    ausgewaehlten Wechselrichters (z.B. zum Tagesvergleich seiner eigenen
+    PV-Strings)."""
+    own_pv_by_key = {
+        (day["date"], point["minute"]): point["pv_power_w"]
+        for day in device_days
+        for point in day["points"]
+    }
+    merged = []
+    for day in combined_days:
+        new_points = []
+        for point in day["points"]:
+            p = dict(point)
+            key = (day["date"], point["minute"])
+            if key in own_pv_by_key:
+                p["pv_power_w"] = own_pv_by_key[key]
+            new_points.append(p)
+        merged.append({"date": day["date"], "points": new_points})
+    return merged
+
+
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)
 def get_day_profile(
     device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
@@ -380,21 +434,30 @@ def get_day_profile(
     vergleichen lassen (z.B. PV-Erzeugung heute vs. gestern vs. letzte
     Woche). Enthaelt zusaetzlich eine Aufteilung des Hausverbrauchs in
     Solar- und Batterie-Anteil (siehe aggregation.day_profile fuer die
-    Herleitung)."""
+    Herleitung).
+
+    Netzbezug sowie die Solar-/Batterie-Aufteilung sind hausweite Groessen -
+    bei mehreren Wechselrichtern werden sie IMMER aus der ueber alle Geraete
+    korrigierten Energiebilanz berechnet, auch wenn oben ein einzelnes
+    Geraet ausgewaehlt ist (dessen eigener Home_P/Grid_P-Wert kann sonst
+    stark falsch sein, siehe README). Die PV-Kurve zeigt bei ausgewaehltem
+    Einzelgeraet trotzdem dessen eigene Erzeugung (siehe
+    _merge_day_profile_own_pv)."""
     since = local_midnight_utc() - timedelta(days=days - 1)
+    multi = len(settings.inverters) > 1
 
     session = SessionLocal()
     try:
         stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-        if device_id:
+        if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = list(session.scalars(stmt))
     finally:
         session.close()
 
-    if not device_id and len(settings.inverters) > 1:
-        # Fuer "alle Geraete" muessen Leistungswerte erst pro Geraet UND
-        # Zeitpunkt summiert werden, bevor sie nach Tag/Uhrzeit gebucketet
+    if multi:
+        # Fuer die hausweiten Werte muessen Leistungswerte erst pro Geraet
+        # UND Zeitpunkt summiert werden, bevor sie nach Tag/Uhrzeit gebucketet
         # werden - sonst wuerden Messwerte verschiedener Geraete zu
         # unterschiedlichen Zeitpunkten faelschlich einzeln gemittelt statt
         # zeitgleich addiert. Wir nutzen dafuer die bestehende
@@ -411,7 +474,13 @@ def get_day_profile(
             )
             for bk, values in combined.items()
         ]
-        days_data = day_profile(synthetic_rows, bucket_minutes, settings.timezone_name)
+        combined_days = day_profile(synthetic_rows, bucket_minutes, settings.timezone_name)
+        if device_id:
+            device_rows = [r for r in rows if r.device_id == device_id]
+            device_days = day_profile(device_rows, bucket_minutes, settings.timezone_name)
+            days_data = _merge_day_profile_own_pv(combined_days, device_days)
+        else:
+            days_data = combined_days
     else:
         days_data = day_profile(rows, bucket_minutes, settings.timezone_name)
 
@@ -430,25 +499,36 @@ def get_daily_totals(
     "heute"-Kachel wird hier immer direkt aus den Messwerten integriert,
     nicht aus vom Geraet gemeldeten Tageswerten - funktioniert daher auch
     fuer vergangene, per Logdaten-Import nachtraeglich eingespielte Tage
-    (jedenfalls fuer home/pv - Netzwerte gibt es dort nicht, siehe README)."""
+    (jedenfalls fuer home/pv - Netzwerte gibt es dort nicht, siehe README).
+
+    Hausverbrauch, Netzbezug und Einspeisung sind hausweite Groessen - bei
+    mehreren Wechselrichtern werden sie IMMER aus der ueber alle Geraete
+    korrigierten Energiebilanz integriert, auch wenn oben ein einzelnes
+    Geraet ausgewaehlt ist (dessen eigener Rohwert kann sonst stark falsch
+    sein, siehe README). Nur die PV-Erzeugung bleibt bei ausgewaehltem
+    Einzelgeraet dessen eigene."""
     field = DAILY_TOTAL_FIELDS[metric]
     since = local_midnight_utc() - timedelta(days=days - 1)
+    multi = len(settings.inverters) > 1
+    house_wide_multi = multi and metric != "pv"
 
     session = SessionLocal()
     try:
         stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-        if device_id:
+        if device_id and not house_wide_multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = list(session.scalars(stmt))
     finally:
         session.close()
 
-    if not device_id and len(settings.inverters) > 1:
-        # Wie bei /day-profile: fuer "alle Geraete" muessen Leistungswerte
-        # erst pro Geraet UND Zeitpunkt summiert werden, bevor pro Tag
-        # integriert wird - sonst wuerden Geraete mit leicht versetzten
-        # Polling-Zeitpunkten fehlerhaft einzeln integriert statt zeitgleich
-        # addiert.
+    if multi and (not device_id or house_wide_multi):
+        # Wie bei /day-profile: Leistungswerte muessen erst pro Geraet UND
+        # Zeitpunkt summiert werden, bevor pro Tag integriert wird - sonst
+        # wuerden Geraete mit leicht versetzten Polling-Zeitpunkten
+        # fehlerhaft einzeln integriert statt zeitgleich addiert. Bei einer
+        # hausweiten Metrik (home/grid_draw/feed_in) gilt das unabhaengig
+        # davon, ob oben ein einzelnes Geraet ausgewaehlt ist - device_id
+        # wird dafuer bewusst ignoriert.
         per_device = aggregate_per_device(rows, bucket_seconds=60)
         combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
         rows = [
@@ -463,6 +543,50 @@ def get_daily_totals(
 
     days_data = daily_kwh_totals(rows, field, settings.timezone_name)
     return DailyTotalsOut(metric=metric, days=days_data)
+
+
+@app.get("/api/readings/daily-home-breakdown", response_model=DailyHomeBreakdownOut)
+def get_daily_home_breakdown(
+    days: int = Query(default=30, ge=1, le=400, description="Anzahl Tage rueckwirkend inkl. heute"),
+    _user: User = Depends(auth.get_current_user),
+) -> DailyHomeBreakdownOut:
+    """Wie /api/readings/daily-totals (metric=home), aber zusaetzlich
+    aufgeschluesselt danach, zu welchen Anteilen der taegliche
+    Hausverbrauch aus PV, Speicher (Batterie) bzw. Netzbezug gedeckt wurde -
+    fuer den gestapelt eingefaerbten Balken im "Tagesverbrauch"-Diagramm
+    (siehe aggregation.daily_home_source_breakdown_kwh fuer die Herleitung).
+
+    Hausverbrauch ist eine hausweite Groesse und laesst sich nicht sinnvoll
+    einem einzelnen Wechselrichter zuordnen - daher kein device_id-Parameter,
+    bei mehreren konfigurierten Geraeten wird immer automatisch die ueber
+    die Energiebilanz korrigierte Gesamt-Zeitreihe verwendet."""
+    since = local_midnight_utc() - timedelta(days=days - 1)
+
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    if len(settings.inverters) > 1:
+        per_device = aggregate_per_device(rows, bucket_seconds=60)
+        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        rows = [
+            Reading(
+                device_id="_combined_",
+                device_name="_combined_",
+                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+                **values,
+            )
+            for bk, values in combined.items()
+        ]
+
+    days_data = daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+    return DailyHomeBreakdownOut(days=days_data)
 
 
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)

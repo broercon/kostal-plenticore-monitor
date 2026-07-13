@@ -77,6 +77,17 @@ class DailyTotalsOut(BaseModel):
     days: list[DailyTotalPoint]
 
 
+class DailyHomeBreakdownDay(BaseModel):
+    date: str
+    pv_kwh: float | None = None
+    battery_kwh: float | None = None
+    grid_kwh: float | None = None
+
+
+class DailyHomeBreakdownOut(BaseModel):
+    days: list[DailyHomeBreakdownDay]
+
+
 class ImportDeviceResult(BaseModel):
     device_id: str
     device_name: str

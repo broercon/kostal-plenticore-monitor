@@ -211,21 +211,36 @@ function setupAdminPanel() {
 
 async function loadDevices() {
   state.devices = await fetchJson("/api/devices");
-  const select = el("device-select");
-  select.innerHTML = "";
-  const allOption = document.createElement("option");
-  allOption.value = "";
-  allOption.textContent = state.devices.length > 1 ? "Alle (Summe)" : "Wechselrichter";
-  select.appendChild(allOption);
-  for (const device of state.devices) {
-    const opt = document.createElement("option");
-    opt.value = device.id;
-    opt.textContent = device.name;
-    select.appendChild(opt);
+  const container = el("device-tabs");
+  container.innerHTML = "";
+
+  function makeTab(deviceId, label) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.dataset.deviceId = deviceId;
+    return btn;
   }
-  select.value = state.selectedDeviceId;
-  select.addEventListener("change", () => {
-    state.selectedDeviceId = select.value;
+
+  function applyActiveTab() {
+    for (const btn of container.querySelectorAll("button")) {
+      btn.classList.toggle("active", btn.dataset.deviceId === state.selectedDeviceId);
+    }
+  }
+
+  container.appendChild(
+    makeTab("", state.devices.length > 1 ? "Alle (Summe)" : "Wechselrichter")
+  );
+  for (const device of state.devices) {
+    container.appendChild(makeTab(device.id, device.name));
+  }
+  applyActiveTab();
+
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-device-id]");
+    if (!btn) return;
+    state.selectedDeviceId = btn.dataset.deviceId;
+    applyActiveTab();
     refreshAll();
   });
 }
@@ -258,9 +273,18 @@ async function refreshLiveCards() {
   // client-seitig summieren (z.B. bei nur einem konfigurierten Geraet).
   const cardSource = !state.selectedDeviceId && combined ? [combined] : relevant;
 
-  el("card-home").textContent = fmtWatt(sumField(cardSource, "home_power_w"));
-  el("card-feedin").textContent = fmtWatt(sumField(cardSource, "feed_in_power_w"));
-  el("card-griddraw").textContent = fmtWatt(sumField(cardSource, "grid_draw_power_w"));
+  // Hausverbrauch/Einspeisung/Netzbezug sind hausweite Groessen - bei
+  // mehreren Wechselrichtern IMMER den zusammengefassten Wert nutzen, auch
+  // wenn oben ein einzelnes Geraet ausgewaehlt ist. Grund: der eigene
+  // Home_P-Wert eines einzelnen Wechselrichters kann bei einem zweiten,
+  // unbeachteten Wechselrichter am selben Hausanschluss stark falsch/negativ
+  // sein (siehe README "Mehrere Wechselrichter ..."). Nur PV-Leistung/
+  // Batterie bleiben pro ausgewaehltem Geraet.
+  const houseWideSource = combined ? [combined] : relevant;
+
+  el("card-home").textContent = fmtWatt(sumField(houseWideSource, "home_power_w"));
+  el("card-feedin").textContent = fmtWatt(sumField(houseWideSource, "feed_in_power_w"));
+  el("card-griddraw").textContent = fmtWatt(sumField(houseWideSource, "grid_draw_power_w"));
   el("card-pv").textContent = fmtWatt(sumField(cardSource, "pv_power_w"));
 
   // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
@@ -305,12 +329,15 @@ async function refreshSummaryCards() {
   // Wie bei refreshLiveCards(): fuer "Alle (Summe)" den vom Backend bereits
   // korrekt berechneten Eintrag bevorzugen, falls vorhanden.
   const summarySource = !state.selectedDeviceId && combined ? [combined] : relevant;
+  // Verbrauch/Einspeisung heute sind hausweite Groessen - siehe
+  // refreshLiveCards() fuer die Begruendung.
+  const houseWideSource = combined ? [combined] : relevant;
 
   el("summary-yield").textContent = fmtKwh(sumField(summarySource, "yield_day_kwh"));
   el("summary-consumption").textContent = fmtKwh(
-    sumField(summarySource, "home_consumption_day_kwh")
+    sumField(houseWideSource, "home_consumption_day_kwh")
   );
-  el("summary-grid").textContent = fmtKwh(sumField(summarySource, "energy_grid_day_kwh"));
+  el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
 }
 
 function bucketMinutesForRange(hours) {
@@ -654,31 +681,53 @@ function setupDayCompareControls() {
   });
 }
 
-// --- Tagesverbrauch: Saeulendiagramm mit taeglichen kWh-Summen ---
+// --- Tagesverbrauch: gestapeltes Saeulendiagramm mit taeglichen kWh-Summen,
+// eingefaerbt nach Deckungsanteil (PV/Speicher/Netz). Hausverbrauch ist eine
+// hausweite Groesse (siehe refreshLiveCards) - der Endpunkt liefert daher
+// immer die ueber alle Wechselrichter korrigierte Gesamt-Aufteilung,
+// unabhaengig davon, welcher Tab oben ausgewaehlt ist. ---
+
+const DAILY_BREAKDOWN_COLORS = {
+  pv: "#60a5fa",
+  battery: "#c084fc",
+  grid: "#facc15",
+};
 
 async function refreshDailyTotalsChart() {
-  const params = new URLSearchParams({
-    metric: "home",
-    days: String(state.dailyTotals.days),
-  });
-  if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
-
-  const result = await fetchJson(`/api/readings/daily-totals?${params.toString()}`);
+  const params = new URLSearchParams({ days: String(state.dailyTotals.days) });
+  const result = await fetchJson(`/api/readings/daily-home-breakdown?${params.toString()}`);
   const labels = result.days.map((d) => shortDate(d.date));
-  const values = result.days.map((d) => d.kwh);
 
-  const dataset = {
-    label: "Hausverbrauch",
-    data: values,
-    backgroundColor: "#f8717199",
-    borderColor: "#f87171",
-    borderWidth: 1,
-    borderRadius: 3,
-  };
+  const datasets = [
+    {
+      label: "Aus PV",
+      data: result.days.map((d) => d.pv_kwh),
+      backgroundColor: DAILY_BREAKDOWN_COLORS.pv + "99",
+      borderColor: DAILY_BREAKDOWN_COLORS.pv,
+      borderWidth: 1,
+      stack: "verbrauch",
+    },
+    {
+      label: "Aus Speicher",
+      data: result.days.map((d) => d.battery_kwh),
+      backgroundColor: DAILY_BREAKDOWN_COLORS.battery + "99",
+      borderColor: DAILY_BREAKDOWN_COLORS.battery,
+      borderWidth: 1,
+      stack: "verbrauch",
+    },
+    {
+      label: "Aus Netz",
+      data: result.days.map((d) => d.grid_kwh),
+      backgroundColor: DAILY_BREAKDOWN_COLORS.grid + "99",
+      borderColor: DAILY_BREAKDOWN_COLORS.grid,
+      borderWidth: 1,
+      stack: "verbrauch",
+    },
+  ];
 
   if (state.dailyTotals.chart) {
     state.dailyTotals.chart.data.labels = labels;
-    state.dailyTotals.chart.data.datasets = [dataset];
+    state.dailyTotals.chart.data.datasets = datasets;
     state.dailyTotals.chart.update();
     return;
   }
@@ -686,27 +735,36 @@ async function refreshDailyTotalsChart() {
   const ctx = el("dailytotals-chart").getContext("2d");
   state.dailyTotals.chart = new Chart(ctx, {
     type: "bar",
-    data: { labels, datasets: [dataset] },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: {
+          stacked: true,
           ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 20 },
           grid: { display: false },
         },
         y: {
+          stacked: true,
           ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
           grid: { color: "#334155" },
           title: { display: true, text: "Hausverbrauch (kWh)", color: "#94a3b8" },
         },
       },
       plugins: {
-        legend: { display: false },
+        legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
             label: (item) =>
-              item.parsed.y === null ? "keine Daten" : `${item.parsed.y.toFixed(1)} kWh`,
+              item.parsed.y === null
+                ? `${item.dataset.label}: keine Daten`
+                : `${item.dataset.label}: ${item.parsed.y.toFixed(1)} kWh`,
+            footer: (items) => {
+              const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
+              return `Gesamt: ${total.toFixed(1)} kWh`;
+            },
           },
         },
       },

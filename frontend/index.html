@@ -11,7 +11,6 @@
 <header class="topbar">
   <h1>Kostal Plenticore Monitor</h1>
   <div class="topbar-right">
-    <select id="device-select"></select>
     <span id="last-update" class="muted"></span>
     <span id="user-info" class="muted"></span>
     <button id="change-password-btn" type="button">Passwort ändern</button>
@@ -64,6 +63,8 @@
 </div>
 
 <main>
+  <div class="device-tabs" id="device-tabs"></div>
+
   <div class="import-trigger">
     <button id="trigger-import-btn">Logdaten-Abgleich jetzt starten</button>
     <span class="muted" id="import-status-text">–</span>
@@ -161,8 +162,10 @@
     <div class="daycompare-header">
       <h2>Tagesverbrauch</h2>
       <p class="muted">
-        Hausverbrauch je Tag als Summe (kWh) – funktioniert auch für
-        vergangene Tage, die nur über den Logdaten-Import erfasst wurden.
+        Hausverbrauch je Tag als Summe (kWh), aufgeteilt danach, woher die
+        Energie kam: PV, Speicher (Batterie) oder Netzbezug – funktioniert
+        auch für vergangene Tage, die nur über den Logdaten-Import erfasst
+        wurden.
       </p>
     </div>
     <div class="chart-toolbar daycompare-toolbar">
@@ -177,7 +180,8 @@
       <canvas id="dailytotals-chart"></canvas>
     </div>
     <p class="chart-hint muted">
-      Tipp: Maus über eine Säule halten, um den genauen Tageswert zu sehen.
+      Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
+      Tageswerts zu sehen.
     </p>
   </section>
 
