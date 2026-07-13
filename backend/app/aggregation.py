@@ -112,6 +112,17 @@ def combine_devices(
       bei geladener Batterie sonst ein negatives/unsinniges "Home_P" zusammen
       (siehe README-Abschnitt "Mehrere Wechselrichter: Hausverbrauch/Netz
       korrekt berechnen").
+
+      Absicherung: Hausverbrauch kann physikalisch nie negativ sein - sein
+      gueltiger Wertebereich ist [0, unendlich). Kommt obige Formel (aus
+      Mess-/Zeitversatz zwischen KSEM und Wechselrichter-Sensoren oder
+      ungewoehnlich hohen Umwandlungsverlusten an einzelnen Zeitpunkten)
+      dennoch auf einen negativen Wert, wird er auf 0 begrenzt (nicht auf
+      "unbekannt"/None gesetzt) - ein leicht negativer Rohwert bedeutet in
+      der Praxis "Verbrauch ungefaehr 0", das ist eine plausible, konkrete
+      Aussage und keine unbekannte Groesse. Diese Begrenzung gilt fuer BEIDE
+      Varianten (Standard-Summe und korrigierte Energiebilanz), da die
+      physikalische Grenze unabhaengig vom Berechnungsweg gilt.
     """
     has_grid_meter = has_grid_meter or {}
     battery_power_inverted = battery_power_inverted or {}
@@ -139,6 +150,10 @@ def combine_devices(
                         continue
                     total = (total or 0.0) + value
                 merged[field] = total
+            # Hausverbrauch kann physikalisch nicht negativ sein (siehe
+            # Docstring "Absicherung") - gilt auch fuer die einfache Summe.
+            if merged.get("home_power_w") is not None and merged["home_power_w"] < 0:
+                merged["home_power_w"] = 0.0
             combined[bk] = merged
         return combined
 
@@ -190,6 +205,18 @@ def combine_devices(
                 # Fallback fuer Messwerte von vor diesem Feature (kein
                 # ac_power_w vorhanden) - etwas ungenauer, siehe Docstring.
                 home_true = pv_total + grid_draw_true - feed_in_true + (battery_total or 0.0)
+
+        if home_true is not None and home_true < 0:
+            # Hausverbrauch kann physikalisch nicht negativ sein (siehe
+            # Docstring "Absicherung") - ein negativer Wert bedeutet, dass
+            # die Energiebilanz fuer genau diesen Zeitpunkt leicht daneben
+            # liegt (z.B. weil KSEM und Wechselrichter-Sensoren nicht exakt
+            # zeitgleich gemessen haben, oder bei der DC-Fallback-Formel die
+            # geraeteeigenen Umwandlungsverluste an diesem Punkt ungewoehnlich
+            # hoch ausgefallen sind). Auf 0 begrenzen statt eine negative
+            # Zahl (oder gar einen negativen "Netzbezug-Anteil" im
+            # Tagesverbrauch-Diagramm) anzuzeigen.
+            home_true = 0.0
 
         combined[bk] = {
             "home_power_w": home_true,
@@ -443,6 +470,11 @@ def daily_home_source_breakdown_kwh(
     Haus-, Netzbezugs- oder Einspeisewerte (z.B. bei importierten Altdaten
     ohne Netzmessung), wird dieser Punkt uebersprungen - bei zu wenigen
     verbleibenden Punkten liefert ein Tag entsprechend None-Werte.
+
+    Hausverbrauch/Netzbezug koennen physikalisch nicht negativ sein (siehe
+    combine_devices() fuer die Herleitung) - ein an dieser Stelle dennoch
+    negativer Rohwert wird auf 0 begrenzt, damit weder eine einzelne Quelle
+    noch die Summe aller drei Werte je negativ werden.
     """
     tz = ZoneInfo(timezone_name)
     by_date: dict[str, list[tuple[datetime, float, float, float]]] = {}
@@ -454,6 +486,11 @@ def daily_home_source_breakdown_kwh(
         feed_in = row.feed_in_power_w
         if home is None or grid_draw is None or pv is None or feed_in is None:
             continue
+        # Hausverbrauch/Netzbezug koennen physikalisch nicht negativ sein
+        # (siehe combine_devices()) - auf 0 begrenzen statt eine
+        # irrefuehrende negative Saeule zu zeigen.
+        home = max(0.0, home)
+        grid_draw = max(0.0, grid_draw)
 
         # Gleiche Herleitung wie in day_profile(): Anteil direkt aus dem Netz
         # kann Hausverbrauch nicht uebersteigen, Rest wird zwischen PV und

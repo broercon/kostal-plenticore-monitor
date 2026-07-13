@@ -27,7 +27,15 @@ alte Formel bleibt als Fallback fuer Messwerte von vor diesem Feature
 """
 from __future__ import annotations
 
-from app.aggregation import HISTORY_FIELDS, combine_devices, combine_latest_readings
+from datetime import datetime, timedelta, timezone
+
+from app.aggregation import (
+    HISTORY_FIELDS,
+    combine_devices,
+    combine_latest_readings,
+    daily_home_source_breakdown_kwh,
+)
+from app.models import Reading
 
 
 def _bucket_row(**overrides) -> dict:
@@ -60,7 +68,13 @@ def test_combine_devices_ac_based_formula_matches_real_world_scenario():
     Netzzaehler, WR2 hat keinen Zaehler und speist trotzdem mit ein.
     devices:local:ac/P (ac_power_w) ist bei beiden Geraeten vorhanden ->
     die bevorzugte AC-basierte Formel muss verwendet werden (nicht der
-    DC-PV-Fallback), und WR2s erfundener Grid-Wert wird ignoriert."""
+    DC-PV-Fallback), und WR2s erfundener Grid-Wert wird ignoriert.
+
+    Die rohe Energiebilanz ergibt hier rechnerisch leicht NEGATIV (-345 W,
+    Mess-/Zeitversatz zwischen KSEM und Wechselrichter-Sensoren) - das ist
+    nahe an 0 (echter Hausverbrauch laut KSEM-Portal), aber Hausverbrauch
+    kann physikalisch nicht negativ sein. combine_devices() begrenzt einen
+    solchen Wert daher auf 0, statt eine negative Zahl zurueckzugeben."""
     per_device = {
         "wr1": {
             0: _bucket_row(
@@ -96,11 +110,10 @@ def test_combine_devices_ac_based_formula_matches_real_world_scenario():
     assert point["feed_in_power_w"] == 10474.6
     assert point["grid_draw_power_w"] == 0.0
 
-    expected_home = (6323.6 + 3806.0) - 10474.6 + 0.0
-    assert point["home_power_w"] == expected_home
-    # Deutlich naeher an 0 (echter Hausverbrauch laut KSEM-Portal) als die
-    # alte, DC-basierte Formel (die hier ca. +500 W ergeben haette).
-    assert abs(point["home_power_w"]) < 400
+    raw_home = (6323.6 + 3806.0) - 10474.6 + 0.0
+    assert raw_home < 0  # rechnerisch leicht negativ (Restungenauigkeit)
+    # combine_devices() begrenzt das auf 0 - nie eine negative Zahl.
+    assert point["home_power_w"] == 0.0
 
 
 def test_combine_devices_falls_back_to_dc_pv_formula_without_ac_power():
@@ -211,3 +224,75 @@ def test_combine_latest_readings_matches_combine_devices():
 
 def test_combine_latest_readings_empty_list_returns_none():
     assert combine_latest_readings([]) is None
+
+
+def test_combine_devices_clamps_negative_home_to_zero_corrected_logic():
+    """Hausverbrauch kann physikalisch nicht negativ sein. Ergibt die
+    korrigierte Energiebilanz (AC- oder DC-Fallback-Formel) dennoch einen
+    negativen Wert (Mess-/Zeitversatz o.ae.), muss combine_devices() 0.0
+    zurueckgeben - nie eine negative Zahl."""
+    per_device = {
+        "wr1": {
+            0: _bucket_row(
+                ac_power_w=1000.0,
+                grid_draw_power_w=0.0,
+                feed_in_power_w=2000.0,  # deutlich mehr als ac_power_w -> negativ
+                battery_power_w=0.0,
+            )
+        },
+        # Zweites Geraet nur, um die korrigierte Energiebilanz-Logik
+        # ueberhaupt zu aktivieren (die greift erst, sobald mindestens ein
+        # Geraet explizit has_grid_meter=False hat) - traegt selbst nichts bei.
+        "wr2": {0: _bucket_row()},
+    }
+    combined = combine_devices(per_device, {"wr1": True, "wr2": False}, None)
+    assert combined[0]["home_power_w"] == 0.0
+
+
+def test_combine_devices_clamps_negative_home_to_zero_naive_logic():
+    """Dieselbe physikalische Grenze gilt auch fuer die einfache
+    Standard-Summe (kein Geraet mit has_grid_meter=False konfiguriert) -
+    z.B. bei einem einzelnen Wechselrichter, der kurzzeitig einen leicht
+    negativen Home_P meldet (Sensorrauschen)."""
+    per_device = {
+        "wr1": {0: _bucket_row(home_power_w=-12.5, pv_power_w=100.0)},
+    }
+    combined = combine_devices(per_device)
+    assert combined[0]["home_power_w"] == 0.0
+
+
+def test_daily_home_source_breakdown_never_negative_even_with_bad_point():
+    """Regressionstest fuer den vom Nutzer gemeldeten Bug: ein Tag mit einem
+    (durch Mess-/Zeitversatz) rechnerisch leicht negativen Hausverbrauch
+    darf im gestapelten Tagesverbrauch-Diagramm NIE zu einer negativen
+    'Aus Netz'-Saeule fuehren. Zwei Messpunkte am selben Tag: einer normal
+    (PV deckt den Hausverbrauch), einer mit negativem Home_P (Einspeisung
+    minimal groesser als PV+Netzbezug, wie es durch Zeitversatz vorkommen
+    kann)."""
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        Reading(
+            device_id="_combined_",
+            device_name="_combined_",
+            timestamp=base,
+            home_power_w=1000.0,
+            grid_draw_power_w=0.0,
+            feed_in_power_w=0.0,
+            pv_power_w=1000.0,
+        ),
+        Reading(
+            device_id="_combined_",
+            device_name="_combined_",
+            timestamp=base + timedelta(minutes=10),
+            home_power_w=-50.0,  # physikalisch unmoeglich, Restungenauigkeit
+            grid_draw_power_w=0.0,
+            feed_in_power_w=100.0,
+            pv_power_w=100.0,
+        ),
+    ]
+    days = daily_home_source_breakdown_kwh(rows, "Europe/Berlin")
+    assert len(days) == 1
+    day = days[0]
+    for key in ("pv_kwh", "battery_kwh", "grid_kwh"):
+        assert day[key] is not None
+        assert day[key] >= 0

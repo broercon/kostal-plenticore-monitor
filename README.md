@@ -492,7 +492,11 @@ Gesamtleistung) möglich, weil Netzzähler (KSEM) und die AC-Sensoren der
 einzelnen Wechselrichter nicht exakt zeitsynchron messen und PV-Erzeugung
 sich (z.B. bei Wolken) innerhalb von Sekunden ändern kann – das ist eine
 grundsätzliche Grenze verteilter Messtechnik, kein Fehler dieser
-Berechnung.
+Berechnung. Da Hausverbrauch physikalisch nie negativ sein kann, wird ein
+durch diese Restungenauigkeit rechnerisch leicht negativer Wert immer auf
+0 begrenzt (nie als negative Zahl angezeigt) – das gilt für Live-Kacheln,
+alle Diagramme und die Tagesverbrauch-Aufteilung nach PV/Speicher/Netz
+gleichermaßen.
 
 ### Diagnose: welches Gerät hat den echten Zähler?
 
