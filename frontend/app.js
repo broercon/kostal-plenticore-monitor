@@ -375,6 +375,7 @@ const CHART_METRIC_COLORS = {
   feedin: "#4ade80",
   griddraw: "#facc15",
   pv: "#60a5fa",
+  battery: "#c084fc",
 };
 
 function minuteOfLocalDay(d) {
@@ -398,8 +399,8 @@ async function refreshChart() {
   if (state.selectedDeviceId !== reqDeviceId || state.hours !== reqHours) return;
 
   let labels = null;
-  const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w" };
-  const metricLabel = { home: "Hausverbrauch", feedin: "Einspeisung", griddraw: "Netzbezug", pv: "PV-Leistung" };
+  const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w", battery: "battery_power_w" };
+  const metricLabel = { home: "Hausverbrauch", feedin: "Einspeisung", griddraw: "Netzbezug", pv: "PV-Leistung", battery: "Batterie" };
 
   let datasets;
   if (isDayMode) {
