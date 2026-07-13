@@ -514,6 +514,20 @@ vorhanden: das ist meist der direkt durchgereichte KSEM-Wert, zur
 Gegenprobe). Stimmen diese Werte mit der Portal-Anzeige überein, ist das
 Gerät der richtige Kandidat für `has_grid_meter: true`.
 
+### Diagnose: unplausibler Wert an einem vergangenen Tag
+
+`debug_live.py` zeigt nur AKTUELLE Werte. Wirkt eine Kennzahl für einen
+vergangenen Tag unplausibel (z.B. "0 kWh aus PV, komplett aus dem
+Speicher" an einem Tag, an dem das kaum sein kann), zeigt
+`debug_day.py` die dafür gespeicherten Rohmesswerte je Gerät (inkl. Anzahl
+fehlender Werte) sowie die daraus berechnete "Alle (Summe)"-Bilanz und die
+Tagesverbrauch-Aufteilung – also genau das, was auch das Dashboard für
+diesen Tag anzeigen würde:
+
+```bash
+docker compose exec kostal-monitor python -m app.debug_day --date 2026-07-11
+```
+
 ### Neues Feld ac_power_w (automatische Datenbank-Migration)
 
 Für die AC-basierte Hausverbrauchs-Berechnung erfasst die App seit diesem
