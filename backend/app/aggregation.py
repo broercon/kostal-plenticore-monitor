@@ -12,6 +12,7 @@ HISTORY_FIELDS = [
     "grid_draw_power_w",
     "pv_power_w",
     "battery_power_w",
+    "ac_power_w",
 ]
 
 
@@ -72,7 +73,8 @@ def combine_devices(
 
     - PV-Leistung wird weiter ueber ALLE Geraete summiert (jedes Geraet
       kennt zuverlaessig nur seine eigenen PV-Strings, das ist unabhaengig
-      vom Hausanschluss korrekt).
+      vom Hausanschluss korrekt) - dient nur der Anzeige, nicht mehr der
+      Hausverbrauchs-Berechnung (siehe unten, ac_power_w).
     - Batterieleistung wird ebenfalls ueber alle Geraete summiert (nur das
       Geraet mit Batterie liefert ueberhaupt einen Wert), je Geraet optional
       vorzeichenkorrigiert (battery_power_inverted).
@@ -81,10 +83,28 @@ def combine_devices(
       nicht gemessenes (oder dupliziertes) Grid_P wuerde den echten Wert
       sonst verfaelschen.
     - Hausverbrauch wird nicht aus den einzelnen (potenziell falschen)
-      Home_P-Werten summiert, sondern aus der Energiebilanz neu berechnet:
-      Home = PV_gesamt + Netzbezug_echt - Einspeisung_echt + Batterieleistung
-      (Batterieleistung positiv = Entladen, negativ = Laden - das speist
-      zusaetzliche bzw. entzieht verfuegbare Energie fuer den Hausverbrauch).
+      Home_P-Werten summiert, sondern aus der Energiebilanz neu berechnet -
+      bevorzugt ueber die AC-seitige Nettoleistung jedes Geraets
+      (ac_power_w, positiv = Leistung geht vom Geraet Richtung Hausnetz,
+      negativ = Leistung kommt von aussen ins Geraet):
+
+          Home = AC-Leistung_gesamt + Netzbezug_echt - Einspeisung_echt
+
+      Das ist genauer als die Variante mit pv_power_w (DC, siehe unten),
+      weil ac_power_w bereits die tatsaechlich am Hausnetz ankommende/
+      abgehende Leistung ist (nach Wechselrichter-eigenen DC->AC-
+      Umwandlungsverlusten) UND das eigene Batterieladen/-entladen jedes
+      Geraets automatisch mit einschliesst (rein DC-seitige Ladung aus
+      eigener PV taucht in ac_power_w gar nicht erst auf - nur was
+      tatsaechlich die AC-Seite quert).
+
+      Fallback fuer Messwerte von VOR diesem Feature (ac_power_w noch
+      nicht erfasst, also NULL): Home = PV_gesamt (DC) + Netzbezug_echt -
+      Einspeisung_echt + Batterieleistung. Das ist etwas ungenauer, weil
+      PV hier die DC-Erzeugung VOR den Umwandlungsverlusten ist - der
+      Wechselrichter-eigene Umwandlungsverlust (typischerweise einige
+      Prozent) erscheint dabei faelschlich als zusaetzlicher
+      "Hausverbrauch".
 
       Hintergrund: Ein Wechselrichter, der nicht weiss, dass ein zweiter
       Wechselrichter am selben Hausanschluss Energie einspeist, rechnet sich
@@ -143,6 +163,7 @@ def combine_devices(
     combined = {}
     for bk in all_buckets:
         pv_total = _sum_field("pv_power_w", device_ids, bk)
+        ac_total = _sum_field("ac_power_w", device_ids, bk)
         grid_draw_true = _sum_field("grid_draw_power_w", metered_devices, bk)
         feed_in_true = _sum_field("feed_in_power_w", metered_devices, bk)
 
@@ -159,8 +180,15 @@ def combine_devices(
             battery_total = (battery_total or 0.0) + value
 
         home_true = None
-        if pv_total is not None and grid_draw_true is not None and feed_in_true is not None:
-            home_true = pv_total + grid_draw_true - feed_in_true + (battery_total or 0.0)
+        if grid_draw_true is not None and feed_in_true is not None:
+            if ac_total is not None:
+                # Bevorzugt: AC-seitige Nettoleistung (siehe Docstring) -
+                # schliesst Batterieladung/-entladung bereits mit ein.
+                home_true = ac_total + grid_draw_true - feed_in_true
+            elif pv_total is not None:
+                # Fallback fuer Messwerte von vor diesem Feature (kein
+                # ac_power_w vorhanden) - etwas ungenauer, siehe Docstring.
+                home_true = pv_total + grid_draw_true - feed_in_true + (battery_total or 0.0)
 
         combined[bk] = {
             "home_power_w": home_true,
@@ -168,6 +196,7 @@ def combine_devices(
             "grid_draw_power_w": grid_draw_true,
             "pv_power_w": pv_total,
             "battery_power_w": battery_total,
+            "ac_power_w": ac_total,
         }
     return combined
 

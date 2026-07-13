@@ -28,6 +28,12 @@ class Reading(Base):
     feed_in_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     grid_draw_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     pv_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # AC-seitige Nettoleistung am Wechselrichter-Anschluss (devices:local:ac/P)
+    # - siehe plenticore_client.py fuer Herleitung/Vorzeichen-Konvention. Neu
+    # hinzugekommenes Feld; bei vor diesem Update erfassten Zeilen NULL
+    # (siehe database._ensure_ac_power_column fuer die Migration bestehender
+    # Datenbanken).
+    ac_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_soc_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
 

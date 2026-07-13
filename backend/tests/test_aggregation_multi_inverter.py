@@ -13,6 +13,17 @@ Nutzer ausgelesenen Rohwerten gewaehlt (WR mit Batterie: Grid_P ~41 W,
 Home_P ~-1372 W (kaputt), battery/P ~-2597 W beim Laden; zweiter WR ohne
 Zaehler liefert ~1300 W PV), damit der Test den echten Fall abbildet statt
 nur ein abstraktes Beispiel.
+
+Zweite Iteration: die anfaengliche Formel (PV_gesamt [DC] + Netzbezug -
+Einspeisung + Batterie) unterschaetzte Wechselrichter-eigene DC->AC-
+Umwandlungsverluste als "Hausverbrauch" (bei einer realen Messung ca.
+500 W "Phantom-Verbrauch", obwohl das KSEM-Portal 0 W Hausverbrauch zeigte).
+Die bevorzugte Formel nutzt seitdem die AC-seitige Nettoleistung
+(ac_power_w, aus devices:local:ac/P) statt der DC-PV-Summe - das reduzierte
+den Fehler in der echten Messung auf ca. -160 bis -345 W (Rest ist
+Mess-/Zeitversatz zwischen zwei nicht ganz gleichzeitigen Abfragen). Die
+alte Formel bleibt als Fallback fuer Messwerte von vor diesem Feature
+(ac_power_w noch nicht erfasst, also NULL) erhalten.
 """
 from __future__ import annotations
 
@@ -43,16 +54,65 @@ def test_combine_devices_default_naive_sum_unchanged():
     assert combined_explicit[0]["pv_power_w"] == 280.0
 
 
-def test_combine_devices_corrected_energy_balance_matches_real_world_scenario():
-    """Nachgebaut aus echten Werten (siehe Modul-Docstring): WR1 hat den
-    echten Netzzaehler und die Batterie, WR2 hat keinen Zaehler und laedt
-    per AC mit. Erwartet: Home_P wird NEU aus der Energiebilanz berechnet
-    (nicht aus WR1s kaputtem, negativem Home_P uebernommen), und WR2s
-    Grid-Werte werden komplett ignoriert."""
+def test_combine_devices_ac_based_formula_matches_real_world_scenario():
+    """Nachgebaut aus einer echten Messung mit ruhender (voller, 100%,
+    weder ladender noch entladender) Batterie: WR1 hat den echten
+    Netzzaehler, WR2 hat keinen Zaehler und speist trotzdem mit ein.
+    devices:local:ac/P (ac_power_w) ist bei beiden Geraeten vorhanden ->
+    die bevorzugte AC-basierte Formel muss verwendet werden (nicht der
+    DC-PV-Fallback), und WR2s erfundener Grid-Wert wird ignoriert."""
+    per_device = {
+        "wr1": {
+            0: _bucket_row(
+                pv_power_w=6443.5,  # DC, wird NICHT fuer Home verwendet
+                ac_power_w=6323.6,
+                home_power_w=-4050.4,  # WR1s eigene (kaputte) Berechnung
+                grid_draw_power_w=0.0,
+                feed_in_power_w=10474.6,
+                battery_power_w=0.0,  # Batterie voll, ruht gerade
+            )
+        },
+        "wr2": {
+            0: _bucket_row(
+                pv_power_w=3927.2,
+                ac_power_w=3806.0,
+                home_power_w=0.0,
+                # WR2 hat "kein Sensor verwendet" - dieser Wert ist erfunden
+                # und darf nicht einfliessen.
+                grid_draw_power_w=0.0,
+                feed_in_power_w=3806.0,
+                battery_power_w=None,  # kein eigener Speicher
+            )
+        },
+    }
+    has_grid_meter = {"wr1": True, "wr2": False}
+
+    combined = combine_devices(per_device, has_grid_meter)
+    point = combined[0]
+
+    assert point["ac_power_w"] == 6323.6 + 3806.0
+    # Nur WR1s Netzwerte werden verwendet, WR2s erfundene 3806 W Einspeisung
+    # taucht hier nicht auf.
+    assert point["feed_in_power_w"] == 10474.6
+    assert point["grid_draw_power_w"] == 0.0
+
+    expected_home = (6323.6 + 3806.0) - 10474.6 + 0.0
+    assert point["home_power_w"] == expected_home
+    # Deutlich naeher an 0 (echter Hausverbrauch laut KSEM-Portal) als die
+    # alte, DC-basierte Formel (die hier ca. +500 W ergeben haette).
+    assert abs(point["home_power_w"]) < 400
+
+
+def test_combine_devices_falls_back_to_dc_pv_formula_without_ac_power():
+    """Messwerte von VOR dem ac_power_w-Feature (z.B. importierte Altdaten)
+    haben ac_power_w=None - dann greift die alte, etwas ungenauere Formel
+    (PV_gesamt [DC] + Netzbezug - Einspeisung + Batterie), nicht ein
+    fehlender/kaputter Wert."""
     per_device = {
         "wr1": {
             0: _bucket_row(
                 pv_power_w=1332.9,
+                ac_power_w=None,
                 home_power_w=-1371.8,  # WR1s eigene (kaputte) Berechnung
                 grid_draw_power_w=40.7,
                 feed_in_power_w=0.0,
@@ -62,6 +122,7 @@ def test_combine_devices_corrected_energy_balance_matches_real_world_scenario():
         "wr2": {
             0: _bucket_row(
                 pv_power_w=1300.0,
+                ac_power_w=None,
                 home_power_w=500.0,  # irrelevant, wird ignoriert
                 grid_draw_power_w=9999.0,  # darf NICHT einfliessen (kein Zaehler)
                 feed_in_power_w=0.0,

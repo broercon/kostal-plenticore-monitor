@@ -435,15 +435,23 @@ weggelassen: `true` – bei nur einem konfigurierten Gerät entsprechend
 unkritisch). Sobald mindestens ein Gerät explizit `false` ist, ändert sich
 für die "Alle (Summe)"-Ansicht die Berechnung:
 
-- **PV-Leistung** wird weiterhin über alle Geräte summiert (jedes Gerät
-  kennt zuverlässig nur seine eigenen PV-Strings).
-- **Batterieleistung** wird ebenfalls über alle Geräte summiert (nur das
-  Gerät mit Batterie liefert überhaupt einen Wert).
+- **PV-Leistung** (Anzeige) wird weiterhin über alle Geräte summiert (jedes
+  Gerät kennt zuverlässig nur seine eigenen PV-Strings).
+- **Batterieleistung** (Anzeige) wird ebenfalls über alle Geräte summiert
+  (nur das Gerät mit Batterie liefert überhaupt einen Wert).
 - **Netzbezug/Einspeisung** werden NICHT summiert, sondern nur vom als
   `has_grid_meter: true` markierten Gerät übernommen.
 - **Hausverbrauch** wird nicht mehr aus den (potenziell falschen)
   `Home_P`-Werten der Geräte summiert, sondern aus der Energiebilanz neu
-  berechnet: `Hausverbrauch = PV gesamt + Netzbezug − Einspeisung +
+  berechnet – bevorzugt über die AC-seitige Nettoleistung jedes Geräts
+  (`devices:local:ac/P`, intern `ac_power_w`): `Hausverbrauch = AC-Leistung
+  gesamt + Netzbezug − Einspeisung`. Das ist genauer als eine Rechnung mit
+  der PV-**DC**-Erzeugung (die vor den geräteeigenen
+  Umwandlungsverlusten liegt und diese sonst fälschlich als Hausverbrauch
+  erscheinen lässt) und schließt das eigene Batterieladen/-entladen jedes
+  Geräts automatisch mit ein. Für Messwerte von **vor** diesem Feature
+  (`ac_power_w` noch nicht erfasst) greift als Fallback die ältere,
+  etwas ungenauere Variante: `PV gesamt (DC) + Netzbezug − Einspeisung +
   Batterieleistung` (Batterieleistung positiv = Entladen, negativ = Laden).
 
 Ohne diese Konfiguration (Standardfall: ein einzelnes Gerät, oder alle
@@ -453,10 +461,19 @@ Ein-Geräte-Installationen.
 
 Falls die Batterie-Vorzeichen-Konvention bei einem Gerät umgekehrt sein
 sollte (positiv = Laden statt Entladen), zusätzlich
-`"battery_power_inverted": true` bei diesem Gerät setzen.
+`"battery_power_inverted": true` bei diesem Gerät setzen (wirkt sich nur
+auf den DC-Fallback aus, siehe oben).
 
 Ohne passende Konfiguration bei mehreren Geräten gibt die App beim Start
 eine Warnung in den Logs aus (`docker compose logs -f`).
+
+**Restungenauigkeit:** Auch mit der AC-basierten Formel bleibt eine kleine
+Abweichung (in der Praxis meist niedriger einstelliger Prozentbereich der
+Gesamtleistung) möglich, weil Netzzähler (KSEM) und die AC-Sensoren der
+einzelnen Wechselrichter nicht exakt zeitsynchron messen und PV-Erzeugung
+sich (z.B. bei Wolken) innerhalb von Sekunden ändern kann – das ist eine
+grundsätzliche Grenze verteilter Messtechnik, kein Fehler dieser
+Berechnung.
 
 ### Diagnose: welches Gerät hat den echten Zähler?
 
@@ -473,6 +490,17 @@ gleichzeitig geöffnet halten) sowie `devices:local:powermeter/*` (falls
 vorhanden: das ist meist der direkt durchgereichte KSEM-Wert, zur
 Gegenprobe). Stimmen diese Werte mit der Portal-Anzeige überein, ist das
 Gerät der richtige Kandidat für `has_grid_meter: true`.
+
+### Neues Feld ac_power_w (automatische Datenbank-Migration)
+
+Für die AC-basierte Hausverbrauchs-Berechnung erfasst die App seit diesem
+Update zusätzlich `devices:local:ac/P` je Wechselrichter (`ac_power_w`). Die
+bestehende `readings`-Tabelle wird beim nächsten Start automatisch um diese
+Spalte ergänzt (einfaches `ALTER TABLE`, keine bestehenden Daten gehen
+verloren oder werden verändert) – ein normales `docker compose up -d
+--build` reicht aus. Für Messwerte von vor diesem Update bleibt das Feld
+leer (`NULL`); für diese greift automatisch die ältere Fallback-Formel
+(siehe oben).
 
 ## Daten sichern
 

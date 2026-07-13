@@ -21,6 +21,7 @@ class ReadingOut(BaseModel):
     feed_in_power_w: float | None = None
     grid_draw_power_w: float | None = None
     pv_power_w: float | None = None
+    ac_power_w: float | None = None
     battery_power_w: float | None = None
     battery_soc_percent: float | None = None
     yield_day_kwh: float | None = None

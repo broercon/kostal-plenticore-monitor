@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # abgeglichen, damit z.B. Geraete ohne Batterie nicht zu Fehlern fuehren.
 PROCESS_DATA_CANDIDATES: dict[str, list[str]] = {
     "devices:local": ["Home_P", "Grid_P", "Dc_P"],
+    "devices:local:ac": ["P"],
     "devices:local:battery": ["P", "SoC"],
     "scb:statistic:EnergyFlow": ["Statistic:EnergyHome:Day", "Statistic:Yield:Day"],
     "_virt_": ["pv_P", "Statistic:EnergyGrid:Day"],
@@ -179,6 +180,16 @@ class PlenticoreDevice:
             "feed_in_power_w": feed_in_w,
             "grid_draw_power_w": grid_draw_w,
             "pv_power_w": _to_float(val("_virt_", "pv_P")),
+            # AC-seitige Netto-Leistung am Wechselrichter-Anschluss (positiv =
+            # Leistung fliesst vom Geraet Richtung Hausnetz/Netz, negativ =
+            # Leistung fliesst von aussen ins Geraet, z.B. um die eigene
+            # Batterie per AC von einem anderen Wechselrichter mitladen zu
+            # lassen). Anders als pv_power_w (DC, VOR Wechselrichter-eigenen
+            # Umwandlungsverlusten) ist das bereits die tatsaechlich am
+            # Hausnetz ankommende/abgehende Leistung - wichtig fuer eine
+            # korrekte Hausverbrauchs-Bilanz bei mehreren Wechselrichtern am
+            # selben Hausanschluss (siehe README).
+            "ac_power_w": _to_float(val("devices:local:ac", "P")),
             "battery_power_w": _to_float(val("devices:local:battery", "P")),
             "battery_soc_percent": _to_float(val("devices:local:battery", "SoC")),
             "yield_day_kwh": _wh_to_kwh(
