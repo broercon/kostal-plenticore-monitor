@@ -41,7 +41,36 @@ class Poller:
             settings.poll_interval_seconds,
         )
         while not self._stop_event.is_set():
-            await asyncio.gather(*(self._poll_once(d) for d in self.devices))
+            try:
+                # return_exceptions=True: ein einzelnes Geraet, das in
+                # _poll_once() unerwartet doch eine Exception durchlaesst,
+                # darf nicht die anderen Geraete im selben Zyklus abwuergen.
+                results = await asyncio.gather(
+                    *(self._poll_once(d) for d in self.devices), return_exceptions=True
+                )
+                for device, result in zip(self.devices, results):
+                    if isinstance(result, Exception):
+                        logger.exception(
+                            "Unerwarteter Fehler beim Abfragen von %s - "
+                            "naechster Versuch in %ds",
+                            device.cfg.name,
+                            settings.poll_interval_seconds,
+                            exc_info=result,
+                        )
+            except asyncio.CancelledError:
+                raise  # Sauberes Herunterfahren (poller.stop()) nicht verschlucken.
+            except Exception:  # noqa: BLE001
+                # Letztes Sicherheitsnetz: sollte dank der Absicherungen in
+                # _poll_once()/fetch_reading() eigentlich nie noetig sein,
+                # verhindert aber, dass ein unvorhergesehener Fehler das
+                # Polling fuer den Rest des Tages/der Nacht komplett
+                # lahmlegt (das genaue Symptom, das zu dieser Absicherung
+                # gefuehrt hat: Polling stoppte naechtens dauerhaft, bis der
+                # Container manuell neu gestartet wurde).
+                logger.exception(
+                    "Unerwarteter Fehler im Poll-Zyklus - naechster Versuch in %ds",
+                    settings.poll_interval_seconds,
+                )
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(), timeout=settings.poll_interval_seconds
@@ -50,7 +79,18 @@ class Poller:
                 pass
 
     async def _poll_once(self, device: PlenticoreDevice) -> None:
-        reading = await device.fetch_reading()
+        try:
+            reading = await device.fetch_reading()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            # fetch_reading() ist so gebaut, dass es bei Verbindungsproblemen
+            # None zurueckgibt statt zu werfen (siehe plenticore_client.py).
+            # Dieses Abfangen hier ist ein zusaetzliches Sicherheitsnetz,
+            # falls trotzdem einmal etwas durchrutscht - ein einzelnes
+            # fehlerhaftes Geraet darf nie den ganzen Poller-Task beenden.
+            logger.exception("Unerwarteter Fehler beim Abfragen von %s", device.cfg.name)
+            return
         if reading is None:
             return
         self.latest[reading["device_id"]] = reading

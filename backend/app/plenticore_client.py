@@ -10,12 +10,13 @@ Falls das bei deinem Geraet genau andersherum sein sollte, kann das in
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
-from pykoplenti import ApiException, ExtendedApiClient
+from pykoplenti import ExtendedApiClient
 
 from .config import InverterConfig, settings
 
@@ -110,17 +111,36 @@ class PlenticoreDevice:
     async def fetch_reading(self) -> dict[str, Any] | None:
         """Liest einen Satz Prozessdaten. Gibt None zurueck, wenn das Geraet
         gerade nicht erreichbar ist (statt eine Exception zu werfen), damit der
-        Poller andere Geraete/Zyklen nicht beeintraechtigt."""
+        Poller andere Geraete/Zyklen nicht beeintraechtigt.
+
+        WICHTIG: Der Except-Block unten faengt bewusst ALLE Exceptions ab
+        (nicht nur die "erwarteten" Netzwerkfehler wie aiohttp.ClientError/
+        ApiException/TimeoutError/OSError). Grund: Manche Wechselrichter
+        trennen die Verbindung nachts (z.B. wenn das Geraet ohne PV-Ertrag
+        in einen Stromsparmodus geht oder sich selbst neu startet) auf eine
+        Art, die zu ungewoehnlichen Fehlern fuehren kann (z.B. eine leere/
+        kaputte Antwort, die beim Parsen einen JSON- oder Typ-Fehler statt
+        eines "sauberen" Verbindungsfehlers ausloest). Fruehere Versionen
+        fingen hier nur die erwarteten Typen ab - ein nicht abgedeckter
+        Fehlertyp lief dann ungebremst durch fetch_reading() hindurch bis in
+        den Poller-Hintergrund-Task hinein und beendete dort das komplette
+        Polling (fuer ALLE Geraete) dauerhaft, bis der Container neu
+        gestartet wurde. Das aeusserte sich genau so: die App hoerte zu
+        einer bestimmten Uhrzeit (z.B. naechtens) auf, Daten abzufragen, und
+        erholte sich erst nach einem manuellen Neustart wieder."""
         try:
             if not self._connected:
                 await self._connect()
             assert self._client is not None
             values = await self._client.get_process_data_values(self._request)
-        except (aiohttp.ClientError, ApiException, TimeoutError, OSError) as exc:
+        except asyncio.CancelledError:
+            raise  # Sauberes Herunterfahren (Container-Stop) nicht verschlucken.
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "%s (%s) nicht erreichbar (%s) - verbinde neu",
+                "%s (%s) nicht erreichbar (%s: %s) - verbinde neu",
                 self.cfg.name,
                 self.cfg.host,
+                type(exc).__name__,
                 exc,
             )
             await self.close()
@@ -128,10 +148,13 @@ class PlenticoreDevice:
                 await self._connect()
                 assert self._client is not None
                 values = await self._client.get_process_data_values(self._request)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc2:  # noqa: BLE001
                 logger.warning(
-                    "Erneuter Verbindungsversuch zu %s fehlgeschlagen: %s",
+                    "Erneuter Verbindungsversuch zu %s fehlgeschlagen (%s: %s)",
                     self.cfg.name,
+                    type(exc2).__name__,
                     exc2,
                 )
                 await self.close()
