@@ -29,11 +29,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.aggregation import (
     HISTORY_FIELDS,
+    MAX_INTEGRATION_GAP_HOURS,
     combine_devices,
     combine_latest_readings,
     daily_home_source_breakdown_kwh,
+    integrate_kwh,
 )
 from app.models import Reading
 
@@ -296,3 +300,86 @@ def test_daily_home_source_breakdown_never_negative_even_with_bad_point():
     for key in ("pv_kwh", "battery_kwh", "grid_kwh"):
         assert day[key] is not None
         assert day[key] >= 0
+
+
+def test_integrate_kwh_skips_large_data_gaps():
+    """Regressionstest fuer eine reale Beobachtung: ein Tag mit vielen
+    Datenluecken (Zaehler-Abfrage/Wechselrichter zeitweise nicht erreichbar)
+    ergab eine unplausible Tagessumme von ueber 100 kWh fuer eine deutlich
+    kleinere Anlage, weil integrate_kwh() den letzten bekannten (hohen)
+    Leistungswert stundenlang ueber eine Luecke hinweg fortgeschrieben hat.
+    Ab MAX_INTEGRATION_GAP_HOURS darf ein Intervall nicht mehr interpoliert
+    werden."""
+    base = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    # Zwei Punkte mit hoher Leistung, aber mehrere Stunden auseinander -
+    # eine Luecke, wie sie durch einen laengeren Ausfall entstehen wuerde.
+    rows = [
+        Reading(
+            device_id="wr1", device_name="WR1", timestamp=base, pv_power_w=8000.0
+        ),
+        Reading(
+            device_id="wr1",
+            device_name="WR1",
+            timestamp=base + timedelta(hours=6),
+            pv_power_w=8000.0,
+        ),
+    ]
+    # Naive Interpolation ueber 6 Stunden bei 8000 W waere 48 kWh - deutlich
+    # zu viel fuer eine Luecke, die tatsaechlich unbekannt ist. Es gibt zwar
+    # 2 Messpunkte, aber das einzige Intervall zwischen ihnen ist zu lang
+    # und wird uebersprungen -> Ergebnis 0.0, nicht 48.
+    assert integrate_kwh(rows, "pv_power_w") == 0.0
+
+    # Mit einem dritten Punkt kurz nach dem ersten (normales Intervall)
+    # bleibt NUR dieses kurze Intervall in der Summe - die grosse Luecke
+    # danach wird uebersprungen, nicht interpoliert.
+    rows.insert(
+        1,
+        Reading(
+            device_id="wr1",
+            device_name="WR1",
+            timestamp=base + timedelta(minutes=5),
+            pv_power_w=8000.0,
+        ),
+    )
+    result = integrate_kwh(rows, "pv_power_w")
+    assert result is not None
+    # 5 Minuten bei 8000 W = 8000 * 5/60 / 1000 kWh
+    assert result == pytest.approx(8000 * (5 / 60) / 1000, abs=0.001)
+    assert result < 1.0  # keinesfalls die ueber die Luecke interpolierten ~48 kWh
+
+
+def test_daily_home_source_breakdown_treats_missing_grid_as_zero():
+    """Regressionstest: fehlen Netzbezug/Einspeisung fuer einen Messpunkt
+    (haeufiger Fall bei zeitweise nicht erreichbarem Zaehler), darf die
+    Aufteilung diesen Punkt nicht komplett verwerfen (das liess zuvor einen
+    erheblichen Teil des Tages unter den Tisch fallen und die Summe aus
+    PV+Speicher+Netz stimmte nicht mehr mit der tatsaechlichen
+    Tagessumme ueberein) - stattdessen wird 0 angenommen."""
+    base = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        Reading(
+            device_id="_combined_",
+            device_name="_combined_",
+            timestamp=base,
+            home_power_w=1000.0,
+            grid_draw_power_w=0.0,
+            feed_in_power_w=0.0,
+            pv_power_w=1000.0,
+        ),
+        Reading(
+            device_id="_combined_",
+            device_name="_combined_",
+            timestamp=base + timedelta(minutes=5),
+            home_power_w=1000.0,
+            grid_draw_power_w=None,  # Zaehler-Abfrage fehlgeschlagen
+            feed_in_power_w=None,
+            pv_power_w=1000.0,
+        ),
+    ]
+    days = daily_home_source_breakdown_kwh(rows, "Europe/Berlin")
+    assert len(days) == 1
+    day = days[0]
+    total = day["pv_kwh"] + day["battery_kwh"] + day["grid_kwh"]
+    expected_total = integrate_kwh(rows, "home_power_w")
+    assert total == pytest.approx(expected_total, abs=0.01)

@@ -258,10 +258,16 @@ beim Tagesvergleich "Verbrauch aus Solar & Batterie"/"aus dem Netz") – Maus
 Anders als die "heute"-Kachel wird hier immer direkt aus den gespeicherten
 Messwerten integriert (Trapezregel), nicht aus vom Wechselrichter gemeldeten
 Tageswerten. Das funktioniert daher auch für vergangene Tage, die nur über
-den Logdaten-Import (nicht live) erfasst wurden – die Aufteilung nach
-Quelle braucht allerdings Netzbezugs-/Einspeisewerte und bleibt daher bei
-importierten Altdaten ohne Netzmessung leer (siehe KSEM-Limitation oben).
-Für Tage ganz ohne Messwerte bleibt die Säule leer. Hausverbrauch ist eine
+den Logdaten-Import (nicht live) erfasst wurden. Fehlen für einen
+Messpunkt nur Netzbezug/Einspeisung (z.B. weil die Zähler-Abfrage kurz
+fehlschlägt, oder bei importierten Altdaten ohne Netzmessung, siehe
+KSEM-Limitation oben), wird dafür 0 angenommen statt den ganzen Messpunkt
+zu verwerfen – bei Altdaten ganz ohne Netzmessung heißt das konkret: die
+Aufteilung geht davon aus, dass der gesamte Verbrauch aus PV/Speicher kam
+(0 % Netzbezug), auch wenn das an einzelnen Tagen nicht ganz stimmen muss.
+Fehlen dagegen Haus- oder PV-Werte selbst, bleibt der Messpunkt
+unberücksichtigt; für Tage ganz ohne Messwerte bleibt die Säule leer.
+Hausverbrauch ist eine
 hausweite Größe (siehe Abschnitt "Mehrere Wechselrichter" oben) – bei
 mehreren konfigurierten Wechselrichtern zeigt dieses Diagramm daher immer
 die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
@@ -527,6 +533,23 @@ diesen Tag anzeigen würde:
 ```bash
 docker compose exec kostal-monitor python -m app.debug_day --date 2026-07-11
 ```
+
+### Datenlücken: keine Interpolation über große Zeitlücken hinweg
+
+Mit `debug_day.py` wurde ein konkreter Fall gefunden: an einem Tag mit
+vielen fehlenden Netzbezugswerten (Zähler-Abfrage zeitweise fehlgeschlagen)
+ergab die Tagessumme über 100 kWh PV-Ertrag für eine deutlich kleinere
+Anlage – die Ursache war, dass `integrate_kwh()` (die Trapezregel-Funktion
+hinter allen kWh-Summen dieser App) den letzten bekannten Leistungswert
+über mehrstündige Datenlücken hinweg linear fortgeschrieben hat, statt die
+Lücke als "unbekannt" zu behandeln. Ab jetzt wird ein Intervall zwischen
+zwei Messpunkten, das mehr als 30 Minuten auseinanderliegt, nicht mehr
+interpoliert, sondern übersprungen (trägt 0 zur Summe bei) – das
+unterschätzt die tatsächliche Energiemenge in der Lücke leicht, ist aber
+deutlich näher an der Wahrheit als eine grobe Fortschreibung über Stunden.
+Betrifft alle kWh-Summen der App (Tagesverbrauch, PV-Ertrag,
+Tagesvergleich, "heute"-Kacheln als Fallback), nicht nur die neue
+PV/Speicher/Netz-Aufteilung.
 
 ### Neues Feld ac_power_w (automatische Datenbank-Migration)
 

@@ -249,6 +249,19 @@ def combine_latest_readings(
     return combined.get(0)
 
 
+# Maximale Zeitluecke zwischen zwei aufeinanderfolgenden Messpunkten, die
+# integrate_kwh() noch per Trapezregel ueberbrueckt (interpoliert). Bei
+# laengeren Luecken (z.B. Poller-Ausfall, Wechselrichter voruebergehend
+# nicht erreichbar, fehlende Netzwerte bei einem Teil der Ablesungen) wuerde
+# das lineare Ueberbruecken den letzten bekannten Wert ueber Stunden hinweg
+# fortschreiben und so die Energiemenge stark verfaelschen (beobachtet:
+# ein Tag mit vielen Datenluecken ergab eine unplausible PV-Tagessumme von
+# über 100 kWh fuer eine deutlich kleinere Anlage). Bei einer Luecke ueber
+# dieser Schwelle wird das Intervall stattdessen uebersprungen (traegt 0 bei),
+# statt ueber die Luecke hinweg zu interpolieren.
+MAX_INTEGRATION_GAP_HOURS = 0.5  # 30 Minuten
+
+
 def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     """Integriert eine Leistungs-Zeitreihe (Watt) zu einer Energiemenge (kWh),
     per Trapezregel ueber die vorhandenen Messpunkte.
@@ -257,6 +270,13 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     passenden Tages-Statistikwert liefert (z.B. eingeschraenkter Nutzer-Login
     ohne Zugriff auf das Statistik-Modul, oder fehlende Batterie fuer den
     virtuellen Einspeise-Wert).
+
+    Intervalle, die laenger als MAX_INTEGRATION_GAP_HOURS auseinanderliegen
+    (z.B. durch eine Datenluecke), werden NICHT interpoliert, sondern
+    uebersprungen (siehe Konstante oben fuer die Begruendung) - das
+    unterschaetzt die tatsaechliche Energiemenge in der Luecke leicht (dort
+    fehlen dann echte Messwerte), ist aber deutlich naeher an der Wahrheit
+    als eine grobe lineare Fortschreibung ueber Stunden hinweg.
     """
     points = sorted(
         (
@@ -272,7 +292,7 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     energy_wh = 0.0
     for (t0, p0), (t1, p1) in zip(points, points[1:]):
         dt_hours = (t1 - t0).total_seconds() / 3600
-        if dt_hours <= 0:
+        if dt_hours <= 0 or dt_hours > MAX_INTEGRATION_GAP_HOURS:
             continue
         energy_wh += (p0 + p1) / 2 * dt_hours
     return round(energy_wh / 1000, 3)
@@ -466,10 +486,17 @@ def daily_home_source_breakdown_kwh(
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "pv_kwh": float|None,
     "battery_kwh": float|None, "grid_kwh": float|None}, aufsteigend nach
     Datum sortiert. Die drei Werte summieren sich (bis auf Rundung) zum
-    gesamten Hausverbrauch des Tages. Fehlen fuer einen Messpunkt PV-,
-    Haus-, Netzbezugs- oder Einspeisewerte (z.B. bei importierten Altdaten
-    ohne Netzmessung), wird dieser Punkt uebersprungen - bei zu wenigen
-    verbleibenden Punkten liefert ein Tag entsprechend None-Werte.
+    gesamten Hausverbrauch des Tages (siehe daily_kwh_totals(field=
+    "home_power_w")). Fehlen fuer einen Messpunkt Haus- oder PV-Werte (z.B.
+    bei importierten Altdaten ohne Netzmessung, oder wenn der
+    Wechselrichter selbst voruebergehend keine Werte meldet), wird dieser
+    Punkt uebersprungen. Fehlen dagegen NUR Netzbezug/Einspeisung (in der
+    Praxis haeufiger, z.B. wenn die Zaehler-Abfrage kurzzeitig fehlschlaegt,
+    waehrend Haus-/PV-Werte weiter vorhanden sind), wird dafuer 0
+    angenommen (kein bekannter Netzbezug/Einspeisung) statt den ganzen
+    Punkt zu verwerfen - sonst wuerde die Aufteilung bei lueckenhaften
+    Netzwerten einen erheblichen Teil des Tages verlieren und nicht mehr
+    zur tatsaechlichen Tagessumme passen.
 
     Hausverbrauch/Netzbezug koennen physikalisch nicht negativ sein (siehe
     combine_devices() fuer die Herleitung) - ein an dieser Stelle dennoch
@@ -481,11 +508,16 @@ def daily_home_source_breakdown_kwh(
 
     for row in rows:
         home = row.home_power_w
-        grid_draw = row.grid_draw_power_w
         pv = row.pv_power_w
-        feed_in = row.feed_in_power_w
-        if home is None or grid_draw is None or pv is None or feed_in is None:
+        if home is None or pv is None:
             continue
+        # Netzbezug/Einspeisung fehlen in der Praxis oefter als Haus-/
+        # PV-Werte (z.B. wenn die Zaehler-Abfrage kurz fehlschlaegt) - dann
+        # lieber 0 annehmen (kein bekannter Netzbezug/keine bekannte
+        # Einspeisung) statt den ganzen Messpunkt zu verwerfen, siehe
+        # Docstring.
+        grid_draw = row.grid_draw_power_w if row.grid_draw_power_w is not None else 0.0
+        feed_in = row.feed_in_power_w if row.feed_in_power_w is not None else 0.0
         # Hausverbrauch/Netzbezug koennen physikalisch nicht negativ sein
         # (siehe combine_devices()) - auf 0 begrenzen statt eine
         # irrefuehrende negative Saeule zu zeigen.
