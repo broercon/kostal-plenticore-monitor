@@ -259,7 +259,12 @@ function sumField(readings, field) {
 const COMBINED_DEVICE_ID = "_all_";
 
 async function refreshLiveCards() {
+  // Snapshot der Auswahl VOR dem Netzwerk-Aufruf: wird waehrenddessen ein
+  // anderer Tab gewaehlt (schnelles Klicken), darf die verspaetete Antwort
+  // die Anzeige nicht mehr ueberschreiben (Race Condition).
+  const dev = state.selectedDeviceId;
   const latest = await fetchJson("/api/readings/latest");
+  if (state.selectedDeviceId !== dev) return;
   const combined = latest.find((r) => r.device_id === COMBINED_DEVICE_ID);
   const perDevice = latest.filter((r) => r.device_id !== COMBINED_DEVICE_ID);
 
@@ -319,7 +324,9 @@ async function refreshLiveCards() {
 }
 
 async function refreshSummaryCards() {
+  const dev = state.selectedDeviceId;
   const summaries = await fetchJson("/api/readings/today-summary");
+  if (state.selectedDeviceId !== dev) return;
   const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
   const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
 
@@ -358,6 +365,8 @@ function minuteOfLocalDay(d) {
 }
 
 async function refreshChart() {
+  const reqDeviceId = state.selectedDeviceId;
+  const reqHours = state.hours;
   const isDayMode = state.hours <= 24;
   const mode = isDayMode ? "day" : "range";
   const bucketMinutes = bucketMinutesForRange(state.hours);
@@ -368,6 +377,8 @@ async function refreshChart() {
   if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
 
   const points = await fetchJson(`/api/readings/history?${params.toString()}`);
+  // Auswahl waehrend des Ladens geaendert? Dann Ergebnis verwerfen.
+  if (state.selectedDeviceId !== reqDeviceId || state.hours !== reqHours) return;
 
   let labels = null;
   const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w" };
@@ -579,6 +590,7 @@ function updateDayCompareHint(metric) {
 
 async function refreshDayCompareChart() {
   const { metric, days } = state.dayCompare;
+  const reqDeviceId = state.selectedDeviceId;
   const params = new URLSearchParams({
     days: String(days),
     bucket_minutes: "15",
@@ -586,6 +598,12 @@ async function refreshDayCompareChart() {
   if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
 
   const result = await fetchJson(`/api/readings/day-profile?${params.toString()}`);
+  if (
+    state.selectedDeviceId !== reqDeviceId ||
+    state.dayCompare.metric !== metric ||
+    state.dayCompare.days !== days
+  )
+    return;
   const datasets = buildDayCompareDatasets(result.days, metric);
 
   const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Hausverbrauch";
@@ -694,8 +712,10 @@ const DAILY_BREAKDOWN_COLORS = {
 };
 
 async function refreshDailyTotalsChart() {
+  const reqDays = state.dailyTotals.days;
   const params = new URLSearchParams({ days: String(state.dailyTotals.days) });
   const result = await fetchJson(`/api/readings/daily-home-breakdown?${params.toString()}`);
+  if (state.dailyTotals.days !== reqDays) return;
   const labels = result.days.map((d) => shortDate(d.date));
 
   const datasets = [
@@ -821,6 +841,9 @@ async function refreshHourlyCompareChart() {
   const params = new URLSearchParams({ metric: "pv", days: String(days) });
 
   const result = await fetchJson(`/api/readings/hourly-per-device?${params.toString()}`);
+  // Waehrend des Ladens auf einen einzelnen WR gewechselt (Diagramm dann
+  // ausgeblendet) oder anderer Zeitraum gewaehlt? Ergebnis verwerfen.
+  if (state.selectedDeviceId !== "" || state.hourlyCompare.days !== days) return;
   const multiDay = days > 1;
   const labels = result.buckets.map((b) => hourLabel(b.bucket, multiDay));
 
