@@ -258,6 +258,19 @@ function sumField(readings, field) {
 // "Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen".
 const COMBINED_DEVICE_ID = "_all_";
 
+function updateHouseWideNotes() {
+  // Hausverbrauch/Einspeisung/Netzbezug (und die entsprechenden Tagessummen)
+  // sind hausweite Groessen und werden - anders als PV/Batterie - auch bei
+  // Auswahl eines einzelnen Wechselrichters bewusst als Hauswert angezeigt
+  // (siehe refreshLiveCards). Damit das beim Tab-Wechsel nicht wie eine
+  // "haengengebliebene" Anzeige wirkt, wird dann ein kleiner Hinweis an
+  // diesen Karten eingeblendet.
+  const show = state.selectedDeviceId !== "" && state.devices.length > 1;
+  for (const note of document.querySelectorAll("[data-house-note]")) {
+    note.classList.toggle("hidden", !show);
+  }
+}
+
 async function refreshLiveCards() {
   const latest = await fetchJson("/api/readings/latest");
   const combined = latest.find((r) => r.device_id === COMBINED_DEVICE_ID);
@@ -316,6 +329,8 @@ async function refreshLiveCards() {
     const t = new Date(newest.timestamp);
     el("last-update").textContent = "Letzte Aktualisierung: " + t.toLocaleTimeString("de-DE");
   }
+
+  updateHouseWideNotes();
 }
 
 async function refreshSummaryCards() {
@@ -338,6 +353,8 @@ async function refreshSummaryCards() {
     sumField(houseWideSource, "home_consumption_day_kwh")
   );
   el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
+
+  updateHouseWideNotes();
 }
 
 function bucketMinutesForRange(hours) {
