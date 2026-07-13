@@ -635,6 +635,11 @@ cookies.txt -b cookies.txt ...`).
 
 ## Tests
 
+Das Projekt hat zwei getrennte, unabhängig lauffähige Test-Suites: die
+Backend-Tests (Python/pytest) und die Frontend-Tests (JavaScript/jsdom).
+
+### Backend-Tests
+
 Die Benutzerverwaltung (Login, Rollen, Passwort-Änderung, Session-Handling)
 sowie die Update-Sicherheit für Bestandsdaten sind mit automatisierten
 Tests abgedeckt (`backend/tests/`, pytest + FastAPI TestClient – echte
@@ -665,6 +670,29 @@ Wechselrichter: Hausverbrauch/Netz korrekt berechnen") ist sowohl auf
 Ebene der Aggregations-Funktionen als auch End-to-End über die echten API-
 Endpunkte getestet, anhand echter, per `debug_live.py` ausgelesener
 Rohwerte.
+
+### Frontend-Tests
+
+Das Dashboard-JavaScript (`frontend/app.js`) ist mit leichtgewichtigen,
+framework-freien Tests abgedeckt: dem eingebauten Test-Runner von Node
+(`node:test`) und [jsdom](https://github.com/jsdom/jsdom) als DOM-Ersatz.
+Die Tests laden `frontend/index.html` und `frontend/app.js` in eine
+jsdom-Umgebung und mocken Backend (`fetch`), Chart.js und `<canvas>` – es
+wird also kein laufender Server und kein echter Browser benötigt. Lokal
+ausführen (Node 18+ erforderlich):
+
+```bash
+cd frontend/tests
+npm install
+npm test
+```
+
+Abgedeckt ist u.a. das Verhalten beim Wechsel der Wechselrichter-Tabs
+(WR1/WR2/„Alle"): dass die Anzeige die Daten des gewählten Geräts lädt,
+dass bei schnellem Wechsel eine verspätet eintreffende Antwort eines
+vorher gewählten Geräts die Anzeige nicht überschreibt (Race Condition),
+und dass währenddessen ein Ladeindikator sichtbar ist. Der gemeinsame
+Aufbau (jsdom + Backend-Mock) steckt in `frontend/tests/harness.mjs`.
 
 ## Grenzen / mögliche Erweiterungen
 
