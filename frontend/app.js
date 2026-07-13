@@ -236,17 +236,36 @@ function sumField(readings, field) {
   return values.reduce((a, b) => a + b, 0);
 }
 
+// Spezielle device_id, unter der das Backend bei mehreren Wechselrichtern
+// bereits korrekt zusammengefasste Werte liefert (Energiebilanz statt
+// naivem Summieren der - bei mehreren Geraeten am selben Hausanschluss
+// potenziell falschen - einzelnen Home_P-Werte). Siehe README-Abschnitt
+// "Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen".
+const COMBINED_DEVICE_ID = "_all_";
+
 async function refreshLiveCards() {
   const latest = await fetchJson("/api/readings/latest");
+  const combined = latest.find((r) => r.device_id === COMBINED_DEVICE_ID);
+  const perDevice = latest.filter((r) => r.device_id !== COMBINED_DEVICE_ID);
+
   const relevant = state.selectedDeviceId
-    ? latest.filter((r) => r.device_id === state.selectedDeviceId)
-    : latest;
+    ? perDevice.filter((r) => r.device_id === state.selectedDeviceId)
+    : perDevice;
 
-  el("card-home").textContent = fmtWatt(sumField(relevant, "home_power_w"));
-  el("card-feedin").textContent = fmtWatt(sumField(relevant, "feed_in_power_w"));
-  el("card-griddraw").textContent = fmtWatt(sumField(relevant, "grid_draw_power_w"));
-  el("card-pv").textContent = fmtWatt(sumField(relevant, "pv_power_w"));
+  // Fuer "Alle (Summe)" den vom Backend bereits korrekt zusammengefassten
+  // Eintrag bevorzugen, falls vorhanden (nur bei mehreren konfigurierten
+  // Wechselrichtern geliefert) - sonst wie bisher die einzelnen Geraete
+  // client-seitig summieren (z.B. bei nur einem konfigurierten Geraet).
+  const cardSource = !state.selectedDeviceId && combined ? [combined] : relevant;
 
+  el("card-home").textContent = fmtWatt(sumField(cardSource, "home_power_w"));
+  el("card-feedin").textContent = fmtWatt(sumField(cardSource, "feed_in_power_w"));
+  el("card-griddraw").textContent = fmtWatt(sumField(cardSource, "grid_draw_power_w"));
+  el("card-pv").textContent = fmtWatt(sumField(cardSource, "pv_power_w"));
+
+  // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
+  // zusammengefasste "_all_"-Eintrag hat keinen eigenen SoC-Wert) - dafuer
+  // immer die einzelnen Geraete verwenden, auch in der "Alle"-Ansicht.
   const batteryEntries = relevant.filter(
     (r) => r.battery_soc_percent !== null && r.battery_soc_percent !== undefined
   );
@@ -254,7 +273,7 @@ async function refreshLiveCards() {
     el("card-battery-wrapper").style.display = "none";
   } else {
     el("card-battery-wrapper").style.display = "";
-    const batteryPower = fmtWatt(sumField(relevant, "battery_power_w"));
+    const batteryPower = fmtWatt(sumField(cardSource, "battery_power_w"));
     // Geraetename nur anzeigen, wenn mehrere Batterien gleichzeitig sichtbar
     // sind (z.B. "Alle (Summe)" mit zwei Wechselrichtern mit Batterie) - bei
     // nur einem Eintrag ist die Zuordnung schon durch den Filter oben
@@ -277,13 +296,21 @@ async function refreshLiveCards() {
 
 async function refreshSummaryCards() {
   const summaries = await fetchJson("/api/readings/today-summary");
-  const relevant = state.selectedDeviceId
-    ? summaries.filter((s) => s.device_id === state.selectedDeviceId)
-    : summaries;
+  const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
+  const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
 
-  el("summary-yield").textContent = fmtKwh(sumField(relevant, "yield_day_kwh"));
-  el("summary-consumption").textContent = fmtKwh(sumField(relevant, "home_consumption_day_kwh"));
-  el("summary-grid").textContent = fmtKwh(sumField(relevant, "energy_grid_day_kwh"));
+  const relevant = state.selectedDeviceId
+    ? perDevice.filter((s) => s.device_id === state.selectedDeviceId)
+    : perDevice;
+  // Wie bei refreshLiveCards(): fuer "Alle (Summe)" den vom Backend bereits
+  // korrekt berechneten Eintrag bevorzugen, falls vorhanden.
+  const summarySource = !state.selectedDeviceId && combined ? [combined] : relevant;
+
+  el("summary-yield").textContent = fmtKwh(sumField(summarySource, "yield_day_kwh"));
+  el("summary-consumption").textContent = fmtKwh(
+    sumField(summarySource, "home_consumption_day_kwh")
+  );
+  el("summary-grid").textContent = fmtKwh(sumField(summarySource, "energy_grid_day_kwh"));
 }
 
 function bucketMinutesForRange(hours) {

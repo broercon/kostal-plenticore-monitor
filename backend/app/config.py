@@ -17,6 +17,23 @@ class InverterConfig:
     host: str
     password: str
     port: int = 80
+    # Bei mehreren Wechselrichtern am selben Hausanschluss (z.B. einer mit
+    # Batterie + Netzzaehler/KSEM als "Master", ein zweiter ohne eigenen
+    # Zaehler, der per AC die Batterie des ersten mitlaedt) meldet i.d.R. nur
+    # EIN Geraet den echten Netzbezug/die echte Einspeisung - das andere hat
+    # gar keinen Zaehler ("kein Sensor verwendet" in seinem Energiemanagement)
+    # und sein eigener Grid_P-Wert ist dann bedeutungslos bzw. falsch. Genau
+    # EIN Geraet sollte has_grid_meter=True haben (Standard: True, damit
+    # bestehende Ein-Geraet-Installationen unveraendert funktionieren - bei
+    # mehreren Geraeten muss das explizit in inverters.json gesetzt werden,
+    # siehe README "Mehrere Wechselrichter: Hausverbrauch/Netz korrekt
+    # berechnen").
+    has_grid_meter: bool = True
+    # Vorzeichen-Konvention der Batterieleistung (devices:local:battery/P):
+    # bei den meisten Geraeten ist negativ = Laden, positiv = Entladen -
+    # falls das bei einem Geraet umgekehrt ist, hier auf True setzen (siehe
+    # README).
+    battery_power_inverted: bool = False
 
 
 def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
@@ -31,6 +48,8 @@ def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
                 host=entry["host"],
                 password=entry["password"],
                 port=int(entry.get("port", 80)),
+                has_grid_meter=bool(entry.get("has_grid_meter", True)),
+                battery_power_inverted=bool(entry.get("battery_power_inverted", False)),
             )
         )
     return inverters
@@ -49,6 +68,12 @@ def _load_inverters_from_env() -> list[InverterConfig]:
             host=host,
             password=password,
             port=int(os.environ.get("INVERTER_PORT", "80")),
+            has_grid_meter=os.environ.get("INVERTER_HAS_GRID_METER", "true").strip().lower()
+            not in ("false", "0", "no"),
+            battery_power_inverted=os.environ.get(
+                "INVERTER_BATTERY_POWER_INVERTED", "false"
+            ).strip().lower()
+            in ("true", "1", "yes"),
         )
     ]
 
@@ -108,6 +133,31 @@ class Settings:
                 "INVERTER_HOST/INVERTER_PASSWORD setzen.",
                 self.config_path,
             )
+
+        if len(self.inverters) > 1:
+            metered = [inv for inv in self.inverters if inv.has_grid_meter]
+            if len(metered) == len(self.inverters):
+                logger.warning(
+                    "Mehrere Wechselrichter konfiguriert, aber keiner ist explizit "
+                    "als einziger Netz-Zaehler markiert (has_grid_meter in %s). "
+                    "Hausverbrauch/Netzbezug fuer 'Alle (Summe)' werden dann durch "
+                    "einfaches Summieren berechnet, was falsche Werte liefert, "
+                    "sobald mehr als ein Geraet am selben Hausanschluss haengt "
+                    "(z.B. ein zweiter Wechselrichter, der per AC eine an einem "
+                    "anderen Geraet haengende Batterie mitlaedt). Siehe "
+                    "README-Abschnitt 'Mehrere Wechselrichter: Hausverbrauch/Netz "
+                    "korrekt berechnen'.",
+                    self.config_path,
+                )
+            elif len(metered) != 1:
+                logger.warning(
+                    "Mehrere Wechselrichter konfiguriert, aber %d davon mit "
+                    "has_grid_meter=true markiert (erwartet: genau 1 - das Geraet "
+                    "mit dem echten Netzzaehler/KSEM am Netzanschlusspunkt). "
+                    "Hausverbrauch/Netzbezug fuer 'Alle (Summe)' koennten dadurch "
+                    "falsch berechnet werden.",
+                    len(metered),
+                )
 
 
 settings = Settings()

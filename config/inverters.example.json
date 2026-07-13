@@ -3,12 +3,14 @@
     "id": "wr1",
     "name": "Wechselrichter Dach Süd",
     "host": "192.168.1.50",
-    "password": "DEIN_PLENTICORE_PASSWORT"
+    "password": "DEIN_PLENTICORE_PASSWORT",
+    "has_grid_meter": true
   },
   {
     "id": "wr2",
     "name": "Wechselrichter Dach Nord",
     "host": "192.168.1.51",
-    "password": "DEIN_PLENTICORE_PASSWORT"
+    "password": "DEIN_PLENTICORE_PASSWORT",
+    "has_grid_meter": false
   }
 ]

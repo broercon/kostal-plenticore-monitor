@@ -16,6 +16,7 @@ from . import auth
 from .aggregation import (
     aggregate_per_device,
     combine_devices,
+    combine_latest_readings,
     daily_kwh_totals,
     day_profile,
     hourly_kwh_per_device,
@@ -53,6 +54,19 @@ DAILY_TOTAL_FIELDS = {
     "grid_draw": "grid_draw_power_w",
     "feed_in": "feed_in_power_w",
 }
+
+# Spezielle device_id fuer die vom Backend bereits korrekt zusammengefasste
+# "Alle (Summe)"-Ansicht bei mehreren Wechselrichtern (siehe
+# aggregation.combine_devices/combine_latest_readings) - kein echtes Geraet.
+COMBINED_DEVICE_ID = "_all_"
+
+
+def _has_grid_meter_map() -> dict[str, bool]:
+    return {cfg.id: cfg.has_grid_meter for cfg in settings.inverters}
+
+
+def _battery_inverted_map() -> dict[str, bool]:
+    return {cfg.id: cfg.battery_power_inverted for cfg in settings.inverters}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,7 +201,32 @@ def get_devices(_user: User = Depends(auth.get_current_user)) -> list[DeviceOut]
 
 @app.get("/api/readings/latest", response_model=list[ReadingOut])
 def get_latest(_user: User = Depends(auth.get_current_user)) -> list[ReadingOut]:
-    return [ReadingOut(**reading) for reading in poller.latest.values()]
+    """Aktuellste Messwerte je Geraet. Bei mehreren konfigurierten
+    Wechselrichtern wird zusaetzlich ein synthetischer Eintrag mit
+    device_id "_all_" angehaengt, der Hausverbrauch/Netzbezug/Einspeisung
+    korrekt ueber die Energiebilanz berechnet (statt die - bei mehreren
+    Geraeten am selben Hausanschluss potenziell falschen - Home_P-Werte der
+    einzelnen Geraete naiv zu summieren). Siehe aggregation.combine_devices
+    fuer die Herleitung. Das Frontend nutzt diesen Eintrag fuer die
+    "Alle (Summe)"-Ansicht, wenn vorhanden."""
+    readings = list(poller.latest.values())
+    result = [ReadingOut(**reading) for reading in readings]
+
+    if len(settings.inverters) > 1 and readings:
+        combined = combine_latest_readings(
+            readings, _has_grid_meter_map(), _battery_inverted_map()
+        )
+        if combined is not None:
+            newest_ts = max(r["timestamp"] for r in readings)
+            result.append(
+                ReadingOut(
+                    device_id=COMBINED_DEVICE_ID,
+                    device_name="Alle (Summe)",
+                    timestamp=newest_ts,
+                    **combined,
+                )
+            )
+    return result
 
 
 @app.get("/api/readings/history", response_model=list[HistoryPoint])
@@ -221,7 +260,7 @@ def get_history(
     if device_id:
         buckets = per_device.get(device_id, {})
     else:
-        buckets = combine_devices(per_device)
+        buckets = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
 
     points = [
         HistoryPoint(
@@ -243,6 +282,14 @@ def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[Summ
     braucht eigentlich eine Batterie). In diesem Fall werden die fehlenden
     Werte aus den seit lokaler Mitternacht gespeicherten Messwerten
     hochgerechnet (Integration der Leistungswerte).
+
+    Bei mehreren konfigurierten Wechselrichtern wird zusaetzlich ein
+    synthetischer Eintrag mit device_id "_all_" angehaengt: dessen
+    Hausverbrauch wird NICHT durch Summieren der einzelnen (bei mehreren
+    Geraeten am selben Hausanschluss potenziell falschen, siehe
+    aggregation.combine_devices) Tages-Statistikwerte berechnet, sondern
+    durch Integration der ueber die Energiebilanz korrigierten
+    Leistungswerte seit lokaler Mitternacht.
     """
     since = local_midnight_utc()
     summaries = []
@@ -283,6 +330,41 @@ def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[Summ
                 as_of=reading.get("timestamp") if reading else None,
             )
         )
+
+    if len(settings.inverters) > 1:
+        session = SessionLocal()
+        try:
+            rows = list(
+                session.scalars(
+                    select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+                )
+            )
+        finally:
+            session.close()
+
+        if rows:
+            per_device = aggregate_per_device(rows, bucket_seconds=60)
+            combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+            synthetic_rows = [
+                Reading(
+                    device_id="_combined_",
+                    device_name="_combined_",
+                    timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+                    **values,
+                )
+                for bk, values in combined.items()
+            ]
+            summaries.append(
+                SummaryOut(
+                    device_id=COMBINED_DEVICE_ID,
+                    device_name="Alle (Summe)",
+                    yield_day_kwh=integrate_kwh(synthetic_rows, "pv_power_w"),
+                    home_consumption_day_kwh=integrate_kwh(synthetic_rows, "home_power_w"),
+                    energy_grid_day_kwh=integrate_kwh(synthetic_rows, "feed_in_power_w"),
+                    as_of=max(row.timestamp for row in rows),
+                )
+            )
+
     return summaries
 
 
@@ -319,7 +401,7 @@ def get_day_profile(
         # Sekunden-Bucket-Aggregation mit einem feinen Bucket (= Polling-
         # Intervall) und bauen daraus synthetische Reading-aehnliche Objekte.
         per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device)
+        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
         synthetic_rows = [
             Reading(
                 device_id="_combined_",
@@ -368,7 +450,7 @@ def get_daily_totals(
         # Polling-Zeitpunkten fehlerhaft einzeln integriert statt zeitgleich
         # addiert.
         per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device)
+        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
         rows = [
             Reading(
                 device_id="_combined_",

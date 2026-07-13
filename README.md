@@ -55,6 +55,13 @@ Einträge in der Liste lassen, für einen nur einen Eintrag:
 Das Passwort ist dasselbe, mit dem du dich auch an der Web-Oberfläche des
 Wechselrichters (`http://<ip-des-wechselrichters>`) anmeldest.
 
+**Bei zwei oder mehr Wechselrichtern am selben Hausanschluss** (z.B. ein
+Wechselrichter mit Batterie + Netzzähler/KSEM als "Master", ein zweiter ohne
+eigenen Zähler, der per AC die Batterie des ersten mitlädt) unbedingt den
+Abschnitt "Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen"
+weiter unten lesen und `has_grid_meter` passend setzen – sonst werden
+Hausverbrauch und Netzbezug in der "Alle (Summe)"-Ansicht falsch berechnet.
+
 ### 2. Optional: Abfrageintervall/Zeitzone anpassen
 
 ```bash
@@ -375,6 +382,98 @@ Zur Kontrolle in den Logs nachsehen:
 docker compose logs --no-color kostal-monitor | grep -i "nicht erreichbar\|Unerwarteter Fehler"
 ```
 
+## Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen
+
+Bei zwei (oder mehr) Wechselrichtern am selben Hausanschluss – typisch: ein
+Wechselrichter mit Batterie und dem echten Netzzähler (Kostal Smart Energy
+Meter, KSEM) als "Master", ein zweiter ohne eigenen Zähler, der per AC die
+Batterie des ersten mitlädt – kann der einfache Ansatz "jeden Wert über alle
+Geräte summieren" für Hausverbrauch und Netzbezug/Einspeisung **falsche,
+teils stark negative Werte** liefern.
+
+### Warum das passiert
+
+Jeder Plenticore-Wechselrichter kennt nur sich selbst. Sein `Home_P`
+("Hausverbrauch") ist keine direkte Messung, sondern ein interner
+Rechenwert, der stillschweigend davon ausgeht, dass er die einzige
+PV-/Batterie-Quelle im Haus ist. Speist ein zweiter, unabhängiger
+Wechselrichter zusätzliche Energie ein (z.B. um die Batterie des ersten per
+AC mitzuladen), kann der erste Wechselrichter das nicht einordnen – er
+verbucht die zusätzliche, nicht erklärbare Energie fälschlich als
+"Ladung aus dem Netz" und rechnet sich daraufhin einen negativen,
+unsinnigen Hausverbrauch zusammen (sichtbar auch direkt im
+Kostal-Portal/der Kostal-App für das einzelne Gerät). Das ist ein bekanntes
+Verhalten bei Kostal-"Schwarm"-Installationen, nicht ein Fehler dieser App –
+in der Kostal-eigenen Dokumentation für Mehr-Wechselrichter-Setups mit KSEM
+wird deshalb ausdrücklich empfohlen, alle Geräte UND das KSEM ins Kostal
+Solar Portal einzupflegen, weil nur dort korrekt aggregiert wird.
+
+Der Netzbezug/die Einspeisung (`Grid_P`) ist davon dagegen **nicht**
+betroffen, sofern das jeweilige Gerät tatsächlich am echten Netzzähler
+hängt (Energiemanagement-Sensorposition "Netzanschlusspunkt", meist über
+KSEM) – das lässt sich empirisch bestätigen: der von einem so konfigurierten
+Gerät gemeldete `Grid_P`-Wert stimmt mit den kumulierten Zählerständen
+(`devices:local:powermeter/Imp_E`/`Exp_E`) und der Anzeige im Kostal-Portal
+überein. Ein zweites Gerät ohne eigenen Zähler ("kein Sensor verwendet" im
+eigenen Energiemanagement) liefert dagegen keinen sinnvollen `Grid_P`-Wert
+und darf nicht mit summiert werden.
+
+### Die Lösung dieser App
+
+In `config/inverters.json` lässt sich pro Gerät festlegen, ob es den echten
+Netzzähler hat:
+
+```json
+[
+  { "id": "wr1", "name": "Dach Süd (Batterie)", "host": "...", "password": "...", "has_grid_meter": true },
+  { "id": "wr2", "name": "Dach Nord",            "host": "...", "password": "...", "has_grid_meter": false }
+]
+```
+
+Genau **ein** Gerät sollte `has_grid_meter: true` haben (Standard, falls
+weggelassen: `true` – bei nur einem konfigurierten Gerät entsprechend
+unkritisch). Sobald mindestens ein Gerät explizit `false` ist, ändert sich
+für die "Alle (Summe)"-Ansicht die Berechnung:
+
+- **PV-Leistung** wird weiterhin über alle Geräte summiert (jedes Gerät
+  kennt zuverlässig nur seine eigenen PV-Strings).
+- **Batterieleistung** wird ebenfalls über alle Geräte summiert (nur das
+  Gerät mit Batterie liefert überhaupt einen Wert).
+- **Netzbezug/Einspeisung** werden NICHT summiert, sondern nur vom als
+  `has_grid_meter: true` markierten Gerät übernommen.
+- **Hausverbrauch** wird nicht mehr aus den (potenziell falschen)
+  `Home_P`-Werten der Geräte summiert, sondern aus der Energiebilanz neu
+  berechnet: `Hausverbrauch = PV gesamt + Netzbezug − Einspeisung +
+  Batterieleistung` (Batterieleistung positiv = Entladen, negativ = Laden).
+
+Ohne diese Konfiguration (Standardfall: ein einzelnes Gerät, oder alle
+Geräte unverändert `true`) bleibt das bisherige Verhalten (einfache Summe)
+unverändert erhalten – es ändert sich nichts an bestehenden
+Ein-Geräte-Installationen.
+
+Falls die Batterie-Vorzeichen-Konvention bei einem Gerät umgekehrt sein
+sollte (positiv = Laden statt Entladen), zusätzlich
+`"battery_power_inverted": true` bei diesem Gerät setzen.
+
+Ohne passende Konfiguration bei mehreren Geräten gibt die App beim Start
+eine Warnung in den Logs aus (`docker compose logs -f`).
+
+### Diagnose: welches Gerät hat den echten Zähler?
+
+Mit dem mitgelieferten Diagnose-Werkzeug lassen sich die Rohwerte eines
+Geräts direkt einsehen (rein lesend, verändert nichts):
+
+```bash
+docker compose exec kostal-monitor python -m app.debug_live --device-id wr1
+```
+
+Besonders relevant: `devices:local/Grid_P` (sollte mit dem echten
+Netzbezug/der Einspeisung im Kostal-Portal übereinstimmen – am besten
+gleichzeitig geöffnet halten) sowie `devices:local:powermeter/*` (falls
+vorhanden: das ist meist der direkt durchgereichte KSEM-Wert, zur
+Gegenprobe). Stimmen diese Werte mit der Portal-Anzeige überein, ist das
+Gerät der richtige Kandidat für `has_grid_meter: true`.
+
 ## Daten sichern
 
 Die komplette Historie liegt in `./data/kostal.db` (SQLite-Datei). Für ein
@@ -400,8 +499,12 @@ cookies.txt -b cookies.txt ...`).
   eines Nutzers zurücksetzen; ohne `new_password` im Body wird eines
   zufällig erzeugt und in der Antwort zurückgegeben.
 - `GET /api/devices` – konfigurierte Wechselrichter
-- `GET /api/readings/latest` – letzter bekannter Messwert je Wechselrichter
-- `GET /api/readings/today-summary` – Tagessummen (PV-Ertrag, Verbrauch, Einspeisung)
+- `GET /api/readings/latest` – letzter bekannter Messwert je Wechselrichter;
+  bei mehreren konfigurierten Geräten zusätzlich ein Eintrag mit
+  `device_id: "_all_"` mit der korrekt berechneten Gesamtsumme (siehe
+  "Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen")
+- `GET /api/readings/today-summary` – Tagessummen (PV-Ertrag, Verbrauch,
+  Einspeisung); ebenfalls mit `"_all_"`-Eintrag bei mehreren Geräten
 - `GET /api/readings/history?device_id=&hours=24&bucket_minutes=5` – Zeitreihe
   für Diagramme. `device_id` weglassen, um beide Wechselrichter summiert zu
   bekommen.
@@ -447,7 +550,12 @@ Admin kann Nutzer auflisten und deren Passwort zurücksetzen, sowie: ein
 noch ohne Benutzerverwaltung) ergänzt lediglich die fehlenden Tabellen und
 lässt vorhandene Messwerte unverändert, sowie: der Poller bricht bei einem
 unerwarteten Fehlertyp eines einzelnen Geräts nicht komplett ab (siehe
-Abschnitt "Polling stoppt nachts" oben).
+Abschnitt "Polling stoppt nachts" oben), und die korrigierte
+Energiebilanz-Berechnung bei mehreren Wechselrichtern (siehe "Mehrere
+Wechselrichter: Hausverbrauch/Netz korrekt berechnen") ist sowohl auf
+Ebene der Aggregations-Funktionen als auch End-to-End über die echten API-
+Endpunkte getestet, anhand echter, per `debug_live.py` ausgelesener
+Rohwerte.
 
 ## Grenzen / mögliche Erweiterungen
 

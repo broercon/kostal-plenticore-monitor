@@ -52,28 +52,144 @@ def aggregate_per_device(
 
 def combine_devices(
     per_device: dict[str, dict[int, dict[str, float | None]]],
+    has_grid_meter: dict[str, bool] | None = None,
+    battery_power_inverted: dict[str, bool] | None = None,
 ) -> dict[int, dict[str, float | None]]:
-    """Summiert die pro-Geraet gemittelten Buckets zu einer Gesamtzeitreihe."""
+    """Kombiniert die pro-Geraet gemittelten Buckets zu einer Gesamtzeitreihe
+    ("Alle (Summe)").
+
+    Standardverhalten (has_grid_meter=None, oder alle Geraete darin True -
+    also unveraendert gegenueber frueheren Versionen): jedes Feld wird
+    einfach ueber alle Geraete summiert. Das ist korrekt, solange entweder
+    nur ein Geraet konfiguriert ist, oder jedes Geraet tatsaechlich einen
+    eigenen, unabhaengigen Netzanschluss hat.
+
+    Sobald aber has_grid_meter fuer MINDESTENS EIN Geraet explizit auf False
+    gesetzt ist (typischer Fall: zwei Wechselrichter am selben
+    Hausanschluss, nur einer hat den echten Netzzaehler/KSEM, der andere
+    laedt z.B. per AC dessen Batterie mit), wird stattdessen eine korrigierte
+    Energiebilanz verwendet:
+
+    - PV-Leistung wird weiter ueber ALLE Geraete summiert (jedes Geraet
+      kennt zuverlaessig nur seine eigenen PV-Strings, das ist unabhaengig
+      vom Hausanschluss korrekt).
+    - Batterieleistung wird ebenfalls ueber alle Geraete summiert (nur das
+      Geraet mit Batterie liefert ueberhaupt einen Wert), je Geraet optional
+      vorzeichenkorrigiert (battery_power_inverted).
+    - Netzbezug/Einspeisung werden NICHT summiert, sondern NUR von den als
+      has_grid_meter=True markierten Geraeten uebernommen - ein zweites,
+      nicht gemessenes (oder dupliziertes) Grid_P wuerde den echten Wert
+      sonst verfaelschen.
+    - Hausverbrauch wird nicht aus den einzelnen (potenziell falschen)
+      Home_P-Werten summiert, sondern aus der Energiebilanz neu berechnet:
+      Home = PV_gesamt + Netzbezug_echt - Einspeisung_echt + Batterieleistung
+      (Batterieleistung positiv = Entladen, negativ = Laden - das speist
+      zusaetzliche bzw. entzieht verfuegbare Energie fuer den Hausverbrauch).
+
+      Hintergrund: Ein Wechselrichter, der nicht weiss, dass ein zweiter
+      Wechselrichter am selben Hausanschluss Energie einspeist, rechnet sich
+      bei geladener Batterie sonst ein negatives/unsinniges "Home_P" zusammen
+      (siehe README-Abschnitt "Mehrere Wechselrichter: Hausverbrauch/Netz
+      korrekt berechnen").
+    """
+    has_grid_meter = has_grid_meter or {}
+    battery_power_inverted = battery_power_inverted or {}
+    device_ids = list(per_device.keys())
+
+    explicit_non_metered = [d for d in device_ids if has_grid_meter.get(d, True) is False]
+    use_corrected_logic = len(explicit_non_metered) > 0
+
     all_buckets: set[int] = set()
     for buckets in per_device.values():
         all_buckets.update(buckets.keys())
 
-    combined: dict[int, dict[str, float | None]] = {}
+    if not use_corrected_logic:
+        combined: dict[int, dict[str, float | None]] = {}
+        for bk in all_buckets:
+            merged: dict[str, float | None] = {}
+            for field in HISTORY_FIELDS:
+                total = None
+                for buckets in per_device.values():
+                    point = buckets.get(bk)
+                    if point is None:
+                        continue
+                    value = point.get(field)
+                    if value is None:
+                        continue
+                    total = (total or 0.0) + value
+                merged[field] = total
+            combined[bk] = merged
+        return combined
+
+    metered_devices = [d for d in device_ids if has_grid_meter.get(d, True)]
+    if not metered_devices:
+        # Sollte nicht vorkommen (dann waere use_corrected_logic=False), aber
+        # sicherheitshalber lieber alle Geraete verwenden als gar keinen
+        # Netzwert zu haben.
+        metered_devices = device_ids
+
+    def _sum_field(field: str, devices: list[str], bk: int) -> float | None:
+        total = None
+        for d in devices:
+            point = per_device.get(d, {}).get(bk)
+            if point is None:
+                continue
+            value = point.get(field)
+            if value is None:
+                continue
+            total = (total or 0.0) + value
+        return total
+
+    combined = {}
     for bk in all_buckets:
-        merged: dict[str, float | None] = {}
-        for field in HISTORY_FIELDS:
-            total = None
-            for buckets in per_device.values():
-                point = buckets.get(bk)
-                if point is None:
-                    continue
-                value = point.get(field)
-                if value is None:
-                    continue
-                total = (total or 0.0) + value
-            merged[field] = total
-        combined[bk] = merged
+        pv_total = _sum_field("pv_power_w", device_ids, bk)
+        grid_draw_true = _sum_field("grid_draw_power_w", metered_devices, bk)
+        feed_in_true = _sum_field("feed_in_power_w", metered_devices, bk)
+
+        battery_total = None
+        for d in device_ids:
+            point = per_device.get(d, {}).get(bk)
+            if point is None:
+                continue
+            value = point.get("battery_power_w")
+            if value is None:
+                continue
+            if battery_power_inverted.get(d, False):
+                value = -value
+            battery_total = (battery_total or 0.0) + value
+
+        home_true = None
+        if pv_total is not None and grid_draw_true is not None and feed_in_true is not None:
+            home_true = pv_total + grid_draw_true - feed_in_true + (battery_total or 0.0)
+
+        combined[bk] = {
+            "home_power_w": home_true,
+            "feed_in_power_w": feed_in_true,
+            "grid_draw_power_w": grid_draw_true,
+            "pv_power_w": pv_total,
+            "battery_power_w": battery_total,
+        }
     return combined
+
+
+def combine_latest_readings(
+    readings: list[dict],
+    has_grid_meter: dict[str, bool] | None = None,
+    battery_power_inverted: dict[str, bool] | None = None,
+) -> dict[str, float | None] | None:
+    """Wie combine_devices(), aber fuer eine einzelne Momentaufnahme (z.B.
+    die aktuellsten Werte je Geraet aus dem Poller) statt einer Zeitreihe -
+    fuer die Live-Kacheln im Dashboard. `readings` ist eine Liste flacher
+    Dicts mit mindestens "device_id" und den HISTORY_FIELDS. Nutzt intern
+    dieselbe Logik wie combine_devices() (ein einzelner "Bucket")."""
+    if not readings:
+        return None
+    per_device = {
+        reading["device_id"]: {0: {field: reading.get(field) for field in HISTORY_FIELDS}}
+        for reading in readings
+    }
+    combined = combine_devices(per_device, has_grid_meter, battery_power_inverted)
+    return combined.get(0)
 
 
 def integrate_kwh(rows: list[Reading], field: str) -> float | None:
