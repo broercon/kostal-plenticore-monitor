@@ -197,6 +197,43 @@ def test_combine_devices_no_metered_device_falls_back_to_all():
     assert combined[0]["pv_power_w"] == 300.0
 
 
+def test_combine_devices_corrected_logic_stays_active_when_non_metered_device_has_no_data():
+    """Regressionstest fuer einen konkreten, vom Nutzer gemeldeten Fall: an
+    einem Tag, an dem der zweite (nicht gemessene) Wechselrichter keine
+    gespeicherten Messwerte hat (z.B. ein Ausfall/noch nicht verbunden),
+    enthaelt per_device NUR den Master (wr1) - device_ids allein wuerde dann
+    keinen Hinweis mehr auf has_grid_meter=false liefern. Trotzdem muss die
+    korrigierte Energiebilanz (AC/DC-basiert) verwendet werden, NICHT die
+    rohe (potenziell durch die Schwarm-Verwechslung falsche) Home_P-Summe -
+    sonst kommt bei genau den Tagen, an denen wr2 Datenluecken hat, wieder
+    der urspruengliche Bug zurueck (siehe README 'Mehrere Wechselrichter')."""
+    per_device = {
+        "wr1": {
+            0: _bucket_row(
+                pv_power_w=1332.9,
+                ac_power_w=None,
+                home_power_w=-500.0,  # WR1s eigene (kaputte) Rohberechnung
+                grid_draw_power_w=40.7,
+                feed_in_power_w=0.0,
+                battery_power_w=0.0,  # Batterie ruht (nicht ladend/entladend)
+            )
+        },
+        # wr2 hat fuer dieses Zeitfenster GAR KEINE Eintraege (kein Key im
+        # dict) - simuliert eine Datenluecke/einen Ausfall des zweiten
+        # Geraets, nicht dessen Abwesenheit aus der Konfiguration.
+    }
+    has_grid_meter = {"wr1": True, "wr2": False}
+
+    combined = combine_devices(per_device, has_grid_meter)
+    point = combined[0]
+
+    # Die korrigierte Formel (hier: DC-Fallback, da kein ac_power_w) muss
+    # verwendet worden sein - NICHT WR1s roher, kaputter Home_P-Wert (-500).
+    expected_home = 1332.9 + 40.7 - 0.0 + 0.0
+    assert point["home_power_w"] == expected_home
+    assert point["home_power_w"] != -500.0
+
+
 def test_combine_latest_readings_matches_combine_devices():
     readings = [
         {

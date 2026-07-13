@@ -128,7 +128,19 @@ def combine_devices(
     battery_power_inverted = battery_power_inverted or {}
     device_ids = list(per_device.keys())
 
-    explicit_non_metered = [d for d in device_ids if has_grid_meter.get(d, True) is False]
+    # WICHTIG: ob die korrigierte Energiebilanz greift, wird anhand der
+    # STATISCHEN KONFIGURATION entschieden (has_grid_meter, von main.py immer
+    # aus ALLEN konfigurierten Geraeten gebaut), NICHT anhand dessen, welche
+    # Geraete zufaellig Messwerte fuer das aktuell betrachtete Zeitfenster
+    # haben. Sonst wuerde z.B. an einem Tag, an dem der nicht gemessene
+    # zweite Wechselrichter (has_grid_meter=false) voruebergehend keine
+    # Messwerte lieferte (Ausfall/noch nicht verbunden), device_ids nur den
+    # ersten Wechselrichter enthalten - und die korrigierte Logik wuerde
+    # faelschlich deaktiviert, sodass wieder dessen rohe (potenziell falsche)
+    # Home_P-Werte durchgereicht wuerden, obwohl der zweite Wechselrichter
+    # physisch trotzdem Energie eingespeist haben kann (nur eben ohne
+    # gespeicherte Messwerte fuer dieses Zeitfenster).
+    explicit_non_metered = [d for d, metered in has_grid_meter.items() if metered is False]
     use_corrected_logic = len(explicit_non_metered) > 0
 
     all_buckets: set[int] = set()

@@ -492,6 +492,15 @@ auf den DC-Fallback aus, siehe oben).
 Ohne passende Konfiguration bei mehreren Geräten gibt die App beim Start
 eine Warnung in den Logs aus (`docker compose logs -f`).
 
+**Wichtig:** Ob die korrigierte Berechnung greift, hängt nur von der
+Konfiguration ab (`has_grid_meter`), nicht davon, ob der nicht gemessene
+Wechselrichter für den gerade betrachteten Zeitraum tatsächlich Messwerte
+in der Datenbank hat. Hatte dieser z.B. an einem bestimmten Tag einen
+Ausfall (keine gespeicherten Werte), wird für diesen Tag trotzdem die
+korrigierte Formel verwendet (nur eben ohne dessen PV-/Batteriebeitrag,
+da dafür schlicht keine Daten vorliegen) – nicht die rohe, potenziell
+falsche Home_P-Summe des Master-Geräts alleine.
+
 **Restungenauigkeit:** Auch mit der AC-basierten Formel bleibt eine kleine
 Abweichung (in der Praxis meist niedriger einstelliger Prozentbereich der
 Gesamtleistung) möglich, weil Netzzähler (KSEM) und die AC-Sensoren der
