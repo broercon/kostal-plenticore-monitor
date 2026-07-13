@@ -510,12 +510,18 @@ function buildDayCompareDatasets(days, metric) {
     const isLatest = i === total - 1;
     const width = isLatest ? 2.5 : 1.5;
     const dateLabel = shortDate(day.date);
+    // Farbe an die Aktualitaet koppeln (heute = 0, gestern = 1, ...) statt an
+    // die absolute Listenposition. So hat der aktuellste Tag (heute) immer
+    // dieselbe Farbe (der erste Palettenton, Blau) und jeder n-t-juengste Tag
+    // dieselbe Farbe - unabhaengig davon, ob 3, 7, 14 oder 30 Tage angezeigt
+    // werden. Das erleichtert das Vergleichen ueber die Zeitraeume hinweg.
+    const colorIndex = total - 1 - i;
 
     if (metric === "pv") {
       datasets.push({
         label: dateLabel,
         data: day.points.map((p) => ({ x: p.minute, y: p.pv_power_w })),
-        borderColor: dayColor(i),
+        borderColor: dayColor(colorIndex),
         backgroundColor: "transparent",
         borderWidth: width,
         tension: 0.25,
@@ -525,7 +531,7 @@ function buildDayCompareDatasets(days, metric) {
       datasets.push({
         label: dateLabel,
         data: day.points.map((p) => ({ x: p.minute, y: p.grid_draw_power_w })),
-        borderColor: dayColor(i),
+        borderColor: dayColor(colorIndex),
         backgroundColor: "transparent",
         borderWidth: width,
         tension: 0.25,
@@ -534,7 +540,7 @@ function buildDayCompareDatasets(days, metric) {
     } else {
       // solar_battery: zwei Kurven pro Tag - durchgezogen = Solaranteil,
       // gestrichelt = Batterieanteil, jeweils in der gleichen Tagesfarbe.
-      const color = dayColor(i);
+      const color = dayColor(colorIndex);
       datasets.push({
         label: `${dateLabel} · Solar`,
         data: day.points.map((p) => ({ x: p.minute, y: p.home_from_solar_w })),
