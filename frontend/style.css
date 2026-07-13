@@ -223,6 +223,41 @@ canvas {
   font-weight: 600;
 }
 
+/* ---- Ladeindikator: beim Tab-Wechsel / Neuladen ueber die betroffenen
+   Panels gelegt, dimmt die alten Werte ab und zeigt einen Spinner, bis die
+   neuen Daten geladen sind. ---- */
+
+.is-loading {
+  position: relative;
+}
+
+.is-loading > * {
+  opacity: 0.3;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border: 3px solid var(--panel-border);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  z-index: 2;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
 
 .hidden {

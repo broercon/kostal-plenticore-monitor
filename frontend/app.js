@@ -241,7 +241,7 @@ async function loadDevices() {
     if (!btn) return;
     state.selectedDeviceId = btn.dataset.deviceId;
     applyActiveTab();
-    refreshAll();
+    refreshAll({ showLoading: true });
   });
 }
 
@@ -1022,7 +1022,31 @@ function setupImportTrigger() {
   updateImportStatusUI().catch(console.error);
 }
 
-async function refreshAll() {
+// Panels, ueber die beim (Neu-)Laden ein Ladeindikator gelegt wird - die
+// alten Werte werden dabei abgedimmt, bis die neuen Daten da sind.
+const LOADING_PANEL_SELECTORS = ["#live-cards", "#summary-cards", ".chart-canvas-wrapper"];
+
+function setDashboardLoading(on) {
+  for (const sel of LOADING_PANEL_SELECTORS) {
+    for (const node of document.querySelectorAll(sel)) {
+      node.classList.toggle("is-loading", on);
+    }
+  }
+}
+
+// Laufende Nummer des juengsten Lade-Vorgangs: nur der zuletzt ausgeloeste
+// (z.B. der zuletzt angeklickte Tab) darf den Ladeindikator wieder
+// ausblenden. So bleibt der Spinner bei schnellem Klicken sichtbar, bis die
+// tatsaechlich zuletzt gewaehlte Ansicht geladen ist, und bleibt umgekehrt
+// nicht faelschlich haengen, wenn eine aeltere Abfrage spaeter fertig wird.
+let loadingSeq = 0;
+
+async function refreshAll({ showLoading = false } = {}) {
+  let myToken = 0;
+  if (showLoading) {
+    myToken = ++loadingSeq;
+    setDashboardLoading(true);
+  }
   try {
     await Promise.all([
       refreshLiveCards(),
@@ -1034,6 +1058,8 @@ async function refreshAll() {
     ]);
   } catch (err) {
     console.error(err);
+  } finally {
+    if (showLoading && myToken === loadingSeq) setDashboardLoading(false);
   }
 }
 
@@ -1048,7 +1074,7 @@ async function init() {
   setupDailyTotalsControls();
   setupHourlyCompareControls();
   setupImportTrigger();
-  await refreshAll();
+  await refreshAll({ showLoading: true });
   setInterval(() => {
     refreshLiveCards().catch(console.error);
     refreshSummaryCards().catch(console.error);
