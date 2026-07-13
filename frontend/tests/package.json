@@ -1,0 +1,12 @@
+{
+  "name": "kostal-plenticore-monitor-frontend-tests",
+  "private": true,
+  "type": "module",
+  "description": "Frontend-Tests (jsdom + node:test) fuer das Dashboard.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}
