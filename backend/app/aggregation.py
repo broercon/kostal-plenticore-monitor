@@ -429,6 +429,43 @@ def daily_kwh_totals(
     ]
 
 
+def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]:
+    """PV-Ertrag (kWh) je lokalem Kalendertag, hausweit ueber alle Geraete.
+
+    Bevorzugt den geraeteeigenen, kumulierten Tageszaehler (yield_day_kwh,
+    Kostal "Statistic:Yield:Day") - je Geraet und Tag der hoechste (= letzte)
+    Zaehlerstand des Tages. Das ist der amtliche Tagesertrag des
+    Wechselrichters, identisch mit dem, was die Kacheln/Geraetetabelle oben
+    anzeigen. Nur wenn fuer ein Geraet an einem Tag KEIN Zaehlerstand vorliegt
+    (z.B. per Logdaten-Import eingespielte Altdaten), wird als Rueckfall die
+    gespeicherte PV-Leistung integriert (Trapezregel). Die Geraete-Tageswerte
+    werden je Tag summiert (PV ist additiv).
+
+    Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float}, aufsteigend
+    nach Datum sortiert; Tage ganz ohne Daten fehlen (statt kwh=None)."""
+    tz = ZoneInfo(timezone_name)
+    by_day_device: dict[tuple[str, str], list[Reading]] = {}
+    for row in rows:
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        date_str = ts.astimezone(tz).strftime("%Y-%m-%d")
+        by_day_device.setdefault((date_str, row.device_id), []).append(row)
+
+    per_day: dict[str, float] = {}
+    for (date_str, _device_id), day_rows in by_day_device.items():
+        counters = [r.yield_day_kwh for r in day_rows if r.yield_day_kwh is not None]
+        if counters:
+            device_total = max(counters)  # kumulativ -> hoechster = Tagesendwert
+        else:
+            device_total = integrate_kwh(day_rows, "pv_power_w")
+        if device_total is None:
+            continue
+        per_day[date_str] = per_day.get(date_str, 0.0) + device_total
+
+    return [{"date": d, "kwh": round(per_day[d], 3)} for d in sorted(per_day)]
+
+
 def hourly_kwh_per_device(
     rows: list[Reading], field: str, timezone_name: str
 ) -> dict:

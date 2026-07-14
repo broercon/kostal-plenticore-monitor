@@ -89,3 +89,65 @@ def test_pv_yield_summary_period_without_data_is_none(client):
     assert res.status_code == 200
     for period in res.json()["periods"]:
         assert period["kwh"] is None
+
+
+def _add(rows):
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        db.add_all(rows)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_pv_yield_uses_device_counter_not_integration(client):
+    """PV-Ertrag 'heute' muss den geraeteeigenen Tageszaehler (yield_day_kwh)
+    je Geraet nehmen und ueber die Geraete summieren - nicht die PV-Leistung
+    integrieren. Die pv_power_w sind hier bewusst winzig; wuerde integriert,
+    kaeme fast 0 heraus statt der Zaehlersumme."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.daily_summary import build_daily_summaries, build_pv_yield_summary
+    from app.models import Reading
+
+    tz = ZoneInfo("Europe/Berlin")
+    noon = datetime(datetime.now(tz).year, datetime.now(tz).month, datetime.now(tz).day, 12, 0, tzinfo=tz)
+
+    rows = []
+    # WR1: kumulativer Zaehler steigt auf 96.28; WR2 auf 53.08.
+    for dev, series in (("wr1", [10.0, 55.0, 96.28]), ("wr2", [5.0, 53.08])):
+        for i, counter in enumerate(series):
+            rows.append(Reading(
+                device_id=dev, device_name=dev,
+                timestamp=(noon + timedelta(minutes=15 * i)).astimezone(ZoneInfo("UTC")),
+                pv_power_w=5.0, yield_day_kwh=counter,
+            ))
+    _add(rows)
+
+    periods = {p.key: p for p in build_pv_yield_summary()}
+    assert periods["today"].kwh == 149.36  # 96.28 + 53.08, NICHT ~0 (Integration)
+
+
+def test_pv_yield_falls_back_to_integration_without_counter(client):
+    """Ohne Zaehlerstand (importierte Altdaten) wird die PV-Leistung
+    integriert: 4000 W, 15 min auseinander -> 1.0 kWh."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.daily_summary import build_pv_yield_summary
+    from app.models import Reading
+
+    tz = ZoneInfo("Europe/Berlin")
+    y = datetime.now(tz).date() - timedelta(days=1)
+    noon = datetime(y.year, y.month, y.day, 12, 0, tzinfo=tz)
+    _add([
+        Reading(device_id="wr1", device_name="wr1",
+                timestamp=(noon + timedelta(minutes=m)).astimezone(ZoneInfo("UTC")),
+                pv_power_w=4000.0, yield_day_kwh=None)
+        for m in (0, 15)
+    ])
+
+    periods = {p.key: p for p in build_pv_yield_summary()}
+    assert abs(periods["yesterday"].kwh - 1.0) < 1e-6
