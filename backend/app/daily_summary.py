@@ -288,4 +288,10 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     if len(settings.inverters) > 1:
         rows = _combined_rows(rows)
 
-    return daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+    # In DailyHomeBreakdownDay-Objekte wandeln (statt roher Dicts), damit
+    # sowohl der API-Endpunkt als auch der Mail-Report per Attribut darauf
+    # zugreifen koennen (der Report ruft z.B. .pv_kwh direkt auf).
+    return [
+        DailyHomeBreakdownDay(**day)
+        for day in daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+    ]

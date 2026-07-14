@@ -244,6 +244,52 @@ def test_build_daily_home_breakdown_empty_without_data(client):
     assert build_daily_home_breakdown(days=1) == []
 
 
+def test_build_daily_home_breakdown_returns_objects_and_renders(client):
+    """Regression: build_daily_home_breakdown muss DailyHomeBreakdownDay-
+    Objekte liefern (nicht rohe Dicts), sonst schlaegt der Mail-Report mit
+    'dict object has no attribute pv_kwh' fehl."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.config import settings as app_settings
+    from app.database import SessionLocal
+    from app.models import Reading
+
+    device_id = app_settings.inverters[0].id
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add_all(
+            Reading(
+                device_id=device_id,
+                device_name="Wechselrichter",
+                timestamp=now - timedelta(minutes=m),
+                pv_power_w=3000.0,
+                home_power_w=1000.0,
+                grid_draw_power_w=0.0,
+                feed_in_power_w=2000.0,
+                battery_power_w=0.0,
+            )
+            for m in (0, 15, 30)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    days = build_daily_home_breakdown(days=1)
+    assert days, "erwarte mindestens einen Tag mit Daten"
+    today = days[-1]
+    assert isinstance(today, DailyHomeBreakdownDay)
+    _ = today.pv_kwh  # Attributzugriff darf nicht fehlschlagen
+
+    # End-to-End: der Report muss mit echten Breakdown-Daten rendern.
+    from datetime import datetime as _dt
+
+    subject, body = daily_report.build_report_html(
+        [], {}, [], today, [], _dt.now(timezone.utc), "Europe/Berlin",
+    )
+    assert "PV" in body
+
+
 def test_device_battery_snapshot_skips_devices_without_known_soc(monkeypatch):
     import app.daily_summary as daily_summary_module
 
