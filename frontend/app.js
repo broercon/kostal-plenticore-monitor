@@ -982,6 +982,22 @@ function setupImportTrigger() {
   updateImportStatusUI().catch(console.error);
 }
 
+// Einspeisung (kWh) je Zeitraum in der Kachel oben. Hausweite Groesse, also
+// unabhaengig vom oben gewaehlten Wechselrichter-Tab - wird daher nicht bei
+// jedem Tab-Wechsel neu geladen, sondern einmal beim Start und periodisch.
+const FEEDIN_PERIOD_UNKNOWN = "–";
+
+async function refreshFeedInSummary() {
+  const data = await fetchJson("/api/readings/feed-in-summary");
+  const byKey = {};
+  for (const period of data.periods) byKey[period.key] = period;
+  for (const cell of document.querySelectorAll("[data-feedin]")) {
+    const period = byKey[cell.dataset.feedin];
+    cell.textContent = period ? fmtKwh(period.kwh) : FEEDIN_PERIOD_UNKNOWN;
+    if (period) cell.title = `${period.from_date} – ${period.to_date}`;
+  }
+}
+
 async function refreshAll() {
   try {
     await Promise.all([
@@ -1009,6 +1025,7 @@ async function init() {
   setupHourlyCompareControls();
   setupImportTrigger();
   await refreshAll();
+  refreshFeedInSummary().catch(console.error);
   setInterval(() => {
     refreshLiveCards().catch(console.error);
     refreshSummaryCards().catch(console.error);
@@ -1017,6 +1034,7 @@ async function init() {
   setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshFeedInSummary().catch(console.error), 5 * 60 * 1000);
 }
 
 init();
