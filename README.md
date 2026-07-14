@@ -632,6 +632,12 @@ cookies.txt -b cookies.txt ...`).
 - `GET /api/admin/import-history/status` – Status/Ergebnis des letzten
   Abgleichs (`running`, `last_started_at`, `last_finished_at`, `results`
   je Wechselrichter).
+- `GET /api/admin/daily-report/status` – Status des täglichen Mail-Reports
+  (`enabled`, `scheduled_time`, `recipients`, `last_sent_at`,
+  `last_status`, `last_message`).
+- `POST /api/admin/daily-report/trigger` – (nur Rolle admin) verschickt den
+  täglichen Zusammenfassungs-Report sofort, z.B. zum Testen der
+  Mail-Konfiguration.
 
 ## Tests
 
@@ -693,6 +699,68 @@ dass bei schnellem Wechsel eine verspätet eintreffende Antwort eines
 vorher gewählten Geräts die Anzeige nicht überschreibt (Race Condition),
 und dass währenddessen ein Ladeindikator sichtbar ist. Der gemeinsame
 Aufbau (jsdom + Backend-Mock) steckt in `frontend/tests/harness.mjs`.
+
+## Täglicher Mail-Report
+
+Einmal täglich, zu einer festen (konfigurierbaren) Uhrzeit, verschickt die
+App eine Zusammenfassungsmail: welche Wechselrichter aktiv/erreichbar
+waren und wie viel PV-Ertrag sie – einzeln und in Summe – an diesem Tag
+bereits erzielt haben. Der Versand läuft über den separaten zentralen
+Mail-Service [broercon/Mailserver](https://github.com/broercon/Mailserver)
+(`POST /send`), nicht über einen eigenen SMTP-Versand in dieser App.
+
+### Einrichtung
+
+1. Den Mail-Service (Mailserver-Repo) aufsetzen und dort einen eigenen
+   API-Key für diese Anwendung unter `API_KEYS` vergeben (siehe dessen
+   README).
+2. In `.env` dieser App setzen:
+
+   ```
+   DAILY_REPORT_ENABLED=true
+   DAILY_REPORT_TIME=19:00
+   DAILY_REPORT_RECIPIENTS=deine-adresse@example.com
+   MAIL_SERVICE_URL=http://<host-des-mail-service>:8080/send
+   MAIL_SERVICE_API_KEY=<der-fuer-diese-App-vergebene-Key>
+   ```
+
+   Da Mailserver und dieser Monitor üblicherweise zwei getrennte
+   `docker-compose`-Projekte sind, muss `MAIL_SERVICE_URL` von diesem
+   Container aus erreichbar sein. Zwei Möglichkeiten:
+   - Einfach: die LAN-IP oder den Hostnamen des Servers verwenden, auf dem
+     der Mail-Service läuft, plus dessen veröffentlichten Port (Default
+     `8080`) – z.B. `http://192.168.178.50:8080/send`.
+   - Alternativ: beide Compose-Projekte einem gemeinsamen externen
+     Docker-Netzwerk beitreten lassen und dann den Container-Namen
+     (`http://mail-api:8080/send`) verwenden.
+3. Container neu starten (`docker compose up -d --force-recreate`).
+
+### Testen ohne auf die Uhrzeit zu warten
+
+```bash
+curl -X POST -b cookies.txt https://<dein-host>/api/admin/daily-report/trigger
+```
+
+(Erfordert einen eingeloggten Admin-Nutzer, siehe Abschnitt "API" oben.)
+Antwort und aktueller Stand lassen sich zusätzlich jederzeit abfragen:
+
+```bash
+curl -b cookies.txt https://<dein-host>/api/admin/daily-report/status
+```
+
+### Was zählt als "aktiv"?
+
+Ein Wechselrichter gilt als aktiv, wenn der Poller innerhalb der letzten
+drei Poll-Intervalle (mindestens aber 120s) tatsächlich einen Messwert von
+ihm erhalten hat (siehe `app/daily_summary.py:device_online_map`). Ein
+Gerät, das seit Containerstart noch nie erfolgreich erreicht wurde, gilt
+als nicht aktiv.
+
+### Deaktivieren
+
+`DAILY_REPORT_ENABLED=false` setzen, oder `DAILY_REPORT_RECIPIENTS`/
+`MAIL_SERVICE_URL` leer lassen – die App startet dann ganz normal, der
+Report-Scheduler bleibt aber inaktiv (siehe Log-Warnung beim Start).
 
 ## Grenzen / mögliche Erweiterungen
 

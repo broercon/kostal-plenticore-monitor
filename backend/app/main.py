@@ -25,6 +25,12 @@ from .aggregation import (
 )
 from .auto_import import get_import_status, run_auto_import_for_all_devices, trigger_manual_import
 from .config import settings
+from .daily_report import (
+    daily_report_scheduler,
+    generate_and_send_daily_report,
+    get_daily_report_status,
+)
+from .daily_summary import build_daily_summaries
 from .database import SessionLocal, init_db
 from .models import Reading, User
 from .poller import poller
@@ -35,6 +41,8 @@ from .schemas import (
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
+    DailyReportStatusOut,
+    DailyReportTriggerOut,
     DailyTotalsOut,
     DayProfileOut,
     DeviceOut,
@@ -82,10 +90,12 @@ async def lifespan(app: FastAPI):
     init_db()
     auth.seed_default_users()
     poller.start()
+    daily_report_scheduler.start()
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
     yield
     auto_import_task.cancel()
     await poller.stop()
+    await daily_report_scheduler.stop()
 
 
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
@@ -322,82 +332,50 @@ def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[Summ
     aggregation.combine_devices) Tages-Statistikwerte berechnet, sondern
     durch Integration der ueber die Energiebilanz korrigierten
     Leistungswerte seit lokaler Mitternacht.
+
+    Die eigentliche Berechnung steckt in daily_summary.build_daily_summaries()
+    - sie wird auch vom taeglichen Mail-Report (siehe daily_report.py)
+    verwendet, damit die Logik nur an einer Stelle gepflegt werden muss.
     """
-    since = local_midnight_utc()
-    summaries = []
+    return build_daily_summaries()
 
-    for cfg in settings.inverters:
-        reading = poller.latest.get(cfg.id)
-        yield_kwh = reading.get("yield_day_kwh") if reading else None
-        home_kwh = reading.get("home_consumption_day_kwh") if reading else None
-        grid_kwh = reading.get("energy_grid_day_kwh") if reading else None
 
-        if yield_kwh is None or home_kwh is None or grid_kwh is None:
-            session = SessionLocal()
-            try:
-                rows = list(
-                    session.scalars(
-                        select(Reading)
-                        .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
-                        .order_by(Reading.timestamp)
-                    )
-                )
-            finally:
-                session.close()
+@app.get("/api/admin/daily-report/status", response_model=DailyReportStatusOut)
+def get_daily_report_status_endpoint(
+    _user: User = Depends(auth.get_current_user),
+) -> DailyReportStatusOut:
+    """Stand des taeglichen Mail-Reports: ob er aktiv ist (Konfiguration
+    vollstaendig), die eingestellte Uhrzeit/Empfaenger, sowie Zeitpunkt und
+    Ausgang (Erfolg/Fehler) des letzten Versands - ohne dafuer die
+    Container-Logs durchsuchen zu muessen (analog zu
+    /api/admin/import-history/status)."""
+    status_data = get_daily_report_status()
+    return DailyReportStatusOut(
+        enabled=bool(
+            settings.daily_report_enabled
+            and settings.daily_report_recipients
+            and settings.mail_service_url
+        ),
+        scheduled_time=settings.daily_report_time,
+        recipients=settings.daily_report_recipients,
+        last_sent_at=status_data["last_sent_at"],
+        last_status=status_data["last_status"],
+        last_message=status_data["last_message"],
+    )
 
-            if yield_kwh is None:
-                yield_kwh = integrate_kwh(rows, "pv_power_w")
-            if home_kwh is None:
-                home_kwh = integrate_kwh(rows, "home_power_w")
-            if grid_kwh is None:
-                grid_kwh = integrate_kwh(rows, "feed_in_power_w")
 
-        summaries.append(
-            SummaryOut(
-                device_id=cfg.id,
-                device_name=cfg.name,
-                yield_day_kwh=yield_kwh,
-                home_consumption_day_kwh=home_kwh,
-                energy_grid_day_kwh=grid_kwh,
-                as_of=reading.get("timestamp") if reading else None,
-            )
-        )
-
-    if len(settings.inverters) > 1:
-        session = SessionLocal()
-        try:
-            rows = list(
-                session.scalars(
-                    select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-                )
-            )
-        finally:
-            session.close()
-
-        if rows:
-            per_device = aggregate_per_device(rows, bucket_seconds=60)
-            combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
-            synthetic_rows = [
-                Reading(
-                    device_id="_combined_",
-                    device_name="_combined_",
-                    timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                    **values,
-                )
-                for bk, values in combined.items()
-            ]
-            summaries.append(
-                SummaryOut(
-                    device_id=COMBINED_DEVICE_ID,
-                    device_name="Alle (Summe)",
-                    yield_day_kwh=integrate_kwh(synthetic_rows, "pv_power_w"),
-                    home_consumption_day_kwh=integrate_kwh(synthetic_rows, "home_power_w"),
-                    energy_grid_day_kwh=integrate_kwh(synthetic_rows, "feed_in_power_w"),
-                    as_of=max(row.timestamp for row in rows),
-                )
-            )
-
-    return summaries
+@app.post("/api/admin/daily-report/trigger", response_model=DailyReportTriggerOut)
+async def post_trigger_daily_report(
+    _admin: User = Depends(auth.require_admin),
+) -> DailyReportTriggerOut:
+    """Verschickt den taeglichen Zusammenfassungs-Report sofort (z.B. um die
+    Mail-Konfiguration zu testen, ohne bis zur eingestellten Uhrzeit zu
+    warten). Laeuft synchron zum Request - ein einzelner Mailversand dauert
+    typischerweise deutlich unter einer Sekunde, ein eigener
+    Hintergrund-Task (wie bei /api/admin/import-history) ist dafuer nicht
+    noetig."""
+    result = await generate_and_send_daily_report()
+    return DailyReportTriggerOut(started=result["sent"], message=result["message"])
 
 
 def _merge_day_profile_own_pv(combined_days: list[dict], device_days: list[dict]) -> list[dict]:

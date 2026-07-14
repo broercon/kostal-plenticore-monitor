@@ -13,6 +13,12 @@ services:
       - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
       - AUTO_IMPORT_DAYS=${AUTO_IMPORT_DAYS:-35}
       - GRID_POWER_INVERTED=${GRID_POWER_INVERTED:-false}
+      - DAILY_REPORT_ENABLED=${DAILY_REPORT_ENABLED:-true}
+      - DAILY_REPORT_TIME=${DAILY_REPORT_TIME:-19:00}
+      - DAILY_REPORT_RECIPIENTS=${DAILY_REPORT_RECIPIENTS:-}
+      - MAIL_SERVICE_URL=${MAIL_SERVICE_URL:-}
+      - MAIL_SERVICE_API_KEY=${MAIL_SERVICE_API_KEY:-}
+      - MAIL_SERVICE_FROM_NAME=${MAIL_SERVICE_FROM_NAME:-Kostal Plenticore Monitor}
     volumes:
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro

@@ -116,6 +116,63 @@ class Settings:
             "GRID_POWER_INVERTED", "false"
         ).strip().lower() in ("true", "1", "yes")
 
+        # --- Täglicher Zusammenfassungs-Report per Mail ---
+        # Verschickt einmal täglich zu einer festen Uhrzeit (lokale
+        # TIMEZONE) einen Überblick über den Tag (aktive Wechselrichter,
+        # PV-Ertrag je Gerät + Summe) an eine oder mehrere Empfänger-
+        # Adressen, über den zentralen Mail-Service (siehe
+        # https://github.com/broercon/Mailserver). Bleibt inaktiv, solange
+        # nicht mindestens Empfänger UND MAIL_SERVICE_URL gesetzt sind (siehe
+        # Warnung unten sowie daily_report.DailyReportScheduler.start()).
+        self.daily_report_enabled = os.environ.get(
+            "DAILY_REPORT_ENABLED", "true"
+        ).strip().lower() not in ("false", "0", "no")
+
+        raw_time = os.environ.get("DAILY_REPORT_TIME", "19:00").strip()
+        self.daily_report_time = raw_time
+        try:
+            hour_str, minute_str = raw_time.split(":", 1)
+            hour, minute = int(hour_str), int(minute_str)
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+            self.daily_report_hour = hour
+            self.daily_report_minute = minute
+        except (ValueError, AttributeError):
+            logger.warning(
+                "DAILY_REPORT_TIME=%r ist ungültig (erwartet HH:MM), verwende 19:00.",
+                raw_time,
+            )
+            self.daily_report_time = "19:00"
+            self.daily_report_hour = 19
+            self.daily_report_minute = 0
+
+        self.daily_report_recipients = [
+            addr.strip()
+            for addr in os.environ.get("DAILY_REPORT_RECIPIENTS", "").split(",")
+            if addr.strip()
+        ]
+        # Basis-URL der Mailserver-REST-API inkl. Pfad, z.B.
+        # "http://mail-api:8080/send" (siehe broercon/Mailserver). Da beide
+        # Anwendungen üblicherweise in getrennten docker-compose-Projekten
+        # laufen, muss der Host von außerhalb des Mailserver-Containers
+        # erreichbar sein - z.B. die LAN-IP/Hostname des Servers plus den
+        # veröffentlichten Port 8080, oder ein gemeinsames externes
+        # Docker-Netzwerk (siehe README).
+        self.mail_service_url = os.environ.get("MAIL_SERVICE_URL", "").strip()
+        self.mail_service_api_key = os.environ.get("MAIL_SERVICE_API_KEY", "").strip()
+        self.mail_service_from_name = os.environ.get(
+            "MAIL_SERVICE_FROM_NAME", "Kostal Plenticore Monitor"
+        ).strip()
+
+        if self.daily_report_enabled and (
+            not self.daily_report_recipients or not self.mail_service_url
+        ):
+            logger.warning(
+                "DAILY_REPORT_ENABLED=true, aber DAILY_REPORT_RECIPIENTS und/oder "
+                "MAIL_SERVICE_URL fehlen - der tägliche Mail-Report bleibt "
+                "inaktiv, bis beides gesetzt ist."
+            )
+
         self.inverters: list[InverterConfig] = []
         if self.config_path.is_file():
             try:

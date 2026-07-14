@@ -178,3 +178,17 @@ class FeedInPeriod(BaseModel):
 
 class FeedInSummaryOut(BaseModel):
     periods: list[FeedInPeriod]
+
+
+class DailyReportStatusOut(BaseModel):
+    enabled: bool
+    scheduled_time: str  # "HH:MM"
+    recipients: list[str]
+    last_sent_at: datetime | None = None
+    last_status: str | None = None  # "ok" | "error" | None (noch nie gelaufen)
+    last_message: str | None = None
+
+
+class DailyReportTriggerOut(BaseModel):
+    started: bool
+    message: str
