@@ -454,7 +454,8 @@ def _merge_day_profile_own_pv(combined_days: list[dict], device_days: list[dict]
 @app.get("/api/readings/feed-in-summary", response_model=FeedInSummaryOut)
 def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInSummaryOut:
     """Gesamte Einspeisung (kWh) fuer mehrere Zeitraeume: heute, gestern,
-    vorgestern, diese/letzte Woche (Mo-So) sowie dieser/letzter Kalendermonat.
+    vorgestern, diese/letzte Woche (Mo-So), dieser/letzter Kalendermonat
+    sowie dieses/letztes Kalenderjahr.
 
     Einspeisung ist eine hausweite Groesse - bei mehreren Wechselrichtern
     wird sie aus der ueber alle Geraete korrigierten Energiebilanz integriert
@@ -473,6 +474,9 @@ def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInS
     this_month_start = today.replace(day=1)
     last_month_end = this_month_start - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
+    this_year_start = today.replace(month=1, day=1)
+    last_year_end = this_year_start - timedelta(days=1)
+    last_year_start = last_year_end.replace(month=1, day=1)
 
     periods = [
         ("today", today, today),
@@ -482,10 +486,12 @@ def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInS
         ("last_week", last_week_start, last_week_end),
         ("this_month", this_month_start, today),
         ("last_month", last_month_start, last_month_end),
+        ("this_year", this_year_start, today),
+        ("last_year", last_year_start, last_year_end),
     ]
 
     # Nur so weit zurueck laden, wie der fruehste benoetigte Tag reicht
-    # (i.d.R. der Beginn des letzten Kalendermonats).
+    # (mit dem Jahres-Zeitraum i.d.R. der Beginn des letzten Kalenderjahres).
     earliest = min(start for _, start, _ in periods)
     since = datetime.combine(earliest, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
 
