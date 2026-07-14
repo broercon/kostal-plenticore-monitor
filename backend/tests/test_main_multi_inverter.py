@@ -291,3 +291,49 @@ def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeyp
     assert (day["pv_kwh"] + day["battery_kwh"] + day["grid_kwh"]) == pytest.approx(
         total_kwh, abs=0.01
     )
+
+
+def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatch):
+    """Regression: der PV-Gesamtwert ("_all_") muss exakt die Summe der je
+    Wechselrichter angezeigten Tageswerte sein - nicht eine separat
+    integrierte, leicht abweichende Zahl (Mail-Report / Dashboard)."""
+    from app.daily_summary import build_daily_summaries
+    from app.database import SessionLocal
+    from app.models import Reading
+    from app.poller import poller as poller_singleton
+
+    monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
+
+    now = datetime.now(timezone.utc)
+    # Geraeteeigene Tagesstatistik (wie vom Poller geliefert): die exakt so
+    # in der Geraetetabelle angezeigt werden.
+    poller_singleton.latest = {
+        "wr1": {"device_id": "wr1", "device_name": WR1.name, "timestamp": now,
+                "yield_day_kwh": 95.64, "home_consumption_day_kwh": 8.0,
+                "energy_grid_day_kwh": 1.0},
+        "wr2": {"device_id": "wr2", "device_name": WR2.name, "timestamp": now,
+                "yield_day_kwh": 53.08, "home_consumption_day_kwh": None,
+                "energy_grid_day_kwh": None},
+    }
+    db = SessionLocal()
+    try:
+        db.add_all(
+            Reading(device_id=d, device_name=d, timestamp=now - timedelta(minutes=m),
+                    pv_power_w=1000.0, home_power_w=200.0, grid_draw_power_w=0.0,
+                    feed_in_power_w=800.0)
+            for d in ("wr1", "wr2") for m in (0, 10)
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        summaries = build_daily_summaries()
+    finally:
+        poller_singleton.latest = {}
+
+    by_id = {s.device_id: s for s in summaries}
+    assert {"wr1", "wr2", "_all_"} <= set(by_id)
+    device_sum = by_id["wr1"].yield_day_kwh + by_id["wr2"].yield_day_kwh
+    assert by_id["_all_"].yield_day_kwh == round(device_sum, 3)
+    assert by_id["_all_"].yield_day_kwh == 148.72

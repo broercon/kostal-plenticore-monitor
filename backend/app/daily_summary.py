@@ -120,11 +120,20 @@ def build_daily_summaries() -> list[SummaryOut]:
 
         if rows:
             synthetic_rows = _combined_rows(rows)
+            # PV-Ertrag ist additiv: der Gesamtwert ist die Summe der je Geraet
+            # angezeigten Tageswerte (die bevorzugt aus dem geraeteeigenen
+            # Statistik-Zaehler stammen). Damit stimmt "Alle (Summe)" exakt mit
+            # der Summe der einzelnen Wechselrichter ueberein - eine separate
+            # Integration der summierten PV-Leistung wich davon leicht ab.
+            # Hausverbrauch/Netz lassen sich dagegen NICHT naiv summieren und
+            # werden weiter aus der korrigierten Hausbilanz integriert.
+            device_yields = [s.yield_day_kwh for s in summaries if s.yield_day_kwh is not None]
+            combined_yield = round(sum(device_yields), 3) if device_yields else None
             summaries.append(
                 SummaryOut(
                     device_id=COMBINED_DEVICE_ID,
                     device_name="Alle (Summe)",
-                    yield_day_kwh=integrate_kwh(synthetic_rows, "pv_power_w"),
+                    yield_day_kwh=combined_yield,
                     home_consumption_day_kwh=integrate_kwh(synthetic_rows, "home_power_w"),
                     energy_grid_day_kwh=integrate_kwh(synthetic_rows, "feed_in_power_w"),
                     as_of=max(row.timestamp for row in rows),
