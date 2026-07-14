@@ -38,6 +38,8 @@ from .schemas import (
     DailyTotalsOut,
     DayProfileOut,
     DeviceOut,
+    FeedInPeriod,
+    FeedInSummaryOut,
     HistoryPoint,
     HourlyPerDeviceOut,
     ImportStatusOut,
@@ -48,6 +50,7 @@ from .schemas import (
     SummaryOut,
 )
 from .timeutil import local_midnight_utc
+from zoneinfo import ZoneInfo
 
 # Metrik-Name (API-Parameter) -> Feld in Reading, fuer /api/readings/daily-totals.
 DAILY_TOTAL_FIELDS = {
@@ -420,6 +423,100 @@ def _merge_day_profile_own_pv(combined_days: list[dict], device_days: list[dict]
             new_points.append(p)
         merged.append({"date": day["date"], "points": new_points})
     return merged
+
+
+@app.get("/api/readings/feed-in-summary", response_model=FeedInSummaryOut)
+def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInSummaryOut:
+    """Gesamte Einspeisung (kWh) fuer mehrere Zeitraeume: heute, gestern,
+    vorgestern, diese/letzte Woche (Mo-So) sowie dieser/letzter Kalendermonat.
+
+    Einspeisung ist eine hausweite Groesse - bei mehreren Wechselrichtern
+    wird sie aus der ueber alle Geraete korrigierten Energiebilanz integriert
+    (wie /daily-totals mit metric=feed_in), nicht naiv je Geraet summiert.
+    Rein per Logdaten-Import eingespielte Altdaten enthalten in der Regel
+    keine Einspeisung (KSEM-Limitation, siehe README) - solche Tage tragen
+    dann nichts bei; ein Zeitraum ohne jegliche Daten liefert kwh=None.
+    """
+    tz = ZoneInfo(settings.timezone_name)
+    today = datetime.now(tz).date()
+    yesterday = today - timedelta(days=1)
+    day_before = today - timedelta(days=2)
+    this_week_start = today - timedelta(days=today.weekday())  # Montag dieser Woche
+    last_week_start = this_week_start - timedelta(days=7)
+    last_week_end = this_week_start - timedelta(days=1)
+    this_month_start = today.replace(day=1)
+    last_month_end = this_month_start - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+
+    periods = [
+        ("today", today, today),
+        ("yesterday", yesterday, yesterday),
+        ("day_before_yesterday", day_before, day_before),
+        ("this_week", this_week_start, today),
+        ("last_week", last_week_start, last_week_end),
+        ("this_month", this_month_start, today),
+        ("last_month", last_month_start, last_month_end),
+    ]
+
+    # Nur so weit zurueck laden, wie der fruehste benoetigte Tag reicht
+    # (i.d.R. der Beginn des letzten Kalendermonats).
+    earliest = min(start for _, start, _ in periods)
+    since = datetime.combine(earliest, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+
+    multi = len(settings.inverters) > 1
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    if multi:
+        # Wie bei /daily-totals: erst pro Geraet UND Zeitpunkt zur korrigierten
+        # Hausbilanz zusammenfassen, dann daraus je Tag integrieren.
+        per_device = aggregate_per_device(rows, bucket_seconds=60)
+        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        rows = [
+            Reading(
+                device_id="_combined_",
+                device_name="_combined_",
+                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+                **values,
+            )
+            for bk, values in combined.items()
+        ]
+
+    per_day = {
+        d["date"]: d["kwh"]
+        for d in daily_kwh_totals(rows, "feed_in_power_w", settings.timezone_name)
+    }
+
+    def sum_range(start, end) -> float | None:
+        total = 0.0
+        has_data = False
+        day = start
+        while day <= end:
+            value = per_day.get(day.strftime("%Y-%m-%d"))
+            if value is not None:
+                total += value
+                has_data = True
+            day += timedelta(days=1)
+        return round(total, 3) if has_data else None
+
+    return FeedInSummaryOut(
+        periods=[
+            FeedInPeriod(
+                key=key,
+                from_date=start.strftime("%Y-%m-%d"),
+                to_date=end.strftime("%Y-%m-%d"),
+                kwh=sum_range(start, end),
+            )
+            for key, start, end in periods
+        ]
+    )
 
 
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)

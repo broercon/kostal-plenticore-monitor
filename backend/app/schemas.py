@@ -167,3 +167,14 @@ class AdminResetPasswordOut(BaseModel):
     username: str
     new_password: str
     message: str
+
+
+class FeedInPeriod(BaseModel):
+    key: str  # z.B. "today", "this_week", "last_month"
+    from_date: str  # "YYYY-MM-DD" (inklusive)
+    to_date: str  # "YYYY-MM-DD" (inklusive)
+    kwh: float | None = None  # None = fuer keinen Tag des Zeitraums Daten vorhanden
+
+
+class FeedInSummaryOut(BaseModel):
+    periods: list[FeedInPeriod]
