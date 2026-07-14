@@ -23,6 +23,7 @@ from .aggregation import (
     combine_devices,
     daily_home_source_breakdown_kwh,
     daily_kwh_totals,
+    daily_pv_yield_totals,
     integrate_kwh,
 )
 from .config import settings
@@ -186,17 +187,10 @@ def device_battery_snapshot() -> list[dict]:
     return result
 
 
-def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
-    """Integrierte Energiemenge (kWh) eines Leistungsfeldes je Zeitraum:
-    heute, gestern, vorgestern, diese/letzte Woche (Mo-So), dieser/letzter
-    Kalendermonat sowie dieses/letztes Kalenderjahr.
-
-    `field` ist das zu integrierende Reading-Feld, z.B. "feed_in_power_w"
-    (Einspeisung) oder "pv_power_w" (PV-Ertrag). Bei mehreren Wechselrichtern
-    wird zuvor auf die hausweite, korrigierte Energiebilanz zusammengefasst
-    (siehe _combined_rows / combine_devices): PV- und Batterieleistung werden
-    dabei ueber alle Geraete summiert, Netzbezug/Einspeisung dagegen aus der
-    Bilanz neu berechnet. Ein Zeitraum ganz ohne Daten liefert kwh=None."""
+def _energy_period_ranges() -> list[tuple[str, "date", "date"]]:
+    """Die neun Zeitraeume (key, from_date, to_date) fuer die Energie-
+    Uebersichten: heute, gestern, vorgestern, diese/letzte Woche (Mo-So),
+    dieser/letzter Kalendermonat sowie dieses/letztes Kalenderjahr."""
     tz = ZoneInfo(settings.timezone_name)
     today = datetime.now(tz).date()
     yesterday = today - timedelta(days=1)
@@ -210,8 +204,7 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     this_year_start = today.replace(month=1, day=1)
     last_year_end = this_year_start - timedelta(days=1)
     last_year_start = last_year_end.replace(month=1, day=1)
-
-    periods = [
+    return [
         ("today", today, today),
         ("yesterday", yesterday, yesterday),
         ("day_before_yesterday", day_before, day_before),
@@ -223,13 +216,13 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
         ("last_year", last_year_start, last_year_end),
     ]
 
-    earliest = min(start for _, start, _ in periods)
-    since = datetime.combine(earliest, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
 
-    multi = len(settings.inverters) > 1
+def _load_readings_since(earliest) -> list[Reading]:
+    since = datetime.combine(earliest, datetime.min.time(), tzinfo=ZoneInfo(settings.timezone_name))
+    since = since.astimezone(timezone.utc)
     session = SessionLocal()
     try:
-        rows = list(
+        return list(
             session.scalars(
                 select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
             )
@@ -237,14 +230,10 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     finally:
         session.close()
 
-    if multi:
-        rows = _combined_rows(rows)
 
-    per_day = {
-        d["date"]: d["kwh"]
-        for d in daily_kwh_totals(rows, field, settings.timezone_name)
-    }
-
+def _periods_from_per_day(periods, per_day: dict[str, float | None]) -> list[FeedInPeriod]:
+    """Aus Tageswerten {date: kwh} die Summe je Zeitraum bilden. Ein Zeitraum
+    ganz ohne Tageswerte liefert kwh=None (statt 0)."""
     def sum_range(start, end) -> float | None:
         total = 0.0
         has_data = False
@@ -268,14 +257,42 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     ]
 
 
+def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
+    """Integrierte Energiemenge (kWh) eines Leistungsfeldes je Zeitraum.
+
+    `field` ist das zu integrierende Reading-Feld, z.B. "feed_in_power_w"
+    (Einspeisung). Bei mehreren Wechselrichtern wird zuvor auf die hausweite,
+    korrigierte Energiebilanz zusammengefasst (siehe _combined_rows). Fuer den
+    PV-Ertrag NICHT verwenden - dafuer build_pv_yield_summary(), das den
+    geraeteeigenen Tageszaehler nutzt (genauer + konsistent mit den Kacheln)."""
+    periods = _energy_period_ranges()
+    earliest = min(start for _, start, _ in periods)
+    rows = _load_readings_since(earliest)
+    if len(settings.inverters) > 1:
+        rows = _combined_rows(rows)
+    per_day = {d["date"]: d["kwh"] for d in daily_kwh_totals(rows, field, settings.timezone_name)}
+    return _periods_from_per_day(periods, per_day)
+
+
 def build_feed_in_summary() -> list[FeedInPeriod]:
-    """Einspeisung (kWh) je Zeitraum - fuer den Mail-Report."""
+    """Einspeisung (kWh) je Zeitraum (integriert)."""
     return build_energy_period_summary("feed_in_power_w")
 
 
 def build_pv_yield_summary() -> list[FeedInPeriod]:
-    """PV-Ertrag (kWh) je Zeitraum - fuer die Dashboard-Uebersicht."""
-    return build_energy_period_summary("pv_power_w")
+    """PV-Ertrag (kWh) je Zeitraum - fuer Dashboard-Leiste und Mail-Report.
+
+    Nutzt den geraeteeigenen Tageszaehler (yield_day_kwh) je Geraet und Tag,
+    summiert ueber alle Wechselrichter - dieselbe Quelle wie die PV-Ertrag-
+    Kacheln oben. Dadurch stimmt "Heute" hier exakt mit dem Hero-Wert und der
+    Summe der Geraetetabelle ueberein. Nur wo kein Zaehlerstand vorliegt
+    (importierte Altdaten), wird die PV-Leistung integriert (siehe
+    daily_pv_yield_totals)."""
+    periods = _energy_period_ranges()
+    earliest = min(start for _, start, _ in periods)
+    rows = _load_readings_since(earliest)
+    per_day = {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
+    return _periods_from_per_day(periods, per_day)
 
 
 def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
