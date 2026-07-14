@@ -63,6 +63,8 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { days: [] };
       case "/api/readings/hourly-per-device":
         return { devices: [], buckets: [] };
+      case "/api/readings/feed-in-summary":
+        return { periods: [] };
       default:
         return {};
     }
