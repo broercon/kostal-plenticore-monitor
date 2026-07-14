@@ -179,10 +179,10 @@ def device_battery_snapshot() -> list[dict]:
 
 def build_feed_in_summary() -> list[FeedInPeriod]:
     """Gesamte Einspeisung (kWh) für mehrere Zeiträume: heute, gestern,
-    vorgestern, diese/letzte Woche (Mo-So) sowie dieser/letzter
-    Kalendermonat. Siehe main.get_feed_in_summary für die ausführliche
-    Erklärung (hausweite Energiebilanz bei mehreren Wechselrichtern,
-    kwh=None für Zeiträume ganz ohne Daten)."""
+    vorgestern, diese/letzte Woche (Mo-So), dieser/letzter Kalendermonat
+    sowie dieses/letztes Kalenderjahr. Siehe main.get_feed_in_summary für
+    die ausführliche Erklärung (hausweite Energiebilanz bei mehreren
+    Wechselrichtern, kwh=None für Zeiträume ganz ohne Daten)."""
     tz = ZoneInfo(settings.timezone_name)
     today = datetime.now(tz).date()
     yesterday = today - timedelta(days=1)
@@ -193,6 +193,9 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
     this_month_start = today.replace(day=1)
     last_month_end = this_month_start - timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
+    this_year_start = today.replace(month=1, day=1)
+    last_year_end = this_year_start - timedelta(days=1)
+    last_year_start = last_year_end.replace(month=1, day=1)
 
     periods = [
         ("today", today, today),
@@ -202,6 +205,8 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
         ("last_week", last_week_start, last_week_end),
         ("this_month", this_month_start, today),
         ("last_month", last_month_start, last_month_end),
+        ("this_year", this_year_start, today),
+        ("last_year", last_year_start, last_year_end),
     ]
 
     earliest = min(start for _, start, _ in periods)

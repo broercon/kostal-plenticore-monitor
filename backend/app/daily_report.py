@@ -77,6 +77,8 @@ _FEED_IN_LABELS = {
     "last_week": "Letzte Woche",
     "this_month": "Dieser Monat",
     "last_month": "Letzter Monat",
+    "this_year": "Dieses Jahr",
+    "last_year": "Letztes Jahr",
 }
 
 

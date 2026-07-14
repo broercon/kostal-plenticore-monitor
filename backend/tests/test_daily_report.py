@@ -229,12 +229,13 @@ def test_build_report_html_escapes_device_names():
 # --- build_feed_in_summary / build_daily_home_breakdown / device_battery_snapshot -
 
 
-def test_build_feed_in_summary_returns_all_seven_periods_with_no_data(client):
+def test_build_feed_in_summary_returns_all_nine_periods_with_no_data(client):
     periods = build_feed_in_summary()
     keys = {p.key for p in periods}
     assert keys == {
         "today", "yesterday", "day_before_yesterday",
         "this_week", "last_week", "this_month", "last_month",
+        "this_year", "last_year",
     }
     assert all(p.kwh is None for p in periods)  # frische Test-DB, keine Messwerte
 

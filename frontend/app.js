@@ -358,6 +358,7 @@ async function loadDevices() {
     for (const btn of container.querySelectorAll("button")) {
       btn.classList.toggle("active", btn.dataset.deviceId === state.selectedDeviceId);
     }
+    updateFeedInVisibility();
   }
 
   container.appendChild(
@@ -374,6 +375,7 @@ async function loadDevices() {
     state.selectedDeviceId = btn.dataset.deviceId;
     applyActiveTab();
     refreshAll({ showLoading: true });
+    refreshFeedInSummary().catch(console.error);
   });
 }
 
@@ -1180,12 +1182,21 @@ function setDashboardLoading(on) {
 // nicht faelschlich haengen, wenn eine aeltere Abfrage spaeter fertig wird.
 let loadingSeq = 0;
 
-// Einspeisung (kWh) je Zeitraum in der Kachel oben. Hausweite Groesse, also
-// unabhaengig vom oben gewaehlten Wechselrichter-Tab - wird daher nicht bei
-// jedem Tab-Wechsel neu geladen, sondern einmal beim Start und periodisch.
+// Einspeisung (kWh) je Zeitraum in der Leiste oben. Hausweite Groesse und
+// daher nur im Gesamt-Tab ("Alle (Summe)") sinnvoll - fuer einen einzelnen
+// Wechselrichter wird die Leiste ausgeblendet. Geladen wird beim Start, beim
+// Zurueckwechseln auf den Gesamt-Tab und periodisch.
 const FEEDIN_PERIOD_UNKNOWN = "–";
 
+function updateFeedInVisibility() {
+  const show = state.selectedDeviceId === "";
+  const section = el("feedin-summary");
+  if (section) section.classList.toggle("hidden", !show);
+  return show;
+}
+
 async function refreshFeedInSummary() {
+  if (!updateFeedInVisibility()) return; // Einzel-WR: nichts anzeigen/laden
   const data = await fetchJson("/api/readings/feed-in-summary");
   const byKey = {};
   for (const period of data.periods) byKey[period.key] = period;

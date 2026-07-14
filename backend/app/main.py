@@ -454,7 +454,8 @@ def _merge_day_profile_own_pv(combined_days: list[dict], device_days: list[dict]
 @app.get("/api/readings/feed-in-summary", response_model=FeedInSummaryOut)
 def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInSummaryOut:
     """Gesamte Einspeisung (kWh) fuer mehrere Zeitraeume: heute, gestern,
-    vorgestern, diese/letzte Woche (Mo-So) sowie dieser/letzter Kalendermonat.
+    vorgestern, diese/letzte Woche (Mo-So), dieser/letzter Kalendermonat
+    sowie dieses/letztes Kalenderjahr.
 
     Einspeisung ist eine hausweite Groesse - bei mehreren Wechselrichtern
     wird sie aus der ueber alle Geraete korrigierten Energiebilanz integriert

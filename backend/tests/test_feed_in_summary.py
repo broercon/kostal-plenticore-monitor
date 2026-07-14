@@ -75,6 +75,8 @@ def test_feed_in_summary_periods(client):
         "last_week",
         "this_month",
         "last_month",
+        "this_year",
+        "last_year",
     }
 
     # Erwartete Tagesanzahl je Zeitraum (gleiche Datumslogik wie im Endpunkt).
@@ -82,6 +84,13 @@ def test_feed_in_summary_periods(client):
     this_week_start = today - timedelta(days=today.weekday())
     last_month_end = today.replace(day=1) - timedelta(days=1)
     days_last_month = last_month_end.day  # 1..letzter Tag des Vormonats
+
+    # Wie viele der (DAYS_BACK + 1) eingespielten Tage fallen in dieses bzw.
+    # letztes Kalenderjahr? Bei einem Lauf mitten im Jahr sind das alle im
+    # aktuellen Jahr; nahe am Jahresanfang verteilen sie sich auf beide.
+    jan1 = today.replace(month=1, day=1)
+    seeded_this_year = min(DAYS_BACK + 1, (today - jan1).days + 1)
+    seeded_last_year = (DAYS_BACK + 1) - seeded_this_year
 
     expected_days = {
         "today": 1,
@@ -91,9 +100,14 @@ def test_feed_in_summary_periods(client):
         "last_week": 7,
         "this_month": today.day,
         "last_month": days_last_month,
+        "this_year": seeded_this_year,
+        "last_year": seeded_last_year,
     }
 
     for key, n_days in expected_days.items():
+        if n_days == 0:
+            assert periods[key]["kwh"] is None, key
+            continue
         assert periods[key]["kwh"] is not None, key
         assert abs(periods[key]["kwh"] - n_days * KWH_PER_DAY) < 1e-6, (
             key,
