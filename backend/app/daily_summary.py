@@ -1,24 +1,35 @@
-"""Baut die Tageszusammenfassung (PV-Ertrag/Verbrauch je Wechselrichter +
-hausweite Summe) sowie den "aktiv/erreichbar"-Status je Gerät.
+"""Baut alle Datengrundlagen für den täglichen Mail-Report (siehe
+daily_report.py) sowie für die zugehörigen API-Endpunkte: Tagessummen je
+Wechselrichter (build_daily_summaries), "aktiv/erreichbar"-Status
+(device_online_map), Einspeisung je Zeitraum (build_feed_in_summary),
+Hausverbrauch nach Quelle PV/Batterie/Netz je Tag
+(build_daily_home_breakdown) sowie aktueller Batterie-Ladestand
+(device_battery_snapshot).
 
-Die eigentliche Summenberechnung ist 1:1 aus main.get_today_summary
-ausgelagert (keine FastAPI-/Auth-Abhängigkeiten), damit sie sowohl vom
-API-Endpoint GET /api/readings/today-summary als auch vom täglichen
-Mail-Report (siehe daily_report.py) verwendet werden kann, ohne die Logik
-doppelt zu pflegen.
+Die eigentlichen Berechnungen sind 1:1 aus main.py ausgelagert (keine
+FastAPI-/Auth-Abhängigkeiten), damit sie sowohl von den jeweiligen
+API-Endpunkten als auch vom täglichen Mail-Report verwendet werden können,
+ohne die Logik doppelt zu pflegen.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
-from .aggregation import aggregate_per_device, combine_devices, integrate_kwh
+from .aggregation import (
+    aggregate_per_device,
+    combine_devices,
+    daily_home_source_breakdown_kwh,
+    daily_kwh_totals,
+    integrate_kwh,
+)
 from .config import settings
 from .database import SessionLocal
 from .models import Reading
 from .poller import poller
-from .schemas import SummaryOut
+from .schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 from .timeutil import local_midnight_utc
 
 # Synthetische device_id für die "Alle (Summe)"-Zeile bei mehreren
@@ -32,6 +43,24 @@ def _has_grid_meter_map() -> dict[str, bool]:
 
 def _battery_inverted_map() -> dict[str, bool]:
     return {cfg.id: cfg.battery_power_inverted for cfg in settings.inverters}
+
+
+def _combined_rows(rows: list[Reading]) -> list[Reading]:
+    """Fasst rows (mehrere Geräte) zur hausweit korrigierten Energiebilanz
+    zusammen (siehe aggregation.combine_devices) - gemeinsamer Baustein für
+    mehrere der Funktionen unten, die bei >1 Wechselrichter alle auf
+    derselben Logik beruhen wie main.py's Endpunkte."""
+    per_device = aggregate_per_device(rows, bucket_seconds=60)
+    combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+    return [
+        Reading(
+            device_id="_combined_",
+            device_name="_combined_",
+            timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
+            **values,
+        )
+        for bk, values in combined.items()
+    ]
 
 
 def build_daily_summaries() -> list[SummaryOut]:
@@ -90,17 +119,7 @@ def build_daily_summaries() -> list[SummaryOut]:
             session.close()
 
         if rows:
-            per_device = aggregate_per_device(rows, bucket_seconds=60)
-            combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
-            synthetic_rows = [
-                Reading(
-                    device_id="_combined_",
-                    device_name="_combined_",
-                    timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                    **values,
-                )
-                for bk, values in combined.items()
-            ]
+            synthetic_rows = _combined_rows(rows)
             summaries.append(
                 SummaryOut(
                     device_id=COMBINED_DEVICE_ID,
@@ -140,3 +159,113 @@ def device_online_map(
         age_seconds = (now - timestamp).total_seconds()
         result[cfg.id] = age_seconds <= stale_after_seconds
     return result
+
+
+def device_battery_snapshot() -> list[dict]:
+    """Aktueller Batterie-Ladestand je Wechselrichter mit Batterie (letzter
+    Poller-Messwert) - für die "Batterie-Ladestand"-Live-Kachel im
+    Dashboard bzw. den Mail-Report. Geräte ohne (aktuell bekannten)
+    Batterie-Ladestand werden ausgelassen, statt einen irreführenden
+    0%-Wert vorzutäuschen."""
+    result = []
+    for cfg in settings.inverters:
+        reading = poller.latest.get(cfg.id)
+        soc = reading.get("battery_soc_percent") if reading else None
+        if soc is None:
+            continue
+        result.append({"device_id": cfg.id, "device_name": cfg.name, "battery_soc_percent": soc})
+    return result
+
+
+def build_feed_in_summary() -> list[FeedInPeriod]:
+    """Gesamte Einspeisung (kWh) für mehrere Zeiträume: heute, gestern,
+    vorgestern, diese/letzte Woche (Mo-So) sowie dieser/letzter
+    Kalendermonat. Siehe main.get_feed_in_summary für die ausführliche
+    Erklärung (hausweite Energiebilanz bei mehreren Wechselrichtern,
+    kwh=None für Zeiträume ganz ohne Daten)."""
+    tz = ZoneInfo(settings.timezone_name)
+    today = datetime.now(tz).date()
+    yesterday = today - timedelta(days=1)
+    day_before = today - timedelta(days=2)
+    this_week_start = today - timedelta(days=today.weekday())  # Montag dieser Woche
+    last_week_start = this_week_start - timedelta(days=7)
+    last_week_end = this_week_start - timedelta(days=1)
+    this_month_start = today.replace(day=1)
+    last_month_end = this_month_start - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+
+    periods = [
+        ("today", today, today),
+        ("yesterday", yesterday, yesterday),
+        ("day_before_yesterday", day_before, day_before),
+        ("this_week", this_week_start, today),
+        ("last_week", last_week_start, last_week_end),
+        ("this_month", this_month_start, today),
+        ("last_month", last_month_start, last_month_end),
+    ]
+
+    earliest = min(start for _, start, _ in periods)
+    since = datetime.combine(earliest, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+
+    multi = len(settings.inverters) > 1
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    if multi:
+        rows = _combined_rows(rows)
+
+    per_day = {
+        d["date"]: d["kwh"]
+        for d in daily_kwh_totals(rows, "feed_in_power_w", settings.timezone_name)
+    }
+
+    def sum_range(start, end) -> float | None:
+        total = 0.0
+        has_data = False
+        day = start
+        while day <= end:
+            value = per_day.get(day.strftime("%Y-%m-%d"))
+            if value is not None:
+                total += value
+                has_data = True
+            day += timedelta(days=1)
+        return round(total, 3) if has_data else None
+
+    return [
+        FeedInPeriod(
+            key=key,
+            from_date=start.strftime("%Y-%m-%d"),
+            to_date=end.strftime("%Y-%m-%d"),
+            kwh=sum_range(start, end),
+        )
+        for key, start, end in periods
+    ]
+
+
+def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
+    """Hausverbrauch je Tag, aufgeschlüsselt nach PV-/Batterie-/Netz-Anteil
+    (siehe main.get_daily_home_breakdown). Für den Mail-Report wird davon
+    nur der letzte (heutige) Eintrag verwendet."""
+    since = local_midnight_utc() - timedelta(days=days - 1)
+
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    if len(settings.inverters) > 1:
+        rows = _combined_rows(rows)
+
+    return daily_home_source_breakdown_kwh(rows, settings.timezone_name)

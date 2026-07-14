@@ -718,11 +718,21 @@ Aufbau (jsdom + Backend-Mock) steckt in `frontend/tests/harness.mjs`.
 ## Täglicher Mail-Report
 
 Einmal täglich, zu einer festen (konfigurierbaren) Uhrzeit, verschickt die
-App eine Zusammenfassungsmail: welche Wechselrichter aktiv/erreichbar
-waren und wie viel PV-Ertrag sie – einzeln und in Summe – an diesem Tag
-bereits erzielt haben. Der Versand läuft über den separaten zentralen
-Mail-Service [broercon/Mailserver](https://github.com/broercon/Mailserver)
-(`POST /send`), nicht über einen eigenen SMTP-Versand in dieser App.
+App eine gestaltete HTML-Zusammenfassungsmail mit denselben Werten wie im
+Dashboard:
+
+- Welche Wechselrichter aktiv/erreichbar waren und wie viel PV-Ertrag sie
+  – einzeln und in Summe – an diesem Tag bereits erzielt haben.
+- Einspeisung über mehrere Zeiträume (heute, gestern, vorgestern, diese/
+  letzte Woche, dieser/letzter Monat) – wie die "Einspeisung"-Tabelle im
+  Dashboard.
+- Heutiger Hausverbrauch aufgeschlüsselt nach PV-/Batterie-/Netz-Anteil –
+  wie das "Tagesverbrauch"-Diagramm.
+- Aktueller Batterie-Ladestand je Gerät mit Batterie.
+
+Der Versand läuft über den separaten zentralen Mail-Service
+[broercon/Mailserver](https://github.com/broercon/Mailserver) (`POST
+/send`), nicht über einen eigenen SMTP-Versand in dieser App.
 
 ### Einrichtung über die Admin-Oberfläche (empfohlen)
 

@@ -19,9 +19,14 @@ from zoneinfo import ZoneInfo
 
 from app import daily_report
 from app.daily_report_config import InvalidReportTime, get_config, parse_report_time, update_config
-from app.daily_summary import device_online_map
+from app.daily_summary import (
+    build_daily_home_breakdown,
+    build_feed_in_summary,
+    device_battery_snapshot,
+    device_online_map,
+)
 from app.report_mailer import ReportMailError
-from app.schemas import SummaryOut
+from app.schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 
 from .conftest import make_user
 
@@ -130,7 +135,7 @@ def test_device_online_map_marks_never_seen_device_as_inactive(monkeypatch):
 # --- build_report_text -----------------------------------------------------
 
 
-def test_build_report_text_lists_devices_and_totals():
+def test_build_report_html_includes_all_sections():
     now = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
     summaries = [
         SummaryOut(
@@ -156,29 +161,115 @@ def test_build_report_text_lists_devices_and_totals():
         ),
     ]
     online_map = {"wr1": True, "wr2": False}
+    feed_in_periods = [
+        FeedInPeriod(key="today", from_date="2026-07-14", to_date="2026-07-14", kwh=9.0),
+        FeedInPeriod(key="this_week", from_date="2026-07-13", to_date="2026-07-14", kwh=40.0),
+        FeedInPeriod(key="last_month", from_date="2026-06-01", to_date="2026-06-30", kwh=None),
+    ]
+    home_breakdown = DailyHomeBreakdownDay(
+        date="2026-07-14", pv_kwh=5.0, battery_kwh=2.0, grid_kwh=1.0
+    )
+    battery_snapshot = [
+        {"device_id": "wr1", "device_name": "Dach Sued", "battery_soc_percent": 73.4}
+    ]
 
-    subject, body = daily_report.build_report_text(summaries, online_map, now, "Europe/Berlin")
+    subject, body = daily_report.build_report_html(
+        summaries, online_map, feed_in_periods, home_breakdown, battery_snapshot,
+        now, "Europe/Berlin",
+    )
 
     assert "14.07.2026" in subject
+    # Wechselrichter-Tabelle
     assert "Dach Sued" in body
-    assert "12.35 kWh" in body  # gerundet
+    assert "12.35 kWh" in body
     assert "Garage" in body
-    assert "NICHT ERREICHBAR" in body
-    assert "keine Daten" in body  # Garage hat keinen PV-Ertragswert
-    assert "Gesamt-PV-Ertrag heute (alle Wechselrichter): 15.35 kWh" in body
-    assert "Hausverbrauch heute: 8.00 kWh" in body  # nur hausweit, nicht je Geraet
-    assert "1 von 2 Wechselrichter(n) aktiv." in body
+    assert "Nicht erreichbar" in body
+    assert "Aktiv" in body
+    # Hero-Kacheln
+    assert "15.35 kWh" in body  # Gesamt-PV-Ertrag (combined)
+    assert "8.00 kWh" in body  # Gesamt-Hausverbrauch (combined)
+    assert "1 / 2" in body  # aktive Wechselrichter
+    # Hausverbrauch nach Quelle
+    assert "5.00 kWh" in body  # PV-Anteil
+    assert "2.00 kWh" in body  # Batterie-Anteil
+    # Einspeisung-Tabelle
+    assert "Heute" in body
+    assert "9.00 kWh" in body
+    assert "Diese Woche" in body
+    assert "40.00 kWh" in body
+    assert "Letzter Monat" in body
+    assert "keine Daten" in body
+    # Batterie-Ladestand
+    assert "73 %" in body
 
 
-def test_build_report_text_without_multiple_inverters_has_no_combined_line():
+def test_build_report_html_handles_missing_optional_data_gracefully():
+    now = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
+    summaries = [SummaryOut(device_id="wr1", device_name="Einziger WR", yield_day_kwh=7.0)]
+    subject, body = daily_report.build_report_html(
+        summaries, {"wr1": True}, [], None, [], now, "Europe/Berlin"
+    )
+    assert "7.00 kWh" in body
+    assert "Keine Batterie konfiguriert/erkannt." in body
+    assert "Noch keine Daten für heute." in body
+
+
+def test_build_report_html_escapes_device_names():
     now = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
     summaries = [
-        SummaryOut(device_id="wr1", device_name="Einziger WR", yield_day_kwh=7.0)
+        SummaryOut(device_id="wr1", device_name="<script>alert(1)</script>", yield_day_kwh=1.0)
     ]
-    subject, body = daily_report.build_report_text(summaries, {"wr1": True}, now, "Europe/Berlin")
-    assert "Gesamt-PV-Ertrag" not in body
-    assert "PV-Ertrag heute: 7.00 kWh" in body
-    assert "1 von 1 Wechselrichter(n) aktiv." in body
+    _subject, body = daily_report.build_report_html(
+        summaries, {"wr1": True}, [], None, [], now, "Europe/Berlin"
+    )
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+# --- build_feed_in_summary / build_daily_home_breakdown / device_battery_snapshot -
+
+
+def test_build_feed_in_summary_returns_all_seven_periods_with_no_data(client):
+    periods = build_feed_in_summary()
+    keys = {p.key for p in periods}
+    assert keys == {
+        "today", "yesterday", "day_before_yesterday",
+        "this_week", "last_week", "this_month", "last_month",
+    }
+    assert all(p.kwh is None for p in periods)  # frische Test-DB, keine Messwerte
+
+
+def test_build_daily_home_breakdown_empty_without_data(client):
+    assert build_daily_home_breakdown(days=1) == []
+
+
+def test_device_battery_snapshot_skips_devices_without_known_soc(monkeypatch):
+    import app.daily_summary as daily_summary_module
+
+    class _Cfg:
+        id = "wr1"
+        name = "WR 1"
+
+    monkeypatch.setattr(daily_summary_module.settings, "inverters", [_Cfg()])
+    daily_summary_module.poller.latest.clear()
+    daily_summary_module.poller.latest["wr1"] = {"battery_soc_percent": None}
+
+    assert device_battery_snapshot() == []
+
+
+def test_device_battery_snapshot_includes_known_soc(monkeypatch):
+    import app.daily_summary as daily_summary_module
+
+    class _Cfg:
+        id = "wr1"
+        name = "WR 1"
+
+    monkeypatch.setattr(daily_summary_module.settings, "inverters", [_Cfg()])
+    daily_summary_module.poller.latest.clear()
+    daily_summary_module.poller.latest["wr1"] = {"battery_soc_percent": 55.0}
+
+    result = device_battery_snapshot()
+    assert result == [{"device_id": "wr1", "device_name": "WR 1", "battery_soc_percent": 55.0}]
 
 
 # --- daily_report_config: Persistenz, Env-Fallback, API-Key-Geheimhaltung --

@@ -31,7 +31,7 @@ from .daily_report import (
     get_daily_report_status,
 )
 from .daily_report_config import InvalidReportTime, get_config as get_daily_report_config, update_config as update_daily_report_config
-from .daily_summary import build_daily_summaries
+from .daily_summary import build_daily_home_breakdown, build_daily_summaries, build_feed_in_summary
 from .database import SessionLocal, init_db
 from .models import Reading, User
 from .poller import poller
@@ -462,87 +462,12 @@ def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInS
     Rein per Logdaten-Import eingespielte Altdaten enthalten in der Regel
     keine Einspeisung (KSEM-Limitation, siehe README) - solche Tage tragen
     dann nichts bei; ein Zeitraum ohne jegliche Daten liefert kwh=None.
+
+    Die eigentliche Berechnung steckt in daily_summary.build_feed_in_summary()
+    - sie wird auch vom taeglichen Mail-Report (siehe daily_report.py)
+    verwendet, damit die Logik nur an einer Stelle gepflegt werden muss.
     """
-    tz = ZoneInfo(settings.timezone_name)
-    today = datetime.now(tz).date()
-    yesterday = today - timedelta(days=1)
-    day_before = today - timedelta(days=2)
-    this_week_start = today - timedelta(days=today.weekday())  # Montag dieser Woche
-    last_week_start = this_week_start - timedelta(days=7)
-    last_week_end = this_week_start - timedelta(days=1)
-    this_month_start = today.replace(day=1)
-    last_month_end = this_month_start - timedelta(days=1)
-    last_month_start = last_month_end.replace(day=1)
-
-    periods = [
-        ("today", today, today),
-        ("yesterday", yesterday, yesterday),
-        ("day_before_yesterday", day_before, day_before),
-        ("this_week", this_week_start, today),
-        ("last_week", last_week_start, last_week_end),
-        ("this_month", this_month_start, today),
-        ("last_month", last_month_start, last_month_end),
-    ]
-
-    # Nur so weit zurueck laden, wie der fruehste benoetigte Tag reicht
-    # (i.d.R. der Beginn des letzten Kalendermonats).
-    earliest = min(start for _, start, _ in periods)
-    since = datetime.combine(earliest, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
-
-    multi = len(settings.inverters) > 1
-    session = SessionLocal()
-    try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
-    finally:
-        session.close()
-
-    if multi:
-        # Wie bei /daily-totals: erst pro Geraet UND Zeitpunkt zur korrigierten
-        # Hausbilanz zusammenfassen, dann daraus je Tag integrieren.
-        per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
-        rows = [
-            Reading(
-                device_id="_combined_",
-                device_name="_combined_",
-                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                **values,
-            )
-            for bk, values in combined.items()
-        ]
-
-    per_day = {
-        d["date"]: d["kwh"]
-        for d in daily_kwh_totals(rows, "feed_in_power_w", settings.timezone_name)
-    }
-
-    def sum_range(start, end) -> float | None:
-        total = 0.0
-        has_data = False
-        day = start
-        while day <= end:
-            value = per_day.get(day.strftime("%Y-%m-%d"))
-            if value is not None:
-                total += value
-                has_data = True
-            day += timedelta(days=1)
-        return round(total, 3) if has_data else None
-
-    return FeedInSummaryOut(
-        periods=[
-            FeedInPeriod(
-                key=key,
-                from_date=start.strftime("%Y-%m-%d"),
-                to_date=end.strftime("%Y-%m-%d"),
-                kwh=sum_range(start, end),
-            )
-            for key, start, end in periods
-        ]
-    )
+    return FeedInSummaryOut(periods=build_feed_in_summary())
 
 
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)
@@ -682,34 +607,12 @@ def get_daily_home_breakdown(
     Hausverbrauch ist eine hausweite Groesse und laesst sich nicht sinnvoll
     einem einzelnen Wechselrichter zuordnen - daher kein device_id-Parameter,
     bei mehreren konfigurierten Geraeten wird immer automatisch die ueber
-    die Energiebilanz korrigierte Gesamt-Zeitreihe verwendet."""
-    since = local_midnight_utc() - timedelta(days=days - 1)
+    die Energiebilanz korrigierte Gesamt-Zeitreihe verwendet.
 
-    session = SessionLocal()
-    try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
-    finally:
-        session.close()
-
-    if len(settings.inverters) > 1:
-        per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
-        rows = [
-            Reading(
-                device_id="_combined_",
-                device_name="_combined_",
-                timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                **values,
-            )
-            for bk, values in combined.items()
-        ]
-
-    days_data = daily_home_source_breakdown_kwh(rows, settings.timezone_name)
-    return DailyHomeBreakdownOut(days=days_data)
+    Die eigentliche Berechnung steckt in
+    daily_summary.build_daily_home_breakdown() - der taegliche Mail-Report
+    (siehe daily_report.py) nutzt sie fuer den heutigen Tag mit."""
+    return DailyHomeBreakdownOut(days=build_daily_home_breakdown(days=days))
 
 
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)
