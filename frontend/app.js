@@ -74,6 +74,7 @@ async function checkAuth() {
 
   if (state.currentUser.role === "admin") {
     el("admin-panel-btn").classList.remove("hidden");
+    el("daily-report-panel-btn").classList.remove("hidden");
   }
 
   if (state.currentUser.must_change_password) {
@@ -192,6 +193,137 @@ async function loadAdminUserTable() {
 
     tbody.appendChild(tr);
   }
+}
+
+// --- Mail-Report-Panel: komplette Konfiguration des taeglichen
+// Zusammenfassungs-Reports (aktiv/inaktiv, Uhrzeit, Empfaenger,
+// Mail-Service-URL/API-Key/Absendername) - siehe README "Taeglicher
+// Mail-Report". Nur fuer Rolle admin sichtbar (Button bleibt sonst
+// versteckt), zusaetzlich serverseitig ueber /api/admin/daily-report/...
+// abgesichert. ---
+
+function fmtDailyReportStatus(status) {
+  const parts = [];
+  if (status.enabled) {
+    parts.push(`Aktiv, taeglich ${status.scheduled_time} Uhr an ${status.recipients.join(", ") || "(keine Empfänger)"}`);
+  } else {
+    parts.push("Deaktiviert oder unvollständig konfiguriert");
+  }
+  if (status.last_sent_at) {
+    const when = fmtDateTime(status.last_sent_at);
+    const outcome = status.last_status === "ok" ? "erfolgreich" : "fehlgeschlagen";
+    parts.push(`Letzter Versand: ${when} (${outcome})`);
+    if (status.last_status !== "ok" && status.last_message) {
+      parts.push(status.last_message);
+    }
+  } else {
+    parts.push("Noch nie verschickt.");
+  }
+  return parts.join(" · ");
+}
+
+async function refreshDailyReportStatusText() {
+  const status = await fetchJson("/api/admin/daily-report/status");
+  el("dr-status-text").textContent = fmtDailyReportStatus(status);
+}
+
+async function loadDailyReportConfigIntoForm() {
+  const cfg = await fetchJson("/api/admin/daily-report/config");
+  el("dr-enabled").checked = cfg.enabled;
+  el("dr-time").value = cfg.report_time;
+  el("dr-recipients").value = cfg.recipients.join(", ");
+  el("dr-url").value = cfg.mail_service_url;
+  el("dr-from-name").value = cfg.mail_service_from_name;
+  el("dr-api-key").value = "";
+  el("dr-api-key-hint").textContent = cfg.mail_service_api_key_set
+    ? "Ein API-Key ist hinterlegt. Leer lassen, um ihn unverändert zu übernehmen – nur ausfüllen, um ihn zu ersetzen."
+    : "Noch kein API-Key hinterlegt.";
+}
+
+function parseRecipients(raw) {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function extractErrorMessage(res) {
+  const data = await res.json().catch(() => ({}));
+  if (typeof data.detail === "string") return data.detail;
+  if (Array.isArray(data.detail)) {
+    // FastAPI/Pydantic-Validierungsfehler (422): Liste von {loc, msg, ...}.
+    return data.detail.map((d) => d.msg).join("; ");
+  }
+  return "Speichern fehlgeschlagen.";
+}
+
+function setupDailyReportPanel() {
+  el("daily-report-panel-btn").addEventListener("click", async () => {
+    el("dr-save-result").textContent = "";
+    el("dr-trigger-result").textContent = "";
+    el("daily-report-overlay").classList.remove("hidden");
+    try {
+      await loadDailyReportConfigIntoForm();
+      await refreshDailyReportStatusText();
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  el("daily-report-close").addEventListener("click", () => {
+    el("daily-report-overlay").classList.add("hidden");
+  });
+
+  el("daily-report-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    el("dr-save-result").textContent = "Speichert …";
+    const payload = {
+      enabled: el("dr-enabled").checked,
+      report_time: el("dr-time").value,
+      recipients: parseRecipients(el("dr-recipients").value),
+      mail_service_url: el("dr-url").value.trim(),
+      mail_service_api_key: el("dr-api-key").value || null,
+      mail_service_from_name: el("dr-from-name").value.trim(),
+    };
+    try {
+      const res = await fetch("/api/admin/daily-report/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        el("dr-save-result").textContent = await extractErrorMessage(res);
+        return;
+      }
+      el("dr-save-result").textContent = "Gespeichert.";
+      await loadDailyReportConfigIntoForm();
+      await refreshDailyReportStatusText();
+    } catch (err) {
+      console.error(err);
+      el("dr-save-result").textContent = "Verbindung zum Server fehlgeschlagen.";
+    }
+  });
+
+  el("dr-trigger-btn").addEventListener("click", async () => {
+    const btn = el("dr-trigger-btn");
+    btn.disabled = true;
+    el("dr-trigger-result").textContent = "Wird gesendet …";
+    try {
+      const res = await fetch("/api/admin/daily-report/trigger", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        el("dr-trigger-result").textContent = data.detail || "Fehler beim Senden.";
+      } else {
+        el("dr-trigger-result").textContent = data.message;
+      }
+      await refreshDailyReportStatusText();
+    } catch (err) {
+      console.error(err);
+      el("dr-trigger-result").textContent = "Verbindung zum Server fehlgeschlagen.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 function setupAdminPanel() {
@@ -1091,6 +1223,7 @@ async function init() {
   setupChangePassword();
   setupLogout();
   setupAdminPanel();
+  setupDailyReportPanel();
   await loadDevices();
   setupRangeButtons();
   setupDayCompareControls();

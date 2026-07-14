@@ -634,10 +634,17 @@ cookies.txt -b cookies.txt ...`).
   je Wechselrichter).
 - `GET /api/admin/daily-report/status` – Status des täglichen Mail-Reports
   (`enabled`, `scheduled_time`, `recipients`, `last_sent_at`,
-  `last_status`, `last_message`).
+  `last_status`, `last_message`); für alle angemeldeten Nutzer sichtbar.
+- `GET /api/admin/daily-report/config` – (nur Rolle admin) aktuelle
+  Konfiguration; der Mail-Service-API-Key selbst wird nie zurückgegeben,
+  nur `mail_service_api_key_set` (bool).
+- `PUT /api/admin/daily-report/config` – (nur Rolle admin) Konfiguration
+  speichern (`enabled`, `report_time`, `recipients`, `mail_service_url`,
+  `mail_service_api_key`, `mail_service_from_name`); wirkt ohne
+  Container-Neustart.
 - `POST /api/admin/daily-report/trigger` – (nur Rolle admin) verschickt den
   täglichen Zusammenfassungs-Report sofort, z.B. zum Testen der
-  Mail-Konfiguration.
+  Mail-Konfiguration, unabhängig vom "Aktiv"-Schalter.
 
 ## Tests
 
@@ -677,6 +684,14 @@ Ebene der Aggregations-Funktionen als auch End-to-End über die echten API-
 Endpunkte getestet, anhand echter, per `debug_live.py` ausgelesener
 Rohwerte.
 
+Der tägliche Mail-Report (siehe oben) ist ebenfalls End-to-End getestet:
+Berechnung des nächsten Sendezeitpunkts, "aktiv/erreichbar"-Status je
+Wechselrichter, Text-Format der Mail, dass ein fehlgeschlagener Mailversand
+abgefangen wird statt die App zu beeinträchtigen, sowie die komplett über
+die Datenbank editierbare Konfiguration (Persistenz, Umgebungsvariablen nur
+als Fallback, der Mail-Service-API-Key wird nie im Klartext an das
+Frontend zurückgegeben) inklusive der zugehörigen Admin-Endpunkte.
+
 ### Frontend-Tests
 
 Das Dashboard-JavaScript (`frontend/app.js`) ist mit leichtgewichtigen,
@@ -709,44 +724,45 @@ bereits erzielt haben. Der Versand läuft über den separaten zentralen
 Mail-Service [broercon/Mailserver](https://github.com/broercon/Mailserver)
 (`POST /send`), nicht über einen eigenen SMTP-Versand in dieser App.
 
-### Einrichtung
+### Einrichtung über die Admin-Oberfläche (empfohlen)
 
-1. Den Mail-Service (Mailserver-Repo) aufsetzen und dort einen eigenen
-   API-Key für diese Anwendung unter `API_KEYS` vergeben (siehe dessen
-   README).
-2. In `.env` dieser App setzen:
+Als Nutzer mit Rolle **admin** oben rechts auf **"Mail-Report"** klicken.
+Dort lassen sich vollständig über die Weboberfläche einstellen – ohne
+Server-/Umgebungsvariablen-Zugriff:
 
-   ```
-   DAILY_REPORT_ENABLED=true
-   DAILY_REPORT_TIME=19:00
-   DAILY_REPORT_RECIPIENTS=deine-adresse@example.com
-   MAIL_SERVICE_URL=http://<host-des-mail-service>:8080/send
-   MAIL_SERVICE_API_KEY=<der-fuer-diese-App-vergebene-Key>
-   ```
+- Aktiv/inaktiv
+- Uhrzeit
+- Empfänger-Adresse(n) (kommagetrennt, beliebig viele)
+- Mail-Service-URL (`POST /send`-Endpunkt des Mailserver-Repos)
+- Mail-Service API-Key (muss einem der dort unter `API_KEYS` vergebenen
+  Keys entsprechen; ein bereits gespeicherter Key bleibt beim Speichern
+  erhalten, wenn das Feld leer gelassen wird – er wird aus Sicherheitsgründen
+  nie wieder im Klartext angezeigt)
+- Absender-Anzeigename (optional)
 
-   Da Mailserver und dieser Monitor üblicherweise zwei getrennte
-   `docker-compose`-Projekte sind, muss `MAIL_SERVICE_URL` von diesem
-   Container aus erreichbar sein. Zwei Möglichkeiten:
-   - Einfach: die LAN-IP oder den Hostnamen des Servers verwenden, auf dem
-     der Mail-Service läuft, plus dessen veröffentlichten Port (Default
-     `8080`) – z.B. `http://192.168.178.50:8080/send`.
-   - Alternativ: beide Compose-Projekte einem gemeinsamen externen
-     Docker-Netzwerk beitreten lassen und dann den Container-Namen
-     (`http://mail-api:8080/send`) verwenden.
-3. Container neu starten (`docker compose up -d --force-recreate`).
+Über **"Testmail jetzt senden"** lässt sich die Konfiguration sofort prüfen,
+unabhängig vom Uhrzeit-Zeitpunkt und auch wenn "Aktiv" noch nicht gesetzt
+ist. Änderungen wirken sofort, ohne den Container neu zu starten.
 
-### Testen ohne auf die Uhrzeit zu warten
+Da Mailserver und dieser Monitor üblicherweise zwei getrennte
+`docker-compose`-Projekte sind, muss die Mail-Service-URL von diesem
+Container aus erreichbar sein. Zwei Möglichkeiten:
+- Einfach: die LAN-IP oder den Hostnamen des Servers verwenden, auf dem
+  der Mail-Service läuft, plus dessen veröffentlichten Port (Default
+  `8080`) – z.B. `http://192.168.178.50:8080/send`.
+- Alternativ: beide Compose-Projekte einem gemeinsamen externen
+  Docker-Netzwerk beitreten lassen und dann den Container-Namen
+  (`http://mail-api:8080/send`) verwenden.
 
-```bash
-curl -X POST -b cookies.txt https://<dein-host>/api/admin/daily-report/trigger
-```
+### Alternative: Einrichtung über Umgebungsvariablen
 
-(Erfordert einen eingeloggten Admin-Nutzer, siehe Abschnitt "API" oben.)
-Antwort und aktueller Stand lassen sich zusätzlich jederzeit abfragen:
-
-```bash
-curl -b cookies.txt https://<dein-host>/api/admin/daily-report/status
-```
+Wer die Admin-Oberfläche nicht nutzen möchte, kann stattdessen `.env`
+befüllen (siehe `.env.example`: `DAILY_REPORT_ENABLED`, `DAILY_REPORT_TIME`,
+`DAILY_REPORT_RECIPIENTS`, `MAIL_SERVICE_URL`, `MAIL_SERVICE_API_KEY`,
+`MAIL_SERVICE_FROM_NAME`) und den Container neu starten. Diese Werte dienen
+nur als Erstbefüllung: Sobald einmal über die Admin-Oberfläche gespeichert
+wurde, hat die dortige (in der Datenbank abgelegte) Konfiguration Vorrang
+vor den Umgebungsvariablen.
 
 ### Was zählt als "aktiv"?
 
@@ -755,12 +771,6 @@ drei Poll-Intervalle (mindestens aber 120s) tatsächlich einen Messwert von
 ihm erhalten hat (siehe `app/daily_summary.py:device_online_map`). Ein
 Gerät, das seit Containerstart noch nie erfolgreich erreicht wurde, gilt
 als nicht aktiv.
-
-### Deaktivieren
-
-`DAILY_REPORT_ENABLED=false` setzen, oder `DAILY_REPORT_RECIPIENTS`/
-`MAIL_SERVICE_URL` leer lassen – die App startet dann ganz normal, der
-Report-Scheduler bleibt aber inaktiv (siehe Log-Warnung beim Start).
 
 ## Grenzen / mögliche Erweiterungen
 

@@ -30,6 +30,7 @@ from .daily_report import (
     generate_and_send_daily_report,
     get_daily_report_status,
 )
+from .daily_report_config import InvalidReportTime, get_config as get_daily_report_config, update_config as update_daily_report_config
 from .daily_summary import build_daily_summaries
 from .database import SessionLocal, init_db
 from .models import Reading, User
@@ -41,6 +42,8 @@ from .schemas import (
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
+    DailyReportConfigIn,
+    DailyReportConfigOut,
     DailyReportStatusOut,
     DailyReportTriggerOut,
     DailyTotalsOut,
@@ -348,20 +351,64 @@ def get_daily_report_status_endpoint(
     vollstaendig), die eingestellte Uhrzeit/Empfaenger, sowie Zeitpunkt und
     Ausgang (Erfolg/Fehler) des letzten Versands - ohne dafuer die
     Container-Logs durchsuchen zu muessen (analog zu
-    /api/admin/import-history/status)."""
+    /api/admin/import-history/status). Fuer alle angemeldeten Nutzer
+    sichtbar (nicht nur admin) - die Konfiguration selbst
+    (GET/PUT .../config) ist dagegen admin-only."""
+    cfg = get_daily_report_config()
     status_data = get_daily_report_status()
     return DailyReportStatusOut(
-        enabled=bool(
-            settings.daily_report_enabled
-            and settings.daily_report_recipients
-            and settings.mail_service_url
-        ),
-        scheduled_time=settings.daily_report_time,
-        recipients=settings.daily_report_recipients,
+        enabled=bool(cfg["enabled"] and cfg["recipients"] and cfg["mail_service_url"]),
+        scheduled_time=cfg["report_time"],
+        recipients=cfg["recipients"],
         last_sent_at=status_data["last_sent_at"],
         last_status=status_data["last_status"],
         last_message=status_data["last_message"],
     )
+
+
+def _daily_report_config_out(cfg: dict) -> DailyReportConfigOut:
+    return DailyReportConfigOut(
+        enabled=cfg["enabled"],
+        report_time=cfg["report_time"],
+        recipients=cfg["recipients"],
+        mail_service_url=cfg["mail_service_url"],
+        mail_service_api_key_set=bool(cfg["mail_service_api_key"]),
+        mail_service_from_name=cfg["mail_service_from_name"],
+    )
+
+
+@app.get("/api/admin/daily-report/config", response_model=DailyReportConfigOut)
+def get_daily_report_config_endpoint(
+    _admin: User = Depends(auth.require_admin),
+) -> DailyReportConfigOut:
+    """Aktuelle Konfiguration des taeglichen Mail-Reports (nur Rolle admin -
+    enthaelt u.a. die Empfaenger-Adressen). Der Mail-Service-API-Key selbst
+    wird nie zurueckgegeben, nur ob einer hinterlegt ist."""
+    return _daily_report_config_out(get_daily_report_config())
+
+
+@app.put("/api/admin/daily-report/config", response_model=DailyReportConfigOut)
+def put_daily_report_config_endpoint(
+    payload: DailyReportConfigIn, _admin: User = Depends(auth.require_admin)
+) -> DailyReportConfigOut:
+    """Speichert die Konfiguration des taeglichen Mail-Reports (nur Rolle
+    admin) - komplett ueber die Admin-Oberflaeche editierbar (aktiv/inaktiv,
+    Uhrzeit, Empfaenger, Mail-Service-URL/API-Key/Absendername), damit dafuer
+    kein Zugriff auf Server/Umgebungsvariablen mehr noetig ist. Wirkt ohne
+    Container-Neustart (siehe daily_report.DailyReportScheduler, das die
+    Konfiguration bei jedem Zyklus neu liest)."""
+    try:
+        cfg = update_daily_report_config(
+            enabled=payload.enabled,
+            report_time=payload.report_time,
+            recipients=payload.recipients,
+            mail_service_url=payload.mail_service_url,
+            mail_service_api_key=payload.mail_service_api_key,
+            mail_service_from_name=payload.mail_service_from_name,
+        )
+    except InvalidReportTime as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _daily_report_config_out(cfg)
 
 
 @app.post("/api/admin/daily-report/trigger", response_model=DailyReportTriggerOut)
@@ -369,8 +416,9 @@ async def post_trigger_daily_report(
     _admin: User = Depends(auth.require_admin),
 ) -> DailyReportTriggerOut:
     """Verschickt den taeglichen Zusammenfassungs-Report sofort (z.B. um die
-    Mail-Konfiguration zu testen, ohne bis zur eingestellten Uhrzeit zu
-    warten). Laeuft synchron zum Request - ein einzelner Mailversand dauert
+    gerade gespeicherte Mail-Konfiguration zu testen, ohne bis zur
+    eingestellten Uhrzeit zu warten, und unabhaengig vom "Aktiv"-Schalter).
+    Laeuft synchron zum Request - ein einzelner Mailversand dauert
     typischerweise deutlich unter einer Sekunde, ein eigener
     Hintergrund-Task (wie bei /api/admin/import-history) ist dafuer nicht
     noetig."""

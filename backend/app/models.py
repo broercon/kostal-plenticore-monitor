@@ -61,6 +61,27 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class DailyReportSettings(Base):
+    """Über die Admin-Oberfläche editierbare Konfiguration des täglichen
+    Mail-Reports (siehe app/daily_report_config.py) - Ergänzung/Override zu
+    den Umgebungsvariablen in config.py. Bewusst eine einzelne Zeile
+    (id=1): es gibt nur eine app-weite Konfiguration, keine pro Nutzer."""
+
+    __tablename__ = "daily_report_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    report_time: Mapped[str] = mapped_column(String(5), nullable=False, default="19:00")
+    # Kommagetrennte Liste von Empfänger-Adressen, als einfacher String
+    # gespeichert (kein eigenes Tabellen-Modell nötig für so eine kleine
+    # Liste, siehe daily_report_config._row_to_dict für das Parsing).
+    recipients: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    mail_service_url: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    mail_service_api_key: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    mail_service_from_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Session(Base):
     """Angemeldete Sitzung (Cookie-Token -> Benutzer), serverseitig
     gespeichert, damit sie sich gezielt invalidieren laesst (Logout,

@@ -1,12 +1,15 @@
 """Tests fuer den taeglichen Zusammenfassungs-Report per Mail
-(app/daily_report.py, app/daily_summary.py, app/report_mailer.py).
+(app/daily_report.py, app/daily_report_config.py, app/daily_summary.py,
+app/report_mailer.py).
 
 Deckt ab: Berechnung des naechsten Sendezeitpunkts (next_run_at), den
 "aktiv/erreichbar"-Status je Wechselrichter (device_online_map), das
 Text-Format der Mail (build_report_text), dass ein fehlgeschlagener
 Mailversand abgefangen und in _state vermerkt wird statt den Aufrufer
-crashen zu lassen (generate_and_send_daily_report), sowie die beiden neuen
-Admin-Endpunkte End-to-End ueber den FastAPI-TestClient.
+crashen zu lassen (generate_and_send_daily_report), die komplett ueber die
+Datenbank editierbare Konfiguration (daily_report_config: Persistenz,
+Env-Var-Fallback, API-Key wird nie im Klartext preisgegeben) sowie die
+neuen Admin-Endpunkte End-to-End ueber den FastAPI-TestClient.
 """
 from __future__ import annotations
 
@@ -14,9 +17,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import pytest
-
 from app import daily_report
+from app.daily_report_config import InvalidReportTime, get_config, parse_report_time, update_config
 from app.daily_summary import device_online_map
 from app.report_mailer import ReportMailError
 from app.schemas import SummaryOut
@@ -53,6 +55,23 @@ def test_next_run_at_rolls_over_when_exactly_at_target_time():
     now = local_now.astimezone(timezone.utc)
     target = daily_report.next_run_at(now, hour=19, minute=0, tz_name="Europe/Berlin")
     assert target.astimezone(TZ).date() == datetime(2026, 7, 15).date()
+
+
+# --- parse_report_time -----------------------------------------------------
+
+
+def test_parse_report_time_accepts_valid_format():
+    assert parse_report_time("19:00") == (19, 0)
+    assert parse_report_time("07:05") == (7, 5)
+
+
+def test_parse_report_time_rejects_invalid_format():
+    for bad in ["19", "19:60", "25:00", "abc", "19:00:00"]:
+        try:
+            parse_report_time(bad)
+            assert False, f"{bad!r} haette InvalidReportTime auslösen muessen"
+        except InvalidReportTime:
+            pass
 
 
 # --- device_online_map ----------------------------------------------------
@@ -162,34 +181,107 @@ def test_build_report_text_without_multiple_inverters_has_no_combined_line():
     assert "1 von 1 Wechselrichter(n) aktiv." in body
 
 
+# --- daily_report_config: Persistenz, Env-Fallback, API-Key-Geheimhaltung --
+
+
+def test_get_config_falls_back_to_env_defaults_when_nothing_saved(client):
+    cfg = get_config()
+    # conftest.py setzt keine DAILY_REPORT_*-Env-Variablen, daher die
+    # Defaults aus config.py.
+    assert cfg["report_time"] == "19:00"
+    assert cfg["recipients"] == []
+    assert cfg["mail_service_api_key"] == ""
+
+
+def test_update_config_persists_and_get_config_reflects_it(client):
+    saved = update_config(
+        enabled=True,
+        report_time="21:30",
+        recipients=["a@example.com", "b@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key="secret-key-123",
+        mail_service_from_name="Test-Anlage",
+    )
+    assert saved["report_time"] == "21:30"
+    assert saved["recipients"] == ["a@example.com", "b@example.com"]
+    assert saved["mail_service_api_key"] == "secret-key-123"
+
+    reloaded = get_config()
+    assert reloaded == saved
+
+
+def test_update_config_with_blank_api_key_keeps_previous_value(client):
+    update_config(
+        enabled=True,
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key="original-key",
+        mail_service_from_name="",
+    )
+    updated = update_config(
+        enabled=True,
+        report_time="20:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key=None,  # unveraendert lassen
+        mail_service_from_name="",
+    )
+    assert updated["mail_service_api_key"] == "original-key"
+    assert updated["report_time"] == "20:00"
+
+
+def test_update_config_rejects_invalid_time(client):
+    try:
+        update_config(
+            enabled=True,
+            report_time="nicht-valide",
+            recipients=[],
+            mail_service_url="",
+            mail_service_api_key=None,
+            mail_service_from_name="",
+        )
+        assert False, "haette InvalidReportTime auslösen muessen"
+    except InvalidReportTime:
+        pass
+
+
 # --- generate_and_send_daily_report ----------------------------------------
 
 
-def test_generate_and_send_daily_report_records_success(monkeypatch):
+def test_generate_and_send_daily_report_records_success(client, monkeypatch):
     sent = {}
 
-    async def fake_send(subject, body, *, html=False):
+    async def fake_send(subject, body, *, cfg, html=False):
         sent["subject"] = subject
         sent["body"] = body
+        sent["cfg"] = cfg
 
+    update_config(
+        enabled=True,
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key=None,
+        mail_service_from_name="",
+    )
     monkeypatch.setattr(daily_report, "build_daily_summaries", lambda: [
         SummaryOut(device_id="wr1", device_name="WR 1", yield_day_kwh=1.0)
     ])
     monkeypatch.setattr(daily_report, "device_online_map", lambda now=None: {"wr1": True})
     monkeypatch.setattr(daily_report, "send_report_mail", fake_send)
-    monkeypatch.setattr(daily_report.settings, "daily_report_recipients", ["a@example.com"])
 
     result = asyncio.run(daily_report.generate_and_send_daily_report())
 
     assert result["sent"] is True
-    assert "subject" in sent
+    assert sent["cfg"]["recipients"] == ["a@example.com"]
     status = daily_report.get_daily_report_status()
     assert status["last_status"] == "ok"
     assert status["last_sent_at"] is not None
 
 
-def test_generate_and_send_daily_report_records_failure_without_raising(monkeypatch):
-    async def failing_send(subject, body, *, html=False):
+def test_generate_and_send_daily_report_records_failure_without_raising(client, monkeypatch):
+    async def failing_send(subject, body, *, cfg, html=False):
         raise ReportMailError("Mail-Service nicht erreichbar: boom")
 
     monkeypatch.setattr(daily_report, "build_daily_summaries", lambda: [])
@@ -204,6 +296,32 @@ def test_generate_and_send_daily_report_records_failure_without_raising(monkeypa
     assert status["last_status"] == "error"
 
 
+def test_generate_and_send_daily_report_ignores_enabled_flag(client, monkeypatch):
+    """generate_and_send_daily_report() wird auch vom manuellen
+    Trigger-Endpoint genutzt - der soll unabhaengig vom "Aktiv"-Schalter
+    funktionieren (zum Testen einer noch nicht aktivierten Konfiguration)."""
+    sent = {}
+
+    async def fake_send(subject, body, *, cfg, html=False):
+        sent["called"] = True
+
+    update_config(
+        enabled=False,  # bewusst deaktiviert
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key=None,
+        mail_service_from_name="",
+    )
+    monkeypatch.setattr(daily_report, "build_daily_summaries", lambda: [])
+    monkeypatch.setattr(daily_report, "device_online_map", lambda now=None: {})
+    monkeypatch.setattr(daily_report, "send_report_mail", fake_send)
+
+    result = asyncio.run(daily_report.generate_and_send_daily_report())
+    assert result["sent"] is True
+    assert sent.get("called") is True
+
+
 # --- Admin-Endpunkte (End-to-End ueber TestClient) -------------------------
 
 
@@ -215,22 +333,27 @@ def _login_admin(client) -> None:
     assert res.status_code == 200
 
 
+def _login_betreiber(client, username="betreiber-report-test") -> None:
+    make_user(username, "pw", role="betreiber")
+    res = client.post("/api/auth/login", json={"username": username, "password": "pw"})
+    assert res.status_code == 200
+
+
 def test_daily_report_status_requires_login(client):
     res = client.get("/api/admin/daily-report/status")
     assert res.status_code == 401
 
 
-def test_daily_report_status_reflects_configuration(client, monkeypatch):
-    from app import main as main_module
-
-    monkeypatch.setattr(main_module.settings, "daily_report_enabled", True)
-    monkeypatch.setattr(main_module.settings, "daily_report_recipients", ["a@example.com"])
-    monkeypatch.setattr(main_module.settings, "mail_service_url", "http://mail-api:8080/send")
-    monkeypatch.setattr(main_module.settings, "daily_report_time", "19:00")
-
-    make_user("betreiber-report-test", "pw", role="betreiber")
-    client.post("/api/auth/login", json={"username": "betreiber-report-test", "password": "pw"})
-
+def test_daily_report_status_visible_to_any_logged_in_user(client):
+    update_config(
+        enabled=True,
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key=None,
+        mail_service_from_name="",
+    )
+    _login_betreiber(client)
     res = client.get("/api/admin/daily-report/status")
     assert res.status_code == 200
     body = res.json()
@@ -239,9 +362,76 @@ def test_daily_report_status_reflects_configuration(client, monkeypatch):
     assert body["recipients"] == ["a@example.com"]
 
 
+def test_daily_report_config_requires_admin_role(client):
+    _login_betreiber(client, "betreiber-config-test")
+    assert client.get("/api/admin/daily-report/config").status_code == 403
+    assert client.put("/api/admin/daily-report/config", json={
+        "enabled": True, "report_time": "19:00",
+    }).status_code == 403
+
+
+def test_daily_report_config_get_never_exposes_api_key(client):
+    update_config(
+        enabled=True,
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key="top-secret",
+        mail_service_from_name="",
+    )
+    _login_admin(client)
+    res = client.get("/api/admin/daily-report/config")
+    assert res.status_code == 200
+    body = res.json()
+    assert "mail_service_api_key" not in body
+    assert body["mail_service_api_key_set"] is True
+    assert "top-secret" not in res.text
+
+
+def test_daily_report_config_put_saves_all_fields_including_recipients(client):
+    _login_admin(client)
+    res = client.put("/api/admin/daily-report/config", json={
+        "enabled": True,
+        "report_time": "18:45",
+        "recipients": ["betreiber1@example.com", "zweite@example.com"],
+        "mail_service_url": "http://192.168.178.50:8080/send",
+        "mail_service_api_key": "brand-new-key",
+        "mail_service_from_name": "Solaranlage",
+    })
+    assert res.status_code == 200
+    body = res.json()
+    assert body["report_time"] == "18:45"
+    assert body["recipients"] == ["betreiber1@example.com", "zweite@example.com"]
+    assert body["mail_service_url"] == "http://192.168.178.50:8080/send"
+    assert body["mail_service_api_key_set"] is True
+
+    # Persistiert - erneutes Abrufen zeigt denselben Stand.
+    res2 = client.get("/api/admin/daily-report/config")
+    assert res2.json()["recipients"] == ["betreiber1@example.com", "zweite@example.com"]
+
+
+def test_daily_report_config_put_rejects_invalid_time(client):
+    _login_admin(client)
+    res = client.put("/api/admin/daily-report/config", json={
+        "enabled": True,
+        "report_time": "25:99",
+        "recipients": [],
+    })
+    assert res.status_code == 422  # Pydantic-Validierung im Schema greift schon
+
+
+def test_daily_report_config_put_rejects_invalid_recipient(client):
+    _login_admin(client)
+    res = client.put("/api/admin/daily-report/config", json={
+        "enabled": True,
+        "report_time": "19:00",
+        "recipients": ["keine-email-adresse"],
+    })
+    assert res.status_code == 422
+
+
 def test_daily_report_trigger_forbidden_for_betreiber(client):
-    make_user("betreiber-trigger-test", "pw", role="betreiber")
-    client.post("/api/auth/login", json={"username": "betreiber-trigger-test", "password": "pw"})
+    _login_betreiber(client, "betreiber-trigger-test")
     res = client.post("/api/admin/daily-report/trigger")
     assert res.status_code == 403
 
@@ -249,12 +439,17 @@ def test_daily_report_trigger_forbidden_for_betreiber(client):
 def test_daily_report_trigger_sends_via_mocked_mailer(client, monkeypatch):
     from app import daily_report as daily_report_module
 
-    async def fake_send(subject, body, *, html=False):
+    async def fake_send(subject, body, *, cfg, html=False):
         fake_send.called_with = (subject, body)
 
     monkeypatch.setattr(daily_report_module, "send_report_mail", fake_send)
-    monkeypatch.setattr(
-        daily_report_module.settings, "daily_report_recipients", ["a@example.com"]
+    update_config(
+        enabled=True,
+        report_time="19:00",
+        recipients=["a@example.com"],
+        mail_service_url="http://mail-api:8080/send",
+        mail_service_api_key=None,
+        mail_service_from_name="",
     )
 
     _login_admin(client)

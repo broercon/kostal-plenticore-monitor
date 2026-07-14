@@ -391,3 +391,19 @@ canvas {
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
+
+/* Checkbox-Zeile im Modal-Formular (z.B. Mail-Report "Aktiv"-Schalter) -
+   .modal label/.modal input stretchen sonst ueber die volle Breite
+   (flex-direction: column), was fuer eine Checkbox nicht passt. */
+.modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.modal-checkbox input[type="checkbox"] {
+  width: auto;
+}

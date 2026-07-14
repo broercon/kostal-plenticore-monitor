@@ -15,6 +15,7 @@
     <span id="user-info" class="muted"></span>
     <button id="change-password-btn" type="button">Passwort ändern</button>
     <button id="admin-panel-btn" type="button" class="hidden">Benutzerverwaltung</button>
+    <button id="daily-report-panel-btn" type="button" class="hidden">Mail-Report</button>
     <button id="logout-btn" type="button">Abmelden</button>
   </div>
 </header>
@@ -58,6 +59,54 @@
     <p class="muted" id="admin-reset-result"></p>
     <div class="modal-actions">
       <button type="button" id="admin-panel-close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mail-Report-Panel: nur sichtbar/nutzbar fuer Rolle "admin"
+     (server-seitig ueber /api/admin/daily-report/... zusaetzlich
+     abgesichert). Komplette Konfiguration des taeglichen
+     Zusammenfassungs-Reports (siehe README "Taeglicher Mail-Report") -
+     inkl. Empfaenger-Adresse(n) - ueber diese Oberflaeche, ohne dass dafuer
+     Server-/Umgebungsvariablen-Zugriff noetig waere. -->
+<div id="daily-report-overlay" class="modal-overlay hidden">
+  <div class="modal">
+    <h2>Täglicher Mail-Report</h2>
+    <p class="muted">Verschickt einmal täglich zur eingestellten Uhrzeit eine
+      Zusammenfassung (aktive Wechselrichter, PV-Ertrag je Gerät + Summe) über
+      den zentralen Mail-Service.</p>
+    <form id="daily-report-form">
+      <label class="modal-checkbox">
+        <input type="checkbox" id="dr-enabled" />
+        Täglichen Report aktivieren
+      </label>
+
+      <label for="dr-time">Uhrzeit</label>
+      <input type="time" id="dr-time" required />
+
+      <label for="dr-recipients">Empfänger (kommagetrennt)</label>
+      <input type="text" id="dr-recipients" placeholder="a@example.com, b@example.com" />
+
+      <label for="dr-url">Mail-Service-URL</label>
+      <input type="text" id="dr-url" placeholder="http://mail-api:8080/send" />
+
+      <label for="dr-api-key">Mail-Service API-Key</label>
+      <input type="password" id="dr-api-key" autocomplete="off" />
+      <p class="muted" id="dr-api-key-hint"></p>
+
+      <label for="dr-from-name">Absender-Anzeigename (optional)</label>
+      <input type="text" id="dr-from-name" placeholder="Kostal Plenticore Monitor" />
+
+      <div class="modal-actions">
+        <button type="button" id="dr-trigger-btn">Testmail jetzt senden</button>
+        <button type="submit" id="dr-save">Speichern</button>
+      </div>
+      <p class="login-error muted" id="dr-save-result"></p>
+      <p class="muted" id="dr-trigger-result"></p>
+    </form>
+    <p class="muted" id="dr-status-text">–</p>
+    <div class="modal-actions">
+      <button type="button" id="daily-report-close">Schließen</button>
     </div>
   </div>
 </div>

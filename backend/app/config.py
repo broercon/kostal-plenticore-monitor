@@ -167,10 +167,15 @@ class Settings:
         if self.daily_report_enabled and (
             not self.daily_report_recipients or not self.mail_service_url
         ):
-            logger.warning(
-                "DAILY_REPORT_ENABLED=true, aber DAILY_REPORT_RECIPIENTS und/oder "
-                "MAIL_SERVICE_URL fehlen - der tägliche Mail-Report bleibt "
-                "inaktiv, bis beides gesetzt ist."
+            logger.info(
+                "DAILY_REPORT_RECIPIENTS und/oder MAIL_SERVICE_URL sind nicht "
+                "über Umgebungsvariablen gesetzt - der tägliche Mail-Report "
+                "bleibt inaktiv, bis das entweder hier oder bequemer über die "
+                "Admin-Oberfläche (Button 'Mail-Report', GET/PUT "
+                "/api/admin/daily-report/config) nachgeholt wird. Diese Werte "
+                "sind nur die Erstbefüllung - einmal über die Admin-Oberfläche "
+                "gespeichert, hat die Datenbank Vorrang vor diesen "
+                "Umgebungsvariablen."
             )
 
         self.inverters: list[InverterConfig] = []

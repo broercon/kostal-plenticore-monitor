@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class DeviceOut(BaseModel):
@@ -192,3 +192,49 @@ class DailyReportStatusOut(BaseModel):
 class DailyReportTriggerOut(BaseModel):
     started: bool
     message: str
+
+
+class DailyReportConfigOut(BaseModel):
+    enabled: bool
+    report_time: str  # "HH:MM"
+    recipients: list[str]
+    mail_service_url: str
+    # Der API-Key selbst wird nie ans Frontend zurückgegeben (siehe
+    # daily_report_config.update_config) - nur, ob überhaupt einer
+    # hinterlegt ist.
+    mail_service_api_key_set: bool
+    mail_service_from_name: str
+
+
+class DailyReportConfigIn(BaseModel):
+    enabled: bool
+    report_time: str
+    recipients: list[str] = []
+    mail_service_url: str = ""
+    # None oder leer = vorhandenen API-Key beibehalten (siehe
+    # daily_report_config.update_config).
+    mail_service_api_key: str | None = None
+    mail_service_from_name: str = ""
+
+    @field_validator("report_time")
+    @classmethod
+    def _valid_time_format(cls, v: str) -> str:
+        parts = v.split(":")
+        if len(parts) != 2:
+            raise ValueError("Uhrzeit muss im Format HH:MM sein")
+        try:
+            hour, minute = int(parts[0]), int(parts[1])
+        except ValueError as exc:
+            raise ValueError("Uhrzeit muss im Format HH:MM sein") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("Uhrzeit muss zwischen 00:00 und 23:59 liegen")
+        return v
+
+    @field_validator("recipients")
+    @classmethod
+    def _clean_recipients(cls, v: list[str]) -> list[str]:
+        cleaned = [addr.strip() for addr in v if addr.strip()]
+        for addr in cleaned:
+            if "@" not in addr:
+                raise ValueError(f"Keine gültige E-Mail-Adresse: {addr!r}")
+        return cleaned
