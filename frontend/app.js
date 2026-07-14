@@ -358,7 +358,7 @@ async function loadDevices() {
     for (const btn of container.querySelectorAll("button")) {
       btn.classList.toggle("active", btn.dataset.deviceId === state.selectedDeviceId);
     }
-    updateFeedInVisibility();
+    updatePvYieldVisibility();
   }
 
   container.appendChild(
@@ -375,7 +375,7 @@ async function loadDevices() {
     state.selectedDeviceId = btn.dataset.deviceId;
     applyActiveTab();
     refreshAll({ showLoading: true });
-    refreshFeedInSummary().catch(console.error);
+    refreshPvYieldSummary().catch(console.error);
   });
 }
 
@@ -1182,27 +1182,28 @@ function setDashboardLoading(on) {
 // nicht faelschlich haengen, wenn eine aeltere Abfrage spaeter fertig wird.
 let loadingSeq = 0;
 
-// Einspeisung (kWh) je Zeitraum in der Leiste oben. Hausweite Groesse und
-// daher nur im Gesamt-Tab ("Alle (Summe)") sinnvoll - fuer einen einzelnen
-// Wechselrichter wird die Leiste ausgeblendet. Geladen wird beim Start, beim
-// Zurueckwechseln auf den Gesamt-Tab und periodisch.
-const FEEDIN_PERIOD_UNKNOWN = "–";
+// PV-Ertrag (kWh) je Zeitraum in der Leiste oben. Hausweite Groesse (Summe
+// ueber alle Wechselrichter) und daher nur im Gesamt-Tab ("Alle (Summe)")
+// sinnvoll - fuer einen einzelnen Wechselrichter wird die Leiste
+// ausgeblendet. Geladen wird beim Start, beim Zurueckwechseln auf den
+// Gesamt-Tab und periodisch.
+const PV_PERIOD_UNKNOWN = "–";
 
-function updateFeedInVisibility() {
+function updatePvYieldVisibility() {
   const show = state.selectedDeviceId === "";
-  const section = el("feedin-summary");
+  const section = el("pv-yield-summary");
   if (section) section.classList.toggle("hidden", !show);
   return show;
 }
 
-async function refreshFeedInSummary() {
-  if (!updateFeedInVisibility()) return; // Einzel-WR: nichts anzeigen/laden
-  const data = await fetchJson("/api/readings/feed-in-summary");
+async function refreshPvYieldSummary() {
+  if (!updatePvYieldVisibility()) return; // Einzel-WR: nichts anzeigen/laden
+  const data = await fetchJson("/api/readings/pv-yield-summary");
   const byKey = {};
   for (const period of data.periods) byKey[period.key] = period;
-  for (const cell of document.querySelectorAll("[data-feedin]")) {
-    const period = byKey[cell.dataset.feedin];
-    cell.textContent = period ? fmtKwh(period.kwh) : FEEDIN_PERIOD_UNKNOWN;
+  for (const cell of document.querySelectorAll("[data-pvyield]")) {
+    const period = byKey[cell.dataset.pvyield];
+    cell.textContent = period ? fmtKwh(period.kwh) : PV_PERIOD_UNKNOWN;
     if (period) cell.title = `${period.from_date} – ${period.to_date}`;
   }
 }
@@ -1242,7 +1243,7 @@ async function init() {
   setupHourlyCompareControls();
   setupImportTrigger();
   await refreshAll({ showLoading: true });
-  refreshFeedInSummary().catch(console.error);
+  refreshPvYieldSummary().catch(console.error);
   setInterval(() => {
     refreshLiveCards().catch(console.error);
     refreshSummaryCards().catch(console.error);
@@ -1251,7 +1252,7 @@ async function init() {
   setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
-  setInterval(() => refreshFeedInSummary().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
 }
 
 init();
