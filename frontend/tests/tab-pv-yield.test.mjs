@@ -1,19 +1,19 @@
-// Tests fuer die Sichtbarkeit der Einspeisungs-Leiste: nur im Gesamt-Tab
+// Tests fuer die Sichtbarkeit der PV-Ertrag-Leiste: nur im Gesamt-Tab
 // ("Alle (Summe)"), nicht fuer einen einzelnen Wechselrichter.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
 
 const isHidden = (document) =>
-  document.getElementById("feedin-summary").classList.contains("hidden");
+  document.getElementById("pv-yield-summary").classList.contains("hidden");
 
-test("Einspeisungs-Leiste ist im Gesamt-Tab sichtbar", async () => {
+test("PV-Ertrag-Leiste ist im Gesamt-Tab sichtbar", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.selectedDeviceId === "");
   assert.equal(isHidden(app.document), false, "im Gesamt-Tab sichtbar");
 });
 
-test("Einspeisungs-Leiste wird fuer einen einzelnen WR ausgeblendet", async () => {
+test("PV-Ertrag-Leiste wird fuer einen einzelnen WR ausgeblendet", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
 
   app.clickTab("WR1");

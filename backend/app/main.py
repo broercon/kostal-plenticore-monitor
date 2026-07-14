@@ -31,7 +31,12 @@ from .daily_report import (
     get_daily_report_status,
 )
 from .daily_report_config import InvalidReportTime, get_config as get_daily_report_config, update_config as update_daily_report_config
-from .daily_summary import build_daily_home_breakdown, build_daily_summaries, build_feed_in_summary
+from .daily_summary import (
+    build_daily_home_breakdown,
+    build_daily_summaries,
+    build_feed_in_summary,
+    build_pv_yield_summary,
+)
 from .database import SessionLocal, init_db
 from .models import Reading, User
 from .poller import poller
@@ -51,6 +56,7 @@ from .schemas import (
     DeviceOut,
     FeedInPeriod,
     FeedInSummaryOut,
+    PvYieldSummaryOut,
     HistoryPoint,
     HourlyPerDeviceOut,
     ImportStatusOut,
@@ -469,6 +475,21 @@ def get_feed_in_summary(_user: User = Depends(auth.get_current_user)) -> FeedInS
     verwendet, damit die Logik nur an einer Stelle gepflegt werden muss.
     """
     return FeedInSummaryOut(periods=build_feed_in_summary())
+
+
+@app.get("/api/readings/pv-yield-summary", response_model=PvYieldSummaryOut)
+def get_pv_yield_summary(_user: User = Depends(auth.get_current_user)) -> PvYieldSummaryOut:
+    """Gesamter PV-Ertrag (kWh) fuer mehrere Zeitraeume: heute, gestern,
+    vorgestern, diese/letzte Woche (Mo-So), dieser/letzter Kalendermonat
+    sowie dieses/letztes Kalenderjahr.
+
+    PV-Ertrag ist die ueber alle Wechselrichter summierte, integrierte
+    PV-Leistung (pv_power_w). Anders als die Einspeisung ist der PV-Ertrag
+    auch in per Logdaten-Import eingespielten Altdaten vorhanden, sodass sich
+    auch vergangene Monate/Jahre fuellen. Ein Zeitraum ganz ohne Daten
+    liefert kwh=None. Berechnung: daily_summary.build_pv_yield_summary().
+    """
+    return PvYieldSummaryOut(periods=build_pv_yield_summary())
 
 
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)

@@ -65,6 +65,8 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { devices: [], buckets: [] };
       case "/api/readings/feed-in-summary":
         return { periods: [] };
+      case "/api/readings/pv-yield-summary":
+        return { periods: [] };
       default:
         return {};
     }

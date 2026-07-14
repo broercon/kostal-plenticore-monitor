@@ -177,12 +177,17 @@ def device_battery_snapshot() -> list[dict]:
     return result
 
 
-def build_feed_in_summary() -> list[FeedInPeriod]:
-    """Gesamte Einspeisung (kWh) für mehrere Zeiträume: heute, gestern,
-    vorgestern, diese/letzte Woche (Mo-So), dieser/letzter Kalendermonat
-    sowie dieses/letztes Kalenderjahr. Siehe main.get_feed_in_summary für
-    die ausführliche Erklärung (hausweite Energiebilanz bei mehreren
-    Wechselrichtern, kwh=None für Zeiträume ganz ohne Daten)."""
+def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
+    """Integrierte Energiemenge (kWh) eines Leistungsfeldes je Zeitraum:
+    heute, gestern, vorgestern, diese/letzte Woche (Mo-So), dieser/letzter
+    Kalendermonat sowie dieses/letztes Kalenderjahr.
+
+    `field` ist das zu integrierende Reading-Feld, z.B. "feed_in_power_w"
+    (Einspeisung) oder "pv_power_w" (PV-Ertrag). Bei mehreren Wechselrichtern
+    wird zuvor auf die hausweite, korrigierte Energiebilanz zusammengefasst
+    (siehe _combined_rows / combine_devices): PV- und Batterieleistung werden
+    dabei ueber alle Geraete summiert, Netzbezug/Einspeisung dagegen aus der
+    Bilanz neu berechnet. Ein Zeitraum ganz ohne Daten liefert kwh=None."""
     tz = ZoneInfo(settings.timezone_name)
     today = datetime.now(tz).date()
     yesterday = today - timedelta(days=1)
@@ -228,7 +233,7 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
 
     per_day = {
         d["date"]: d["kwh"]
-        for d in daily_kwh_totals(rows, "feed_in_power_w", settings.timezone_name)
+        for d in daily_kwh_totals(rows, field, settings.timezone_name)
     }
 
     def sum_range(start, end) -> float | None:
@@ -252,6 +257,16 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
         )
         for key, start, end in periods
     ]
+
+
+def build_feed_in_summary() -> list[FeedInPeriod]:
+    """Einspeisung (kWh) je Zeitraum - fuer den Mail-Report."""
+    return build_energy_period_summary("feed_in_power_w")
+
+
+def build_pv_yield_summary() -> list[FeedInPeriod]:
+    """PV-Ertrag (kWh) je Zeitraum - fuer die Dashboard-Uebersicht."""
+    return build_energy_period_summary("pv_power_w")
 
 
 def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:

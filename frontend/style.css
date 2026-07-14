@@ -258,9 +258,9 @@ canvas {
   }
 }
 
-/* ---- Einspeisung-Uebersicht: schlanke Leiste statt grosser Tabelle ---- */
+/* ---- PV-Ertrag-Uebersicht: schlanke Leiste statt grosser Tabelle ---- */
 
-.feedin-summary {
+.pvyield-summary {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -272,7 +272,7 @@ canvas {
   margin-bottom: 16px;
 }
 
-.feedin-eyebrow {
+.pvyield-eyebrow {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -281,33 +281,33 @@ canvas {
   white-space: nowrap;
 }
 
-.feedin-items {
+.pvyield-items {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px 18px;
 }
 
-.feedin-item {
+.pvyield-item {
   display: flex;
   align-items: baseline;
   gap: 6px;
   white-space: nowrap;
 }
 
-.feedin-label {
+.pvyield-label {
   font-size: 0.72rem;
   color: var(--muted);
 }
 
-.feedin-value {
+.pvyield-value {
   font-size: 0.95rem;
   font-weight: 600;
-  color: var(--accent-green);
+  color: var(--accent-blue);
   font-variant-numeric: tabular-nums;
 }
 
-.feedin-divider {
+.pvyield-divider {
   align-self: stretch;
   width: 1px;
   min-height: 1.2em;

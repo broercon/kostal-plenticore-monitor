@@ -180,6 +180,10 @@ class FeedInSummaryOut(BaseModel):
     periods: list[FeedInPeriod]
 
 
+class PvYieldSummaryOut(BaseModel):
+    periods: list[FeedInPeriod]
+
+
 class DailyReportStatusOut(BaseModel):
     enabled: bool
     scheduled_time: str  # "HH:MM"
