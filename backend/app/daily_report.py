@@ -3,8 +3,8 @@
 Verschickt einmal am Tag (konfigurierbare Uhrzeit) eine gestaltete
 HTML-Mail mit einem Schnappschuss der Anlage: welche Wechselrichter
 aktiv/erreichbar waren, wie viel PV-Ertrag sie (einzeln + in Summe) an
-diesem Tag bereits erzielt haben, die Einspeisung über mehrere Zeiträume
-(wie die "Einspeisung"-Tabelle im Dashboard), der heutige Hausverbrauch
+diesem Tag bereits erzielt haben, den PV-Ertrag über mehrere Zeiträume
+(wie die "PV-Ertrag"-Tabelle im Dashboard), der heutige Hausverbrauch
 aufgeschlüsselt nach PV/Batterie/Netz (wie das "Tagesverbrauch"-Diagramm)
 sowie der aktuelle Batterie-Ladestand – verschickt an die konfigurierten
 Empfänger über den zentralen Mail-Service (siehe broercon/Mailserver).
@@ -34,7 +34,7 @@ from .daily_report_config import InvalidReportTime, get_config, parse_report_tim
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
-    build_feed_in_summary,
+    build_pv_yield_summary,
     device_battery_snapshot,
     device_online_map,
 )
@@ -69,7 +69,7 @@ _COLOR_GRID = "#ea580c"
 _COLOR_OK = "#16a34a"
 _COLOR_FAIL = "#dc2626"
 
-_FEED_IN_LABELS = {
+_PERIOD_LABELS = {
     "today": "Heute",
     "yesterday": "Gestern",
     "day_before_yesterday": "Vorgestern",
@@ -178,7 +178,7 @@ def _card(label: str, value: str, color: str) -> str:
 def build_report_html(
     summaries: list[SummaryOut],
     online_map: dict[str, bool],
-    feed_in_periods: list[FeedInPeriod],
+    pv_yield_periods: list[FeedInPeriod],
     home_breakdown_today: DailyHomeBreakdownDay | None,
     battery_snapshot: list[dict],
     now: datetime,
@@ -255,18 +255,18 @@ def build_report_html(
     else:
         breakdown_html = f'<p style="color:{_COLOR_MUTED};">Noch keine Daten für heute.</p>'
 
-    # --- Einspeisung je Zeitraum ---
+    # --- PV-Ertrag je Zeitraum ---
     period_rows = "".join(
         f'<tr><td style="padding:6px 10px;border-bottom:1px solid {_COLOR_BORDER};">'
-        f'{_esc(_FEED_IN_LABELS.get(p.key, p.key))}</td>'
+        f'{_esc(_PERIOD_LABELS.get(p.key, p.key))}</td>'
         f'<td style="padding:6px 10px;border-bottom:1px solid {_COLOR_BORDER};'
         f'text-align:right;">{_fmt_kwh(p.kwh)}</td></tr>'
-        for p in feed_in_periods
+        for p in pv_yield_periods
     )
-    feed_in_table = (
+    pv_yield_table = (
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
         f'style="border-collapse:collapse;font-size:14px;">{period_rows}</table>'
-        if feed_in_periods
+        if pv_yield_periods
         else f'<p style="color:{_COLOR_MUTED};">Keine Daten.</p>'
     )
 
@@ -302,7 +302,7 @@ def build_report_html(
       {hero}
       {_section("Wechselrichter", devices_table)}
       {_section("Hausverbrauch heute nach Quelle", breakdown_html)}
-      {_section("Einspeisung", feed_in_table)}
+      {_section("PV-Ertrag", pv_yield_table)}
       {_section("Batterie-Ladestand (aktuell)", battery_html)}
       <p style="color:{_COLOR_MUTED};font-size:11px;text-align:center;margin-top:20px;">
         Automatisch versendet von Kostal Plenticore Monitor.
@@ -330,14 +330,14 @@ async def generate_and_send_daily_report() -> dict:
     try:
         summaries = build_daily_summaries()
         online_map = device_online_map(now=now)
-        feed_in_periods = build_feed_in_summary()
+        pv_yield_periods = build_pv_yield_summary()
         home_breakdown_days = build_daily_home_breakdown(days=1)
         home_breakdown_today = home_breakdown_days[-1] if home_breakdown_days else None
         battery_snapshot = device_battery_snapshot()
         subject, body = build_report_html(
             summaries,
             online_map,
-            feed_in_periods,
+            pv_yield_periods,
             home_breakdown_today,
             battery_snapshot,
             now,

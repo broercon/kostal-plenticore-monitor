@@ -192,7 +192,7 @@ def test_build_report_html_includes_all_sections():
     # Hausverbrauch nach Quelle
     assert "5.00 kWh" in body  # PV-Anteil
     assert "2.00 kWh" in body  # Batterie-Anteil
-    # Einspeisung-Tabelle
+    # PV-Ertrag-Tabelle (je Zeitraum)
     assert "Heute" in body
     assert "9.00 kWh" in body
     assert "Diese Woche" in body
