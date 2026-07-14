@@ -258,47 +258,60 @@ canvas {
   }
 }
 
-/* ---- Einspeisung-Uebersicht (kompakte Tabelle im oberen Bereich) ---- */
+/* ---- Einspeisung-Uebersicht: schlanke Leiste statt grosser Tabelle ---- */
 
 .feedin-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 10px;
-  padding: 16px;
+  padding: 10px 16px;
   margin-bottom: 16px;
-  max-width: 420px;
 }
 
-.feedin-summary h2 {
-  margin: 0 0 10px;
-  font-size: 1rem;
-}
-
-.feedin-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.feedin-table th,
-.feedin-table td {
-  padding: 6px 4px;
-}
-
-.feedin-table th {
+.feedin-eyebrow {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--muted);
-  font-weight: normal;
-  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.feedin-table td {
-  text-align: right;
+.feedin-items {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.feedin-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.feedin-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.feedin-value {
+  font-size: 0.95rem;
   font-weight: 600;
+  color: var(--accent-green);
   font-variant-numeric: tabular-nums;
 }
 
-.feedin-table tr + tr th,
-.feedin-table tr + tr td {
-  border-top: 1px solid var(--panel-border);
+.feedin-divider {
+  align-self: stretch;
+  width: 1px;
+  min-height: 1.2em;
+  background: var(--panel-border);
 }
 
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */

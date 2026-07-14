@@ -162,19 +162,19 @@
     </div>
   </section>
 
-  <section class="feedin-summary">
-    <h2>Einspeisung gesamt</h2>
-    <table class="feedin-table" id="feedin-summary-table">
-      <tbody>
-        <tr><th>Heute</th><td data-feedin="today">–</td></tr>
-        <tr><th>Gestern</th><td data-feedin="yesterday">–</td></tr>
-        <tr><th>Vorgestern</th><td data-feedin="day_before_yesterday">–</td></tr>
-        <tr><th>Diese Woche</th><td data-feedin="this_week">–</td></tr>
-        <tr><th>Letzte Woche</th><td data-feedin="last_week">–</td></tr>
-        <tr><th>Dieser Monat</th><td data-feedin="this_month">–</td></tr>
-        <tr><th>Letzter Monat</th><td data-feedin="last_month">–</td></tr>
-      </tbody>
-    </table>
+  <section class="feedin-summary" id="feedin-summary">
+    <span class="feedin-eyebrow">Einspeisung gesamt</span>
+    <div class="feedin-items">
+      <div class="feedin-item"><span class="feedin-label">Heute</span><span class="feedin-value" data-feedin="today">–</span></div>
+      <div class="feedin-item"><span class="feedin-label">Gestern</span><span class="feedin-value" data-feedin="yesterday">–</span></div>
+      <div class="feedin-item"><span class="feedin-label">Vorgestern</span><span class="feedin-value" data-feedin="day_before_yesterday">–</span></div>
+      <span class="feedin-divider" aria-hidden="true"></span>
+      <div class="feedin-item"><span class="feedin-label">Diese Woche</span><span class="feedin-value" data-feedin="this_week">–</span></div>
+      <div class="feedin-item"><span class="feedin-label">Letzte Woche</span><span class="feedin-value" data-feedin="last_week">–</span></div>
+      <span class="feedin-divider" aria-hidden="true"></span>
+      <div class="feedin-item"><span class="feedin-label">Dieser Monat</span><span class="feedin-value" data-feedin="this_month">–</span></div>
+      <div class="feedin-item"><span class="feedin-label">Letzter Monat</span><span class="feedin-value" data-feedin="last_month">–</span></div>
+    </div>
   </section>
 
   <section class="chart-section">
