@@ -44,7 +44,24 @@ body {
 .topbar-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
+  row-gap: 6px;
+}
+
+/* Aktionsbuttons der Topbar: am Desktop inline, auf schmalen Bildschirmen
+   in ein aufklappbares Menue (siehe Media-Query unten). */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.menu-toggle {
+  display: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 6px 12px;
 }
 
 select, button {
@@ -619,6 +636,38 @@ canvas {
   /* Diagramme etwas hoeher fuer mehr Detail auf kleinen Bildschirmen. */
   .chart-canvas-wrapper {
     height: 340px;
+  }
+
+  /* Topbar-Aktionen in ein aufklappbares Menue, damit nichts ueber den
+     rechten Rand hinauslaeuft. */
+  .menu-toggle {
+    display: inline-flex;
+  }
+
+  .topbar-actions {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    min-width: 190px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    z-index: 30;
+  }
+
+  .topbar-actions.open {
+    display: flex;
+  }
+
+  .topbar-actions button {
+    width: 100%;
+    text-align: left;
   }
 }
 

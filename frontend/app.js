@@ -1299,6 +1299,29 @@ function setChartsInteractive(on) {
   }
 }
 
+function setupTopbarMenu() {
+  const toggle = el("menu-toggle");
+  const menu = el("topbar-actions");
+  if (!toggle || !menu) return;
+  const close = () => {
+    menu.classList.remove("open");
+    toggle.setAttribute("aria-expanded", "false");
+  };
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = menu.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  // Auswahl im Menue schliesst es wieder (dann oeffnet sich z.B. der Dialog).
+  menu.addEventListener("click", (e) => {
+    if (e.target.closest("button")) close();
+  });
+  // Tippen/Klicken ausserhalb schliesst das Menue.
+  document.addEventListener("click", (e) => {
+    if (!menu.contains(e.target) && e.target !== toggle) close();
+  });
+}
+
 function setupChartInteractionToggle() {
   for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
     btn.addEventListener("click", () => setChartsInteractive(!state.chartsInteractive));
@@ -1323,6 +1346,7 @@ async function init() {
   state.chartsInteractive = !isTouchDevice();
   setupChangePassword();
   setupLogout();
+  setupTopbarMenu();
   setupAdminArea();
   await loadDevices();
   setupRangeButtons();
