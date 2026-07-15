@@ -337,7 +337,7 @@ def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
 # Felder, die fuer das Tagesvergleichs-Diagramm gemittelt werden. feed_in_power_w
 # wird nur intern fuer die Solar/Batterie-Aufteilung gebraucht (siehe unten) und
 # nicht direkt an den Client zurueckgegeben.
-DAY_PROFILE_RAW_FIELDS = ["pv_power_w", "home_power_w", "grid_draw_power_w", "feed_in_power_w"]
+DAY_PROFILE_RAW_FIELDS = ["pv_power_w", "home_power_w", "grid_draw_power_w", "feed_in_power_w", "battery_power_w"]
 
 
 def day_profile(
@@ -390,6 +390,11 @@ def day_profile(
         home = avg["home_power_w"]
         grid_draw = avg["grid_draw_power_w"]
         feed_in = avg["feed_in_power_w"]
+        battery = avg["battery_power_w"]
+        # Reine PV-Erzeugung fuer die Anzeige: die ggf. am PV3-String haengende
+        # Batterie herausrechnen (siehe integrate_pure_pv_kwh). Der rohe pv-Wert
+        # bleibt fuer die Energiebilanz unten (battery_net) erhalten.
+        pv_pure = max(0.0, pv - (battery or 0.0)) if pv is not None else None
 
         home_from_solar = None
         home_from_battery = None
@@ -405,7 +410,7 @@ def day_profile(
 
         point = {
             "minute": bucket,
-            "pv_power_w": round(pv, 1) if pv is not None else None,
+            "pv_power_w": round(pv_pure, 1) if pv_pure is not None else None,
             "grid_draw_power_w": round(grid_draw, 1) if grid_draw is not None else None,
             "home_from_solar_w": home_from_solar,
             "home_from_battery_w": home_from_battery,

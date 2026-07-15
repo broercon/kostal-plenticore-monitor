@@ -82,6 +82,11 @@ class Settings:
     def __init__(self) -> None:
         self.config_path = Path(os.environ.get("CONFIG_PATH", "/app/config/inverters.json"))
         self.db_path = Path(os.environ.get("DB_PATH", "/app/data/kostal.db"))
+        # Persistente App-Logdatei (im selben data-Volume wie die DB), damit
+        # sich Logs nach einem Vorfall herauskopieren lassen.
+        self.log_file = Path(
+            os.environ.get("LOG_FILE", str(self.db_path.parent / "logs" / "app.log"))
+        )
         self.poll_interval_seconds = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))
         self.frontend_dir = Path(os.environ.get("FRONTEND_DIR", "/app/frontend"))
         # Fuer die Berechnung von "heute" (Tagessummen) bei lokaler Mitternacht statt UTC.

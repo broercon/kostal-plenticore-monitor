@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -92,6 +93,22 @@ def _battery_inverted_map() -> dict[str, bool]:
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Zusaetzlich zu stdout (Docker-Logs) in eine persistente, rotierende Datei
+# schreiben, damit sich die Logs nach einem Vorfall (z.B. naechtlicher
+# Polling-Haenger) einfach herauskopieren lassen.
+try:
+    settings.log_file.parent.mkdir(parents=True, exist_ok=True)
+    _file_handler = RotatingFileHandler(
+        settings.log_file, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    _file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(_file_handler)
+    logger.info("Log-Datei: %s", settings.log_file)
+except OSError as exc:  # noqa: BLE001
+    logger.warning("Konnte Log-Datei %s nicht einrichten: %s", settings.log_file, exc)
 
 
 @asynccontextmanager
