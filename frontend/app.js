@@ -648,7 +648,6 @@ async function refreshChart() {
         },
       },
       plugins: {
-        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -846,7 +845,6 @@ async function refreshDayCompareChart() {
         },
       },
       plugins: {
-        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
         tooltip: {
           itemSort: (a, b) => b.parsed.y - a.parsed.y,
@@ -981,7 +979,6 @@ async function refreshDailyTotalsChart() {
         },
       },
       plugins: {
-        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -1099,7 +1096,6 @@ async function refreshHourlyCompareChart() {
         },
       },
       plugins: {
-        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -1270,20 +1266,12 @@ async function refreshAll({ showLoading = false } = {}) {
 function chartEvents() {
   // Leeres Array = Chart.js reagiert auf keinerlei Zeiger-/Touch-Events
   // (kein Tooltip/Hover). So faengt das Diagramm auf dem Handy die
-  // Scroll-Geste nicht ab, solange die Interaktion aus ist.
+  // Scroll-Geste nicht ab, solange die Werte-Anzeige aus ist.
   return state.chartsInteractive
     ? ["mousemove", "mouseout", "click", "touchstart", "touchmove"]
     : [];
 }
 
-function zoomOptions() {
-  const on = state.chartsInteractive;
-  return {
-    pan: { enabled: on, mode: "x" },
-    zoom: { wheel: { enabled: on }, pinch: { enabled: on }, mode: "x" },
-    limits: { x: { min: "original", max: "original" } },
-  };
-}
 
 function isTouchDevice() {
   return (
@@ -1293,12 +1281,11 @@ function isTouchDevice() {
   );
 }
 
-// Interaktion (Tooltip + Zoom/Pan) fuer ALLE Diagramme ein-/ausschalten.
+// Tooltip/Hover (Werte-Anzeige) fuer ALLE Diagramme ein-/ausschalten. Aus =
+// keine Events -> das Diagramm faengt die Touch-Geste nicht ab, die Seite
+// scrollt frei; an = Werte lassen sich per Tippen/Hovern ablesen.
 function setChartsInteractive(on) {
   state.chartsInteractive = on;
-  if (typeof document !== "undefined" && document.body) {
-    document.body.classList.toggle("charts-interactive", on);
-  }
   const charts = [
     state.chart,
     state.dayCompare.chart,
@@ -1308,18 +1295,10 @@ function setChartsInteractive(on) {
   for (const c of charts) {
     if (!c || !c.options) continue;
     c.options.events = chartEvents();
-    const z = c.options.plugins && c.options.plugins.zoom;
-    if (z) {
-      if (z.pan) z.pan.enabled = on;
-      if (z.zoom) {
-        if (z.zoom.pinch) z.zoom.pinch.enabled = on;
-        if (z.zoom.wheel) z.zoom.wheel.enabled = on;
-      }
-    }
     if (typeof c.update === "function") c.update();
   }
   for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
-    btn.textContent = on ? "Interaktion: an" : "Interaktion: aus";
+    btn.textContent = on ? "Werte anzeigen: an" : "Werte anzeigen: aus";
     btn.classList.toggle("active", on);
   }
 }
@@ -1330,21 +1309,6 @@ function setupChartInteractionToggle() {
   }
 }
 
-function setupZoomReset() {
-  const charts = {
-    power: () => state.chart,
-    daycompare: () => state.dayCompare.chart,
-    dailytotals: () => state.dailyTotals.chart,
-    hourly: () => state.hourlyCompare.chart,
-  };
-  for (const btn of document.querySelectorAll(".zoom-reset")) {
-    btn.addEventListener("click", () => {
-      const getter = charts[btn.dataset.chart];
-      const chart = getter && getter();
-      if (chart && typeof chart.resetZoom === "function") chart.resetZoom();
-    });
-  }
-}
 
 // Aktualisierungs-Ring in der Topbar bei jeder Kopf-Aktualisierung neu
 // starten (synchron zum Auto-Refresh-Intervall).
@@ -1369,7 +1333,6 @@ async function init() {
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
-  setupZoomReset();
   setupChartInteractionToggle();
   await refreshAll({ showLoading: true });
   refreshPvYieldSummary().catch(console.error);

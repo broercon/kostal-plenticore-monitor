@@ -185,15 +185,6 @@ main {
   margin-bottom: 12px;
 }
 
-.zoom-reset {
-  font-size: 0.8rem;
-  padding: 5px 10px;
-  color: var(--muted);
-}
-
-.zoom-reset:hover {
-  color: var(--text);
-}
 
 .range-buttons {
   display: flex;
@@ -632,7 +623,7 @@ canvas {
 }
 
 
-/* ---- Diagramm-Interaktion umschaltbar (v.a. mobil) ---- */
+/* ---- Werte-Anzeige (Hover/Tooltip) umschaltbar (v.a. mobil) ---- */
 
 .chart-interaction-toggle {
   font-size: 0.8rem;
@@ -652,16 +643,4 @@ canvas {
   .chart-interaction-toggle {
     display: inline-flex;
   }
-}
-
-/* Standardmaessig faengt das Diagramm die Touch-Geste NICHT ab, damit die
-   Seite frei scrollt (ueberschreibt das vom Zoom-Plugin/Hammer gesetzte
-   touch-action:none). Erst mit aktivierter Interaktion gehen Gesten ans
-   Diagramm. */
-.chart-canvas-wrapper canvas {
-  touch-action: auto !important;
-}
-
-body.charts-interactive .chart-canvas-wrapper canvas {
-  touch-action: none !important;
 }
