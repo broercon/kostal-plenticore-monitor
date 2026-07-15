@@ -294,9 +294,10 @@ def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeyp
 
 
 def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatch):
-    """Regression: der PV-Gesamtwert ("_all_") muss exakt die Summe der je
-    Wechselrichter angezeigten Tageswerte sein - nicht eine separat
-    integrierte, leicht abweichende Zahl (Mail-Report / Dashboard)."""
+    """Regression: der PV-Gesamtwert ("_all_") ist die Summe der je Geraet
+    ermittelten REINEN PV-Tageswerte (pv_power_w - battery_power_w, Batterie
+    an PV3 herausgerechnet) - und der geraeteeigene Zaehler yield_day_kwh wird
+    dafuer ignoriert."""
     from app.daily_summary import build_daily_summaries
     from app.database import SessionLocal
     from app.models import Reading
@@ -305,24 +306,25 @@ def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatc
     monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
 
     now = datetime.now(timezone.utc)
-    # Geraeteeigene Tagesstatistik (wie vom Poller geliefert): die exakt so
-    # in der Geraetetabelle angezeigt werden.
+    # Bogus-Zaehler im Live-Cache: muss ignoriert werden.
     poller_singleton.latest = {
         "wr1": {"device_id": "wr1", "device_name": WR1.name, "timestamp": now,
-                "yield_day_kwh": 95.64, "home_consumption_day_kwh": 8.0,
-                "energy_grid_day_kwh": 1.0},
+                "yield_day_kwh": 999.0},
         "wr2": {"device_id": "wr2", "device_name": WR2.name, "timestamp": now,
-                "yield_day_kwh": 53.08, "home_consumption_day_kwh": None,
-                "energy_grid_day_kwh": None},
+                "yield_day_kwh": 999.0},
     }
+    # WR1: reine PV 1200 W (Batterie 0). WR2: pv_power_w 800 inkl. 300 Batterie
+    # ueber PV3 -> reine PV 500 W. Je zwei Punkte 15 min auseinander.
     db = SessionLocal()
     try:
-        db.add_all(
-            Reading(device_id=d, device_name=d, timestamp=now - timedelta(minutes=m),
-                    pv_power_w=1000.0, home_power_w=200.0, grid_draw_power_w=0.0,
-                    feed_in_power_w=800.0)
-            for d in ("wr1", "wr2") for m in (0, 10)
-        )
+        rows = []
+        for m in (0, 15):
+            ts = now - timedelta(minutes=15 - m)
+            rows.append(Reading(device_id="wr1", device_name=WR1.name, timestamp=ts,
+                                pv_power_w=1200.0, battery_power_w=0.0))
+            rows.append(Reading(device_id="wr2", device_name=WR2.name, timestamp=ts,
+                                pv_power_w=800.0, battery_power_w=300.0))
+        db.add_all(rows)
         db.commit()
     finally:
         db.close()
@@ -334,6 +336,7 @@ def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatc
 
     by_id = {s.device_id: s for s in summaries}
     assert {"wr1", "wr2", "_all_"} <= set(by_id)
-    device_sum = by_id["wr1"].yield_day_kwh + by_id["wr2"].yield_day_kwh
-    assert by_id["_all_"].yield_day_kwh == round(device_sum, 3)
-    assert by_id["_all_"].yield_day_kwh == 148.72
+    # 1200 W * 0.25 h = 0.3 kWh ; (800-300) W * 0.25 h = 0.125 kWh
+    assert by_id["wr1"].yield_day_kwh == 0.3
+    assert by_id["wr2"].yield_day_kwh == 0.125
+    assert by_id["_all_"].yield_day_kwh == round(0.3 + 0.125, 3)

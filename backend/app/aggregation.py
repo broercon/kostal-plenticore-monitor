@@ -310,6 +310,30 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     return round(energy_wh / 1000, 3)
 
 
+def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
+    """Reine PV-Erzeugung (kWh) - PV-Leistung OHNE Batterie-Anteil.
+
+    Bei Anlagen, deren Batterie am dritten PV-String (PV3) haengt, enthaelt
+    pv_power_w (= pv1+pv2+pv3, siehe pykoplenti-Virtualwert pv_P) auch die
+    Batterie. Da dort pv3 = Batterie ist, gilt reine PV = pv1+pv2 =
+    pv_power_w - battery_power_w. Beide Groessen sind ROH gespeichert; die
+    Subtraktion ist damit vorzeichensicher (die rohe Batteriegroesse, die in
+    pv_power_w steckt, wird exakt wieder abgezogen) - unabhaengig davon, ob die
+    Batterie gerade laedt oder entlaedt. Auf >= 0 begrenzt (Messrauschen).
+    Geraete ohne Batterie (battery_power_w = None) liefern schlicht
+    pv_power_w. Nachts ist pv1+pv2 = 0, daher auch die reine PV = 0.
+    """
+    points = [
+        SimpleNamespace(
+            timestamp=r.timestamp,
+            value=max(0.0, r.pv_power_w - (r.battery_power_w or 0.0)),
+        )
+        for r in rows
+        if r.pv_power_w is not None
+    ]
+    return integrate_kwh(points, "value")
+
+
 # Felder, die fuer das Tagesvergleichs-Diagramm gemittelt werden. feed_in_power_w
 # wird nur intern fuer die Solar/Batterie-Aufteilung gebraucht (siehe unten) und
 # nicht direkt an den Client zurueckgegeben.
@@ -432,14 +456,12 @@ def daily_kwh_totals(
 def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]:
     """PV-Ertrag (kWh) je lokalem Kalendertag, hausweit ueber alle Geraete.
 
-    Bevorzugt den geraeteeigenen, kumulierten Tageszaehler (yield_day_kwh,
-    Kostal "Statistic:Yield:Day") - je Geraet und Tag der hoechste (= letzte)
-    Zaehlerstand des Tages. Das ist der amtliche Tagesertrag des
-    Wechselrichters, identisch mit dem, was die Kacheln/Geraetetabelle oben
-    anzeigen. Nur wenn fuer ein Geraet an einem Tag KEIN Zaehlerstand vorliegt
-    (z.B. per Logdaten-Import eingespielte Altdaten), wird als Rueckfall die
-    gespeicherte PV-Leistung integriert (Trapezregel). Die Geraete-Tageswerte
-    werden je Tag summiert (PV ist additiv).
+    PV-Ertrag = reine PV-Erzeugung (pv1+pv2, siehe integrate_pure_pv_kwh:
+    pv_power_w - battery_power_w, um die am PV3-String haengende Batterie
+    herauszurechnen), je Geraet und Tag integriert und ueber die Geraete
+    summiert (PV ist additiv). Bewusst NICHT der geraeteeigene Tageszaehler
+    Statistic:Yield:Day, der beim Hybrid den Wechselrichter-Ausgang inkl.
+    Batterieentladung misst und dadurch nachts einen "PV-Ertrag" > 0 zeigt.
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float}, aufsteigend
     nach Datum sortiert; Tage ganz ohne Daten fehlen (statt kwh=None)."""
@@ -454,11 +476,7 @@ def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]
 
     per_day: dict[str, float] = {}
     for (date_str, _device_id), day_rows in by_day_device.items():
-        counters = [r.yield_day_kwh for r in day_rows if r.yield_day_kwh is not None]
-        if counters:
-            device_total = max(counters)  # kumulativ -> hoechster = Tagesendwert
-        else:
-            device_total = integrate_kwh(day_rows, "pv_power_w")
+        device_total = integrate_pure_pv_kwh(day_rows)
         if device_total is None:
             continue
         per_day[date_str] = per_day.get(date_str, 0.0) + device_total

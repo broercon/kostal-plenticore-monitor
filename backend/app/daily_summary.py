@@ -25,6 +25,7 @@ from .aggregation import (
     daily_kwh_totals,
     daily_pv_yield_totals,
     integrate_kwh,
+    integrate_pure_pv_kwh,
 )
 from .config import settings
 from .database import SessionLocal
@@ -73,29 +74,35 @@ def build_daily_summaries() -> list[SummaryOut]:
 
     for cfg in settings.inverters:
         reading = poller.latest.get(cfg.id)
-        yield_kwh = reading.get("yield_day_kwh") if reading else None
         home_kwh = reading.get("home_consumption_day_kwh") if reading else None
         grid_kwh = reading.get("energy_grid_day_kwh") if reading else None
 
-        if yield_kwh is None or home_kwh is None or grid_kwh is None:
-            session = SessionLocal()
-            try:
-                rows = list(
-                    session.scalars(
-                        select(Reading)
-                        .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
-                        .order_by(Reading.timestamp)
-                    )
+        # Messwerte des Geraets seit Mitternacht laden - fuer den PV-Ertrag
+        # IMMER noetig (reine PV wird integriert, siehe unten) und als
+        # Rueckfall fuer Haus/Netz, falls das Geraet keine eigenen Tages-
+        # Statistikwerte liefert.
+        session = SessionLocal()
+        try:
+            rows = list(
+                session.scalars(
+                    select(Reading)
+                    .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
+                    .order_by(Reading.timestamp)
                 )
-            finally:
-                session.close()
+            )
+        finally:
+            session.close()
 
-            if yield_kwh is None:
-                yield_kwh = integrate_kwh(rows, "pv_power_w")
-            if home_kwh is None:
-                home_kwh = integrate_kwh(rows, "home_power_w")
-            if grid_kwh is None:
-                grid_kwh = integrate_kwh(rows, "feed_in_power_w")
+        # PV-Ertrag = reine PV-Erzeugung (pv1+pv2), aus der Leistung integriert.
+        # Bewusst NICHT der Geraete-Zaehler Statistic:Yield:Day (yield_day_kwh):
+        # der zaehlt beim Hybrid den Wechselrichter-Ausgang inkl. Batterie mit.
+        # integrate_pure_pv_kwh rechnet die am PV3-String haengende Batterie
+        # heraus (pv_power_w - battery_power_w), sodass nachts 0 herauskommt.
+        yield_kwh = integrate_pure_pv_kwh(rows)
+        if home_kwh is None:
+            home_kwh = integrate_kwh(rows, "home_power_w")
+        if grid_kwh is None:
+            grid_kwh = integrate_kwh(rows, "feed_in_power_w")
 
         summaries.append(
             SummaryOut(
@@ -122,12 +129,11 @@ def build_daily_summaries() -> list[SummaryOut]:
         if rows:
             synthetic_rows = _combined_rows(rows)
             # PV-Ertrag ist additiv: der Gesamtwert ist die Summe der je Geraet
-            # angezeigten Tageswerte (die bevorzugt aus dem geraeteeigenen
-            # Statistik-Zaehler stammen). Damit stimmt "Alle (Summe)" exakt mit
-            # der Summe der einzelnen Wechselrichter ueberein - eine separate
-            # Integration der summierten PV-Leistung wich davon leicht ab.
-            # Hausverbrauch/Netz lassen sich dagegen NICHT naiv summieren und
-            # werden weiter aus der korrigierten Hausbilanz integriert.
+            # ermittelten reinen PV-Tageswerte (integrate_pure_pv_kwh). Damit
+            # stimmt "Alle (Summe)" exakt mit der Summe der einzelnen
+            # Wechselrichter ueberein. Hausverbrauch/Netz lassen sich dagegen
+            # NICHT naiv summieren und werden aus der korrigierten Hausbilanz
+            # integriert.
             device_yields = [s.yield_day_kwh for s in summaries if s.yield_day_kwh is not None]
             combined_yield = round(sum(device_yields), 3) if device_yields else None
             summaries.append(

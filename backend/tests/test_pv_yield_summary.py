@@ -101,33 +101,28 @@ def _add(rows):
         db.close()
 
 
-def test_pv_yield_uses_device_counter_not_integration(client):
-    """PV-Ertrag 'heute' muss den geraeteeigenen Tageszaehler (yield_day_kwh)
-    je Geraet nehmen und ueber die Geraete summieren - nicht die PV-Leistung
-    integrieren. Die pv_power_w sind hier bewusst winzig; wuerde integriert,
-    kaeme fast 0 heraus statt der Zaehlersumme."""
+def test_pv_yield_excludes_battery_on_pv3(client):
+    """Reine PV: die am PV3-String haengende Batterie muss herausgerechnet
+    werden. Nachts (keine Sonne) spiegelt pv_power_w die Batterieentladung
+    (4000 W ueber PV3), battery_power_w = 4000 -> reine PV = 0, obwohl
+    pv_power_w > 0 ist."""
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
 
-    from app.daily_summary import build_daily_summaries, build_pv_yield_summary
+    from app.daily_summary import build_pv_yield_summary
     from app.models import Reading
 
     tz = ZoneInfo("Europe/Berlin")
-    noon = datetime(datetime.now(tz).year, datetime.now(tz).month, datetime.now(tz).day, 12, 0, tzinfo=tz)
-
-    rows = []
-    # WR1: kumulativer Zaehler steigt auf 96.28; WR2 auf 53.08.
-    for dev, series in (("wr1", [10.0, 55.0, 96.28]), ("wr2", [5.0, 53.08])):
-        for i, counter in enumerate(series):
-            rows.append(Reading(
-                device_id=dev, device_name=dev,
-                timestamp=(noon + timedelta(minutes=15 * i)).astimezone(ZoneInfo("UTC")),
-                pv_power_w=5.0, yield_day_kwh=counter,
-            ))
-    _add(rows)
-
+    d = datetime.now(tz).date()
+    noon = datetime(d.year, d.month, d.day, 12, 0, tzinfo=tz)
+    _add([
+        Reading(device_id="wr1", device_name="wr1",
+                timestamp=(noon + timedelta(minutes=m)).astimezone(ZoneInfo("UTC")),
+                pv_power_w=4000.0, battery_power_w=4000.0)
+        for m in (0, 15)
+    ])
     periods = {p.key: p for p in build_pv_yield_summary()}
-    assert periods["today"].kwh == 149.36  # 96.28 + 53.08, NICHT ~0 (Integration)
+    assert periods["today"].kwh == 0.0  # Batterie herausgerechnet, nicht ~1.0
 
 
 def test_pv_yield_falls_back_to_integration_without_counter(client):
