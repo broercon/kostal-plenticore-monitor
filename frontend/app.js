@@ -18,6 +18,9 @@ const state = {
     days: 1,
     chart: null,
   },
+  // Diagramm-Interaktion (Tooltip/Hover + Zoom/Pan). Auf Touch-Geraeten
+  // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
+  chartsInteractive: true,
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -635,6 +638,7 @@ async function refreshChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       interaction: { mode: "index", intersect: false },
       scales: {
         x: xScale,
@@ -817,6 +821,7 @@ async function refreshDayCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
       // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
       // vergleichen lassen.
@@ -960,6 +965,7 @@ async function refreshDailyTotalsChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       interaction: { mode: "index", intersect: false },
       scales: {
         x: {
@@ -1073,6 +1079,7 @@ async function refreshHourlyCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
       // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
       // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
@@ -1260,12 +1267,67 @@ async function refreshAll({ showLoading = false } = {}) {
 // einem Finger entlang der Zeitachse, am Desktop zusaetzlich Mausrad-Zoom.
 // Wird nur wirksam, wenn das chartjs-plugin-zoom geladen ist - sonst ignoriert
 // Chart.js das Feld (z.B. in den jsdom-Tests ohne CDN).
+function chartEvents() {
+  // Leeres Array = Chart.js reagiert auf keinerlei Zeiger-/Touch-Events
+  // (kein Tooltip/Hover). So faengt das Diagramm auf dem Handy die
+  // Scroll-Geste nicht ab, solange die Interaktion aus ist.
+  return state.chartsInteractive
+    ? ["mousemove", "mouseout", "click", "touchstart", "touchmove"]
+    : [];
+}
+
 function zoomOptions() {
+  const on = state.chartsInteractive;
   return {
-    pan: { enabled: true, mode: "x" },
-    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+    pan: { enabled: on, mode: "x" },
+    zoom: { wheel: { enabled: on }, pinch: { enabled: on }, mode: "x" },
     limits: { x: { min: "original", max: "original" } },
   };
+}
+
+function isTouchDevice() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(hover: none), (pointer: coarse)").matches
+  );
+}
+
+// Interaktion (Tooltip + Zoom/Pan) fuer ALLE Diagramme ein-/ausschalten.
+function setChartsInteractive(on) {
+  state.chartsInteractive = on;
+  if (typeof document !== "undefined" && document.body) {
+    document.body.classList.toggle("charts-interactive", on);
+  }
+  const charts = [
+    state.chart,
+    state.dayCompare.chart,
+    state.dailyTotals.chart,
+    state.hourlyCompare.chart,
+  ];
+  for (const c of charts) {
+    if (!c || !c.options) continue;
+    c.options.events = chartEvents();
+    const z = c.options.plugins && c.options.plugins.zoom;
+    if (z) {
+      if (z.pan) z.pan.enabled = on;
+      if (z.zoom) {
+        if (z.zoom.pinch) z.zoom.pinch.enabled = on;
+        if (z.zoom.wheel) z.zoom.wheel.enabled = on;
+      }
+    }
+    if (typeof c.update === "function") c.update();
+  }
+  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
+    btn.textContent = on ? "Interaktion: an" : "Interaktion: aus";
+    btn.classList.toggle("active", on);
+  }
+}
+
+function setupChartInteractionToggle() {
+  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
+    btn.addEventListener("click", () => setChartsInteractive(!state.chartsInteractive));
+  }
 }
 
 function setupZoomReset() {
@@ -1296,6 +1358,9 @@ function restartRefreshRing() {
 
 async function init() {
   await checkAuth(); // leitet bei fehlender/ungueltiger Sitzung zu login.html um
+  // Auf Touch-Geraeten die Diagramm-Interaktion standardmaessig ausschalten
+  // (Scrollen soll Vorrang haben); am Desktop (Maus) an lassen.
+  state.chartsInteractive = !isTouchDevice();
   setupChangePassword();
   setupLogout();
   setupAdminArea();
@@ -1305,8 +1370,10 @@ async function init() {
   setupDailyTotalsControls();
   setupHourlyCompareControls();
   setupZoomReset();
+  setupChartInteractionToggle();
   await refreshAll({ showLoading: true });
   refreshPvYieldSummary().catch(console.error);
+  setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
   const ringEl = document.querySelector(".refresh-ring-progress");
   if (ringEl) ringEl.style.setProperty("--refresh-secs", LIVE_REFRESH_MS / 1000 + "s");
