@@ -179,7 +179,20 @@ main {
 .chart-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 12px;
+}
+
+.zoom-reset {
+  font-size: 0.8rem;
+  padding: 5px 10px;
+  color: var(--muted);
+}
+
+.zoom-reset:hover {
+  color: var(--text);
 }
 
 .range-buttons {
@@ -555,4 +568,65 @@ canvas {
 @keyframes refresh-fill {
   from { stroke-dashoffset: 56.55; }
   to { stroke-dashoffset: 0; }
+}
+
+
+/* ---- Mobile-Feinschliff (schmale Bildschirme) ---- */
+@media (max-width: 640px) {
+  main {
+    padding: 12px;
+  }
+
+  .topbar {
+    padding: 12px 14px;
+  }
+
+  .topbar h1 {
+    font-size: 1.05rem;
+  }
+
+  .topbar-right {
+    gap: 8px;
+    row-gap: 6px;
+  }
+
+  .cards {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  .card {
+    padding: 13px;
+  }
+
+  .card-value {
+    font-size: 1.35rem;
+  }
+
+  .card.small .card-value {
+    font-size: 1.1rem;
+  }
+
+  .chart-section {
+    padding: 12px;
+  }
+
+  /* Wechselrichter-Auswahl als eine seitlich scrollbare Zeile statt Umbruch,
+     damit lange Geraetenamen nicht unschoen umbrechen. */
+  .device-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  .device-tabs button {
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  /* Diagramme etwas hoeher, damit nach dem Zoomen mehr Detail sichtbar ist. */
+  .chart-canvas-wrapper {
+    height: 340px;
+  }
 }

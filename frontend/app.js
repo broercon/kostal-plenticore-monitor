@@ -644,6 +644,7 @@ async function refreshChart() {
         },
       },
       plugins: {
+        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -840,6 +841,7 @@ async function refreshDayCompareChart() {
         },
       },
       plugins: {
+        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
         tooltip: {
           itemSort: (a, b) => b.parsed.y - a.parsed.y,
@@ -973,6 +975,7 @@ async function refreshDailyTotalsChart() {
         },
       },
       plugins: {
+        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -1089,6 +1092,7 @@ async function refreshHourlyCompareChart() {
         },
       },
       plugins: {
+        zoom: zoomOptions(),
         legend: { labels: { color: "#e2e8f0" } },
         tooltip: {
           callbacks: {
@@ -1252,6 +1256,34 @@ async function refreshAll({ showLoading = false } = {}) {
   }
 }
 
+// Zoom/Pan fuer Diagramme (v.a. mobil): Pinch-Zoom mit zwei Fingern, Pan mit
+// einem Finger entlang der Zeitachse, am Desktop zusaetzlich Mausrad-Zoom.
+// Wird nur wirksam, wenn das chartjs-plugin-zoom geladen ist - sonst ignoriert
+// Chart.js das Feld (z.B. in den jsdom-Tests ohne CDN).
+function zoomOptions() {
+  return {
+    pan: { enabled: true, mode: "x" },
+    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "x" },
+    limits: { x: { min: "original", max: "original" } },
+  };
+}
+
+function setupZoomReset() {
+  const charts = {
+    power: () => state.chart,
+    daycompare: () => state.dayCompare.chart,
+    dailytotals: () => state.dailyTotals.chart,
+    hourly: () => state.hourlyCompare.chart,
+  };
+  for (const btn of document.querySelectorAll(".zoom-reset")) {
+    btn.addEventListener("click", () => {
+      const getter = charts[btn.dataset.chart];
+      const chart = getter && getter();
+      if (chart && typeof chart.resetZoom === "function") chart.resetZoom();
+    });
+  }
+}
+
 // Aktualisierungs-Ring in der Topbar bei jeder Kopf-Aktualisierung neu
 // starten (synchron zum Auto-Refresh-Intervall).
 function restartRefreshRing() {
@@ -1272,6 +1304,7 @@ async function init() {
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
+  setupZoomReset();
   await refreshAll({ showLoading: true });
   refreshPvYieldSummary().catch(console.error);
   const LIVE_REFRESH_MS = 20000;

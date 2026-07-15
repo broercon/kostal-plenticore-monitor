@@ -6,6 +6,8 @@
 <title>Kostal Plenticore Monitor</title>
 <link rel="stylesheet" href="style.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
 </head>
 <body>
 <header class="topbar">
@@ -202,6 +204,7 @@
         <button data-hours="168">7 Tage</button>
         <button data-hours="720">30 Tage</button>
       </div>
+      <button type="button" class="zoom-reset" data-chart="power" title="Zoom zurücksetzen">Zoom ⟲</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="power-chart"></canvas>
@@ -209,6 +212,8 @@
     <p class="chart-hint muted">
       Tipp: Auf einen Eintrag in der Legende klicken, um die jeweilige Kurve
       ein- oder auszublenden. Für die letzten 7 Tage oben "7 Tage" wählen.
+      Auf dem Handy: mit zwei Fingern zoomen, mit einem Finger verschieben –
+      „Zoom ⟲" setzt die Ansicht zurück.
     </p>
   </section>
 
@@ -233,6 +238,7 @@
         <button data-days="14">14 Tage</button>
         <button data-days="30">30 Tage</button>
       </div>
+      <button type="button" class="zoom-reset" data-chart="daycompare" title="Zoom zurücksetzen">Zoom ⟲</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="daycompare-chart"></canvas>
@@ -262,6 +268,7 @@
         <button data-days="90">90 Tage</button>
         <button data-days="365">365 Tage</button>
       </div>
+      <button type="button" class="zoom-reset" data-chart="dailytotals" title="Zoom zurücksetzen">Zoom ⟲</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="dailytotals-chart"></canvas>
@@ -290,6 +297,7 @@
         <button data-days="7">7 Tage</button>
         <button data-days="30">30 Tage</button>
       </div>
+      <button type="button" class="zoom-reset" data-chart="hourly" title="Zoom zurücksetzen">Zoom ⟲</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="hourly-chart"></canvas>
