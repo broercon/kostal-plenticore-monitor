@@ -42,6 +42,15 @@ function fmtPercent(value) {
   return Math.round(value) + " %";
 }
 
+// Reine PV-Erzeugung in Watt (ohne die ggf. am PV3-String haengende
+// Batterie): pv_power_w - battery_power_w, auf >= 0 begrenzt. Passt zur
+// serverseitigen PV-Ertrag-Berechnung (integrate_pure_pv_kwh). Geraete ohne
+// Batterie (battery_power_w null) liefern schlicht pv_power_w.
+function purePvWatt(r) {
+  if (r.pv_power_w === null || r.pv_power_w === undefined) return null;
+  return Math.max(0, r.pv_power_w - (r.battery_power_w || 0));
+}
+
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
   if (res.status === 401) {
@@ -437,7 +446,11 @@ async function refreshLiveCards() {
   el("card-home").textContent = fmtWatt(sumField(houseWideSource, "home_power_w"));
   el("card-feedin").textContent = fmtWatt(sumField(houseWideSource, "feed_in_power_w"));
   el("card-griddraw").textContent = fmtWatt(sumField(houseWideSource, "grid_draw_power_w"));
-  el("card-pv").textContent = fmtWatt(sumField(cardSource, "pv_power_w"));
+  const pvPureSum = cardSource.reduce((acc, r) => {
+    const v = purePvWatt(r);
+    return v === null ? acc : acc === null ? v : acc + v;
+  }, null);
+  el("card-pv").textContent = fmtWatt(pvPureSum);
 
   // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
   // zusammengefasste "_all_"-Eintrag hat keinen eigenen SoC-Wert) - dafuer
@@ -550,7 +563,7 @@ async function refreshChart() {
     // beim jeweils letzten Messwert endet.
     datasets = Object.keys(fieldFor).map((key) => ({
       label: metricLabel[key],
-      data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: p[fieldFor[key]] })),
+      data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: key === "pv" ? purePvWatt(p) : p[fieldFor[key]] })),
       borderColor: CHART_METRIC_COLORS[key],
       backgroundColor: CHART_METRIC_COLORS[key] + "33",
       tension: 0.25,
@@ -563,7 +576,7 @@ async function refreshChart() {
     });
     datasets = Object.keys(fieldFor).map((key) => ({
       label: metricLabel[key],
-      data: points.map((p) => p[fieldFor[key]]),
+      data: points.map((p) => (key === "pv" ? purePvWatt(p) : p[fieldFor[key]])),
       borderColor: CHART_METRIC_COLORS[key],
       backgroundColor: CHART_METRIC_COLORS[key] + "33",
       tension: 0.25,
