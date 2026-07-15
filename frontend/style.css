@@ -616,7 +616,7 @@ canvas {
     flex: 0 0 auto;
   }
 
-  /* Diagramme etwas hoeher, damit nach dem Zoomen mehr Detail sichtbar ist. */
+  /* Diagramme etwas hoeher fuer mehr Detail auf kleinen Bildschirmen. */
   .chart-canvas-wrapper {
     height: 340px;
   }

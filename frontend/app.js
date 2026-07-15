@@ -18,7 +18,7 @@ const state = {
     days: 1,
     chart: null,
   },
-  // Diagramm-Interaktion (Tooltip/Hover + Zoom/Pan). Auf Touch-Geraeten
+  // Werte-Anzeige der Diagramme (Tooltip/Hover). Auf Touch-Geraeten
   // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
   chartsInteractive: true,
 };
@@ -1259,10 +1259,6 @@ async function refreshAll({ showLoading = false } = {}) {
   }
 }
 
-// Zoom/Pan fuer Diagramme (v.a. mobil): Pinch-Zoom mit zwei Fingern, Pan mit
-// einem Finger entlang der Zeitachse, am Desktop zusaetzlich Mausrad-Zoom.
-// Wird nur wirksam, wenn das chartjs-plugin-zoom geladen ist - sonst ignoriert
-// Chart.js das Feld (z.B. in den jsdom-Tests ohne CDN).
 function chartEvents() {
   // Leeres Array = Chart.js reagiert auf keinerlei Zeiger-/Touch-Events
   // (kein Tooltip/Hover). So faengt das Diagramm auf dem Handy die
