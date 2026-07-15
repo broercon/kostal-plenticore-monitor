@@ -396,6 +396,18 @@ Zur Kontrolle in den Logs nachsehen:
 docker compose logs --no-color kostal-monitor | grep -i "nicht erreichbar\|Unerwarteter Fehler"
 ```
 
+Zusätzlich gibt es einen **Watchdog**: Kommt über mehrere Minuten kein
+einziger erfolgreicher Abruf zustande (Standard: `max(5 Minuten, 20 ×
+POLL_INTERVAL_SECONDS)`), startet die App das Polling **intern selbst neu** –
+sie bricht den womöglich hängenden Abruf ab, baut die Geräteverbindungen
+frisch auf und pollt weiter, ohne dass ein manueller Container-Neustart
+(`docker compose up -d --build`) nötig ist. Das fängt auch seltene *Hänger*
+ab, bei denen der Prozess zwar noch läuft (also `restart: unless-stopped`
+nicht greift), aber keine neuen Daten mehr liefert. Falls ein
+Wechselrichter nachts nur schläft, ist der Neustart unschädlich – es wird
+dann einfach weiter erfolglos versucht, bis das Gerät morgens wieder
+antwortet.
+
 ## Mehrere Wechselrichter: Hausverbrauch/Netz korrekt berechnen
 
 Bei zwei (oder mehr) Wechselrichtern am selben Hausanschluss – typisch: ein
@@ -781,6 +793,48 @@ drei Poll-Intervalle (mindestens aber 120s) tatsächlich einen Messwert von
 ihm erhalten hat (siehe `app/daily_summary.py:device_online_map`). Ein
 Gerät, das seit Containerstart noch nie erfolgreich erreicht wurde, gilt
 als nicht aktiv.
+
+## Kennzahlen: PV-Ertrag, Hausverbrauch & Einspeisung – wie sie berechnet werden
+
+Damit dieselbe Größe überall denselben Wert zeigt, gelten feste Regeln.
+
+### PV-Ertrag = reine PV-Erzeugung
+
+Der PV-Ertrag (Kachel „PV-Ertrag heute", Wechselrichter-Tabelle,
+PV-Ertrag-Übersicht je Zeitraum, Kurve „PV-Leistung" im Leistungsverlauf und
+der Mail-Report) ist die **reine Erzeugung der PV-Module**, integriert aus
+der Momentanleistung (Trapezregel).
+
+Bewusst **nicht** der geräteeigene Tageszähler `Statistic:Yield:Day`: dieser
+misst den *Wechselrichter-Ausgang* und enthält bei Hybrid-Geräten auch die
+Batterieentladung. Er zeigt deshalb nachts einen „PV-Ertrag" > 0, obwohl die
+Module nichts erzeugen.
+
+**Batterie am PV3-String:** Hängt die Batterie am dritten PV-Eingang (PV3),
+steckt ihre Leistung bereits in `pv_power_w` (= pv1 + pv2 + pv3). Die reine
+PV wird deshalb als `pv_power_w − battery_power_w` berechnet. Beide Werte
+werden roh gespeichert, die Subtraktion ist damit vorzeichensicher
+(unabhängig von Laden/Entladen) und auf ≥ 0 begrenzt; nachts ergibt sich so
+0. Der Gesamtwert („Alle (Summe)") ist die Summe der Wechselrichter, da PV
+additiv ist.
+
+### Gerätezähler vs. Integration
+
+Für Hausverbrauch (`Statistic:EnergyHome:Day`) und Einspeisung/Netz wird der
+geräteeigene Tageszähler als maßgeblich genutzt, sofern vorhanden. Fehlt er
+(z.B. bei per Logdaten-Import eingespielten Altdaten), wird aus den
+gespeicherten Momentanleistungen integriert. Die Integration ist eine
+Näherung und kann um wenige Prozent vom Zählerwert abweichen.
+
+### Hausverbrauch nach Quelle
+
+Die Aufschlüsselung des Hausverbrauchs in PV / Batterie / Netz wird immer per
+Integration aus der Energiebilanz gebildet und summiert sich (bis auf
+Rundung) zum Hausverbrauch des Tages. Bei **mehreren** Wechselrichtern nutzen
+sowohl die Kachel „Hausverbrauch heute" als auch die Aufschlüsselung dieselbe
+integrierte, korrigierte Hausbilanz und stimmen überein. Bei **nur einem**
+Wechselrichter kann die Kachel (Gerätezähler) minimal von der Summe der drei
+Anteile (Integration) abweichen – zwei legitime Methoden derselben Größe.
 
 ## Grenzen / mögliche Erweiterungen
 
