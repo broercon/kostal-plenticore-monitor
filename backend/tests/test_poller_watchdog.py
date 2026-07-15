@@ -55,3 +55,28 @@ def test_poll_once_updates_last_success_and_stores(client):
     finally:
         db.close()
     assert len(rows) == 1
+
+
+def test_notify_stall_sends_mail_once(client, monkeypatch):
+    """Bei einem Haenger wird EINE Mail mit den Report-Zugangsdaten
+    verschickt, die auf die Logdatei verweist."""
+    import app.poller as poller_mod
+
+    sent = []
+
+    async def fake_send(subject, body, *, cfg, html=False):
+        sent.append({"subject": subject, "body": body, "cfg": cfg, "html": html})
+
+    monkeypatch.setattr("app.report_mailer.send_report_mail", fake_send)
+    monkeypatch.setattr(
+        "app.daily_report_config.get_config",
+        lambda: {"recipients": ["a@b.de"], "mail_service_url": "http://x/send"},
+    )
+
+    p = poller_mod.Poller()
+    asyncio.run(p._notify_stall())
+
+    assert len(sent) == 1
+    assert "Polling" in sent[0]["subject"]
+    assert "app.log" in sent[0]["body"]
+    assert sent[0]["cfg"]["recipients"] == ["a@b.de"]

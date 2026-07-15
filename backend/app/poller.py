@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .config import settings
 from .database import SessionLocal
@@ -30,6 +32,9 @@ class Poller:
         # gegen den beobachteten naechtlichen "Polling stoppt bis Rebuild"-
         # Effekt). Mind. 5 Minuten bzw. 20 Poll-Intervalle.
         self._stall_restart_seconds = max(300, settings.poll_interval_seconds * 20)
+        # Nur EINE Benachrichtigungs-Mail je Haenger-Episode (bis wieder ein
+        # Abruf gelingt), damit es keine Mail-Flut gibt.
+        self._stall_notified = False
 
     def start(self) -> None:
         if not self.devices:
@@ -79,10 +84,43 @@ class Poller:
                     "starte Polling intern neu.",
                     self._stall_restart_seconds,
                 )
+                if not self._stall_notified:
+                    self._stall_notified = True
+                    await self._notify_stall()
                 try:
                     await self._restart_polling()
                 except Exception:  # noqa: BLE001
                     logger.exception("Interner Poller-Neustart fehlgeschlagen")
+
+    async def _notify_stall(self) -> None:
+        """Schickt EINE Benachrichtigungs-Mail (mit denselben Zugangsdaten wie
+        der taegliche Report), wenn ein Polling-Haenger erkannt wurde, und
+        verweist auf die persistente Logdatei zum Herauskopieren. Fehler beim
+        Versand duerfen den Watchdog NICHT stoppen."""
+        try:
+            from .daily_report_config import get_config
+            from .report_mailer import ReportMailError, send_report_mail
+
+            cfg = get_config()
+            when = datetime.now(ZoneInfo(settings.timezone_name)).strftime("%d.%m.%Y %H:%M:%S")
+            minutes = self._stall_restart_seconds // 60
+            subject = "[Kostal Plenticore Monitor] Polling-Haenger erkannt"
+            body = (
+                f"Am {when} wurde ein Polling-Haenger erkannt (seit mindestens "
+                f"{minutes} Minuten kein erfolgreicher Abruf). Das Polling wurde "
+                f"automatisch neu gestartet.\n\n"
+                f"Zur Ursachenanalyse liegen die Logs in der Datei:\n"
+                f"  data/logs/app.log\n"
+                f"(im Projektverzeichnis neben docker-compose.yml; im Container: "
+                f"{settings.log_file}).\n\n"
+                f"Bitte diese Datei herauskopieren und zur Diagnose weiterleiten."
+            )
+            await send_report_mail(subject, body, cfg=cfg, html=False)
+            logger.info("Stall-Benachrichtigung per Mail verschickt.")
+        except ReportMailError as exc:
+            logger.warning("Stall-Benachrichtigung nicht versendet: %s", exc)
+        except Exception:  # noqa: BLE001
+            logger.exception("Fehler beim Versand der Stall-Benachrichtigung")
 
     async def _restart_polling(self) -> None:
         """Bricht den (evtl. haengenden) Poll-Task ab, schliesst alle Geraete-
@@ -166,6 +204,7 @@ class Poller:
             return
         self.latest[reading["device_id"]] = reading
         self._last_success = time.monotonic()
+        self._stall_notified = False
         session = SessionLocal()
         try:
             session.add(Reading(**reading))
