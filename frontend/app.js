@@ -441,10 +441,16 @@ async function refreshLiveCards() {
 
   // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
   // zusammengefasste "_all_"-Eintrag hat keinen eigenen SoC-Wert) - dafuer
-  // immer die einzelnen Geraete verwenden, auch in der "Alle"-Ansicht.
-  const batteryEntries = relevant.filter(
-    (r) => r.battery_soc_percent !== null && r.battery_soc_percent !== undefined
-  );
+  // immer die einzelnen Geraete verwenden, auch in der "Alle"-Ansicht. Die
+  // Kachel wird angezeigt, sobald ueberhaupt ein Batteriewert vorliegt -
+  // Leistung ODER SoC. Nachts meldet der Wechselrichter zeitweise keinen SoC
+  // mehr (SoC = null), waehrend die Batterie durchaus noch Leistung abgibt;
+  // frueher verschwand die Kachel dann ganz. Jetzt bleibt sie sichtbar und
+  // zeigt den SoC als "-" an, solange nur die Leistung bekannt ist.
+  const hasBattery = (r) =>
+    (r.battery_soc_percent !== null && r.battery_soc_percent !== undefined) ||
+    (r.battery_power_w !== null && r.battery_power_w !== undefined);
+  const batteryEntries = relevant.filter(hasBattery);
   if (batteryEntries.length === 0) {
     el("card-battery-wrapper").style.display = "none";
   } else {
