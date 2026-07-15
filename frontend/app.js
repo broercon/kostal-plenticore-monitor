@@ -82,8 +82,7 @@ async function checkAuth() {
   el("user-info").textContent = `${state.currentUser.username} (${roleLabel})`;
 
   if (state.currentUser.role === "admin") {
-    el("admin-panel-btn").classList.remove("hidden");
-    el("daily-report-panel-btn").classList.remove("hidden");
+    el("admin-area-btn").classList.remove("hidden");
   }
 
   if (state.currentUser.must_change_password) {
@@ -266,23 +265,39 @@ async function extractErrorMessage(res) {
   return "Speichern fehlgeschlagen.";
 }
 
-function setupDailyReportPanel() {
-  el("daily-report-panel-btn").addEventListener("click", async () => {
+function setupAdminArea() {
+  // Eine konsolidierte Admin-Seite (Benutzerverwaltung, Mail-Report,
+  // Logdaten-Abgleich). Nur fuer Admins sichtbar; die zugehoerigen Endpunkte
+  // sind zusaetzlich serverseitig ueber require_admin abgesichert.
+  const overlay = el("admin-area-overlay");
+
+  el("admin-area-btn").addEventListener("click", async () => {
+    el("admin-reset-result").textContent = "";
     el("dr-save-result").textContent = "";
     el("dr-trigger-result").textContent = "";
-    el("daily-report-overlay").classList.remove("hidden");
+    overlay.classList.remove("hidden");
+    try {
+      await loadAdminUserTable();
+    } catch (err) {
+      console.error(err);
+    }
     try {
       await loadDailyReportConfigIntoForm();
       await refreshDailyReportStatusText();
     } catch (err) {
       console.error(err);
     }
+    // Import-Status laden + (nur bei laufendem Abgleich) Polling starten -
+    // ausschliesslich waehrend das Admin-Overlay offen ist.
+    updateImportStatusUI().catch(console.error);
   });
 
-  el("daily-report-close").addEventListener("click", () => {
-    el("daily-report-overlay").classList.add("hidden");
+  el("admin-area-close").addEventListener("click", () => {
+    overlay.classList.add("hidden");
+    stopImportPolling();
   });
 
+  // --- Mail-Report: Speichern + Testmail ---
   el("daily-report-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     el("dr-save-result").textContent = "Speichert …";
@@ -333,20 +348,23 @@ function setupDailyReportPanel() {
       btn.disabled = false;
     }
   });
-}
 
-function setupAdminPanel() {
-  el("admin-panel-btn").addEventListener("click", async () => {
-    el("admin-reset-result").textContent = "";
-    el("admin-panel-overlay").classList.remove("hidden");
+  // --- Logdaten-Abgleich manuell anstossen ---
+  el("trigger-import-btn").addEventListener("click", async () => {
+    const btn = el("trigger-import-btn");
+    btn.disabled = true;
+    el("import-status-text").textContent = "Wird gestartet …";
     try {
-      await loadAdminUserTable();
+      const res = await fetch("/api/admin/import-history", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!data.started) {
+        el("import-status-text").textContent = data.message || "Läuft bereits – bitte warten.";
+      }
     } catch (err) {
       console.error(err);
+      el("import-status-text").textContent = "Fehler beim Starten.";
     }
-  });
-  el("admin-panel-close").addEventListener("click", () => {
-    el("admin-panel-overlay").classList.add("hidden");
+    updateImportStatusUI().catch(console.error);
   });
 }
 
@@ -1166,25 +1184,6 @@ async function updateImportStatusUI() {
     (summary ? ` – ${summary}` : "");
 }
 
-function setupImportTrigger() {
-  const btn = el("trigger-import-btn");
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    el("import-status-text").textContent = "Wird gestartet …";
-    try {
-      const res = await fetch("/api/admin/import-history", { method: "POST" });
-      const data = await res.json();
-      if (!data.started) {
-        el("import-status-text").textContent = data.message || "Läuft bereits – bitte warten.";
-      }
-    } catch (err) {
-      console.error(err);
-      el("import-status-text").textContent = "Fehler beim Starten.";
-    }
-    updateImportStatusUI().catch(console.error);
-  });
-  updateImportStatusUI().catch(console.error);
-}
 
 // Panels, ueber die beim (Neu-)Laden ein Ladeindikator gelegt wird - die
 // alten Werte werden dabei abgedimmt, bis die neuen Daten da sind.
@@ -1253,24 +1252,36 @@ async function refreshAll({ showLoading = false } = {}) {
   }
 }
 
+// Aktualisierungs-Ring in der Topbar bei jeder Kopf-Aktualisierung neu
+// starten (synchron zum Auto-Refresh-Intervall).
+function restartRefreshRing() {
+  const ring = document.querySelector(".refresh-ring-progress");
+  if (!ring) return;
+  ring.style.animation = "none";
+  void ring.getBoundingClientRect(); // Reflow erzwingen -> Animation startet neu
+  ring.style.animation = "";
+}
+
 async function init() {
   await checkAuth(); // leitet bei fehlender/ungueltiger Sitzung zu login.html um
   setupChangePassword();
   setupLogout();
-  setupAdminPanel();
-  setupDailyReportPanel();
+  setupAdminArea();
   await loadDevices();
   setupRangeButtons();
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
-  setupImportTrigger();
   await refreshAll({ showLoading: true });
   refreshPvYieldSummary().catch(console.error);
+  const LIVE_REFRESH_MS = 20000;
+  const ringEl = document.querySelector(".refresh-ring-progress");
+  if (ringEl) ringEl.style.setProperty("--refresh-secs", LIVE_REFRESH_MS / 1000 + "s");
   setInterval(() => {
     refreshLiveCards().catch(console.error);
     refreshSummaryCards().catch(console.error);
-  }, 20000);
+    restartRefreshRing();
+  }, LIVE_REFRESH_MS);
   setInterval(() => refreshChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);

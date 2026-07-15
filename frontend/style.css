@@ -256,15 +256,30 @@ canvas {
 /* ---- Wechselrichter-Auswahl (Tabs statt Dropdown, ein Klick zum Wechseln) ---- */
 
 .device-tabs {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
+  max-width: 100%;
   margin-bottom: 16px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
 }
 
 .device-tabs button {
-  border-radius: 20px;
-  padding: 6px 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-weight: 500;
+}
+
+.device-tabs button:hover:not(.active) {
+  background: var(--panel-hover);
+  color: var(--text);
+  border-color: transparent;
 }
 
 .device-tabs button.active {
@@ -470,4 +485,74 @@ canvas {
 
 .modal-checkbox input[type="checkbox"] {
   width: auto;
+}
+
+
+/* ---- Konsolidierte Admin-Seite (Overlay mit mehreren Abschnitten) ---- */
+
+.modal-admin {
+  max-width: 640px;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.modal-admin-head {
+  flex-direction: row;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-admin-head h2 {
+  margin: 0;
+}
+
+.admin-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-section h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.admin-section .import-trigger {
+  margin: 8px 0 0;
+}
+
+/* ---- Aktualisierungs-Ring in der Topbar: fuellt sich ueber das
+   Auto-Refresh-Intervall und ist "voll", wenn die Werte aktualisiert
+   werden. ---- */
+
+.refresh-indicator {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.refresh-ring-track {
+  fill: none;
+  stroke: var(--panel-border);
+  stroke-width: 2.5;
+}
+
+.refresh-ring-progress {
+  fill: none;
+  stroke: var(--accent-blue);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 56.55; /* 2*pi*9 */
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  animation: refresh-fill var(--refresh-secs, 20s) linear infinite;
+}
+
+@keyframes refresh-fill {
+  from { stroke-dashoffset: 56.55; }
+  to { stroke-dashoffset: 0; }
 }

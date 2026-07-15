@@ -213,7 +213,7 @@ def post_admin_reset_password(
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)
 async def post_trigger_import_history(
-    _user: User = Depends(auth.get_current_user),
+    _admin: User = Depends(auth.require_admin),
 ) -> ImportTriggerOut:
     """Stoesst den Logdaten-Abgleich sofort an, statt nur beim naechsten
     Container-Start - z.B. um nach einer Konfigurationsaenderung (etwa
@@ -229,7 +229,7 @@ async def post_trigger_import_history(
 
 
 @app.get("/api/admin/import-history/status", response_model=ImportStatusOut)
-def get_import_history_status(_user: User = Depends(auth.get_current_user)) -> ImportStatusOut:
+def get_import_history_status(_admin: User = Depends(auth.require_admin)) -> ImportStatusOut:
     return ImportStatusOut(**get_import_status())
 
 
@@ -368,7 +368,7 @@ def get_today_summary(_user: User = Depends(auth.get_current_user)) -> list[Summ
 
 @app.get("/api/admin/daily-report/status", response_model=DailyReportStatusOut)
 def get_daily_report_status_endpoint(
-    _user: User = Depends(auth.get_current_user),
+    _admin: User = Depends(auth.require_admin),
 ) -> DailyReportStatusOut:
     """Stand des taeglichen Mail-Reports: ob er aktiv ist (Konfiguration
     vollstaendig), die eingestellte Uhrzeit/Empfaenger, sowie Zeitpunkt und
