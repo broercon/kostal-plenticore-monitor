@@ -19,9 +19,12 @@
     </span>
     <span id="last-update" class="muted"></span>
     <span id="user-info" class="muted"></span>
-    <button id="change-password-btn" type="button">Passwort ändern</button>
-    <button id="admin-area-btn" type="button" class="hidden">Admin</button>
-    <button id="logout-btn" type="button">Abmelden</button>
+    <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Menü" aria-expanded="false">☰</button>
+    <div class="topbar-actions" id="topbar-actions">
+      <button id="change-password-btn" type="button">Passwort ändern</button>
+      <button id="admin-area-btn" type="button" class="hidden">Admin</button>
+      <button id="logout-btn" type="button">Abmelden</button>
+    </div>
   </div>
 </header>
 
@@ -202,6 +205,7 @@
         <button data-hours="168">7 Tage</button>
         <button data-hours="720">30 Tage</button>
       </div>
+      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="power-chart"></canvas>
@@ -233,6 +237,7 @@
         <button data-days="14">14 Tage</button>
         <button data-days="30">30 Tage</button>
       </div>
+      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="daycompare-chart"></canvas>
@@ -262,6 +267,7 @@
         <button data-days="90">90 Tage</button>
         <button data-days="365">365 Tage</button>
       </div>
+      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="dailytotals-chart"></canvas>
@@ -290,6 +296,7 @@
         <button data-days="7">7 Tage</button>
         <button data-days="30">30 Tage</button>
       </div>
+      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
     </div>
     <div class="chart-canvas-wrapper">
       <canvas id="hourly-chart"></canvas>

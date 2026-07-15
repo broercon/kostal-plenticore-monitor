@@ -18,6 +18,9 @@ const state = {
     days: 1,
     chart: null,
   },
+  // Werte-Anzeige der Diagramme (Tooltip/Hover). Auf Touch-Geraeten
+  // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
+  chartsInteractive: true,
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -635,6 +638,7 @@ async function refreshChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       interaction: { mode: "index", intersect: false },
       scales: {
         x: xScale,
@@ -816,6 +820,7 @@ async function refreshDayCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
       // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
       // vergleichen lassen.
@@ -958,6 +963,7 @@ async function refreshDailyTotalsChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       interaction: { mode: "index", intersect: false },
       scales: {
         x: {
@@ -1070,6 +1076,7 @@ async function refreshHourlyCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      events: chartEvents(),
       // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
       // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
       // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
@@ -1252,6 +1259,76 @@ async function refreshAll({ showLoading = false } = {}) {
   }
 }
 
+function chartEvents() {
+  // Leeres Array = Chart.js reagiert auf keinerlei Zeiger-/Touch-Events
+  // (kein Tooltip/Hover). So faengt das Diagramm auf dem Handy die
+  // Scroll-Geste nicht ab, solange die Werte-Anzeige aus ist.
+  return state.chartsInteractive
+    ? ["mousemove", "mouseout", "click", "touchstart", "touchmove"]
+    : [];
+}
+
+
+function isTouchDevice() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(hover: none), (pointer: coarse)").matches
+  );
+}
+
+// Tooltip/Hover (Werte-Anzeige) fuer ALLE Diagramme ein-/ausschalten. Aus =
+// keine Events -> das Diagramm faengt die Touch-Geste nicht ab, die Seite
+// scrollt frei; an = Werte lassen sich per Tippen/Hovern ablesen.
+function setChartsInteractive(on) {
+  state.chartsInteractive = on;
+  const charts = [
+    state.chart,
+    state.dayCompare.chart,
+    state.dailyTotals.chart,
+    state.hourlyCompare.chart,
+  ];
+  for (const c of charts) {
+    if (!c || !c.options) continue;
+    c.options.events = chartEvents();
+    if (typeof c.update === "function") c.update();
+  }
+  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
+    btn.textContent = on ? "Werte anzeigen: an" : "Werte anzeigen: aus";
+    btn.classList.toggle("active", on);
+  }
+}
+
+function setupTopbarMenu() {
+  const toggle = el("menu-toggle");
+  const menu = el("topbar-actions");
+  if (!toggle || !menu) return;
+  const close = () => {
+    menu.classList.remove("open");
+    toggle.setAttribute("aria-expanded", "false");
+  };
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = menu.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  // Auswahl im Menue schliesst es wieder (dann oeffnet sich z.B. der Dialog).
+  menu.addEventListener("click", (e) => {
+    if (e.target.closest("button")) close();
+  });
+  // Tippen/Klicken ausserhalb schliesst das Menue.
+  document.addEventListener("click", (e) => {
+    if (!menu.contains(e.target) && e.target !== toggle) close();
+  });
+}
+
+function setupChartInteractionToggle() {
+  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
+    btn.addEventListener("click", () => setChartsInteractive(!state.chartsInteractive));
+  }
+}
+
+
 // Aktualisierungs-Ring in der Topbar bei jeder Kopf-Aktualisierung neu
 // starten (synchron zum Auto-Refresh-Intervall).
 function restartRefreshRing() {
@@ -1264,16 +1341,22 @@ function restartRefreshRing() {
 
 async function init() {
   await checkAuth(); // leitet bei fehlender/ungueltiger Sitzung zu login.html um
+  // Auf Touch-Geraeten die Diagramm-Interaktion standardmaessig ausschalten
+  // (Scrollen soll Vorrang haben); am Desktop (Maus) an lassen.
+  state.chartsInteractive = !isTouchDevice();
   setupChangePassword();
   setupLogout();
+  setupTopbarMenu();
   setupAdminArea();
   await loadDevices();
   setupRangeButtons();
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
+  setupChartInteractionToggle();
   await refreshAll({ showLoading: true });
   refreshPvYieldSummary().catch(console.error);
+  setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
   const ringEl = document.querySelector(".refresh-ring-progress");
   if (ringEl) ringEl.style.setProperty("--refresh-secs", LIVE_REFRESH_MS / 1000 + "s");
