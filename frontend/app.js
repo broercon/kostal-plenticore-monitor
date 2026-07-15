@@ -798,7 +798,10 @@ async function refreshDayCompareChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: { mode: "nearest", intersect: false },
+      // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
+      // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
+      // vergleichen lassen.
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: {
           type: "linear",
@@ -821,6 +824,7 @@ async function refreshDayCompareChart() {
       plugins: {
         legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
         tooltip: {
+          itemSort: (a, b) => b.parsed.y - a.parsed.y,
           callbacks: {
             title: (items) => (items.length ? minutesToLabel(items[0].parsed.x) : ""),
             label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
