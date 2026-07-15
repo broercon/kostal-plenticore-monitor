@@ -482,7 +482,9 @@ def test_daily_report_status_requires_login(client):
     assert res.status_code == 401
 
 
-def test_daily_report_status_visible_to_any_logged_in_user(client):
+def test_daily_report_status_requires_admin(client):
+    """Der Report-Status ist Teil der Admin-Seite und daher Admin-only:
+    ein Betreiber bekommt 403, ein Admin 200."""
     update_config(
         enabled=True,
         report_time="19:00",
@@ -492,12 +494,28 @@ def test_daily_report_status_visible_to_any_logged_in_user(client):
         mail_service_from_name="",
     )
     _login_betreiber(client)
+    assert client.get("/api/admin/daily-report/status").status_code == 403
+
+    _login_admin(client)
     res = client.get("/api/admin/daily-report/status")
     assert res.status_code == 200
     body = res.json()
     assert body["enabled"] is True
     assert body["scheduled_time"] == "19:00"
     assert body["recipients"] == ["a@example.com"]
+
+
+def test_import_history_endpoints_require_admin(client):
+    """Der Logdaten-Abgleich (Trigger + Status) darf nur von Admins ausgeloest/
+    gelesen werden - auch nicht ueber einen direkt gebauten Request eines
+    Betreibers (Absicherung server-seitig, nicht nur in der UI)."""
+    _login_betreiber(client, "betreiber-import-test")
+    assert client.post("/api/admin/import-history").status_code == 403
+    assert client.get("/api/admin/import-history/status").status_code == 403
+
+    _login_admin(client)
+    assert client.post("/api/admin/import-history").status_code == 200
+    assert client.get("/api/admin/import-history/status").status_code == 200
 
 
 def test_daily_report_config_requires_admin_role(client):
