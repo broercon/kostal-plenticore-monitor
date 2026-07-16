@@ -757,7 +757,10 @@ function buildDayCompareDatasets(days, metric) {
       });
       datasets.push({
         label: `${dateLabel} · Batterie`,
-        data: day.points.map((p) => ({ x: p.minute, y: p.home_from_battery_w })),
+        // Vorzeichenbehaftete Batterieleistung wie im Leistungsverlauf:
+        // negativ = Laden, positiv = Entladen (statt nur des ins Haus
+        // abgegebenen Anteils, der das Laden nicht zeigte).
+        data: day.points.map((p) => ({ x: p.minute, y: p.battery_power_w })),
         borderColor: color,
         backgroundColor: "transparent",
         borderWidth: width,
@@ -776,8 +779,9 @@ function updateDayCompareHint(metric) {
   if (metric === "solar_battery") {
     hint.textContent =
       `Durchgezogene Linie = Hausverbrauch aus Solar, gestrichelte Linie (gleiche ` +
-      `Farbe) = aus der Batterie. Nur bei live erfassten Daten verfügbar ` +
-      `(nicht bei importierten Altdaten ohne Netzmessung) und auf ${SOLAR_BATTERY_MAX_DAYS} ` +
+      `Farbe) = Batterieleistung (negativ = Laden, positiv = Entladen), wie im ` +
+      `Leistungsverlauf. Nur bei live erfassten Daten verfügbar (nicht bei ` +
+      `importierten Altdaten ohne Netzmessung) und auf ${SOLAR_BATTERY_MAX_DAYS} ` +
       `Tage begrenzt, damit die Legende lesbar bleibt.`;
   } else {
     hint.textContent =
@@ -805,7 +809,7 @@ async function refreshDayCompareChart() {
     return;
   const datasets = buildDayCompareDatasets(result.days, metric);
 
-  const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Hausverbrauch";
+  const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Solar / Batterie";
 
   if (state.dayCompare.chart) {
     state.dayCompare.chart.data.datasets = datasets;
