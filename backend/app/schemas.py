@@ -55,6 +55,9 @@ class DayProfilePoint(BaseModel):
     grid_draw_power_w: float | None = None
     home_from_solar_w: float | None = None
     home_from_battery_w: float | None = None
+    # Vorzeichenbehaftete Batterieleistung (negativ = Laden, positiv =
+    # Entladen) - wie im Leistungsverlauf, fuer den Tagesvergleich.
+    battery_power_w: float | None = None
 
 
 class DayProfileDay(BaseModel):

@@ -414,6 +414,9 @@ def day_profile(
             "grid_draw_power_w": round(grid_draw, 1) if grid_draw is not None else None,
             "home_from_solar_w": home_from_solar,
             "home_from_battery_w": home_from_battery,
+            # Vorzeichenbehaftete Batterieleistung (negativ = Laden), damit der
+            # Tagesvergleich das Laden wie der Leistungsverlauf abbilden kann.
+            "battery_power_w": round(battery, 1) if battery is not None else None,
         }
         by_date.setdefault(date_str, {})[bucket] = point
 
