@@ -77,13 +77,18 @@ class PlenticoreDevice:
         self._request: dict[str, list[str]] = {}
         self._connected = False
 
-    async def _connect(self) -> None:
-        self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=10)
-        )
-        client = ExtendedApiClient(self._session, self.cfg.host, port=self.cfg.port)
-        await client.login(self.cfg.password)
+    async def _build_request(self, client: ExtendedApiClient) -> dict[str, list[str]]:
+        """Ermittelt die aktuell am Geraet verfuegbaren Prozessdaten und bildet
+        daraus die Abfrageliste (Schnittmenge mit PROCESS_DATA_CANDIDATES).
 
+        Wird sowohl beim Verbinden als auch bei JEDEM Abruf aufgerufen, damit
+        Module, die erst wieder verfuegbar werden, sofort erneut abgefragt
+        werden. Hintergrund: manche Plenticore liefern nachts (Stromsparmodus)
+        nur noch die Statistik-Datenpunkte, nicht aber die Live-Leistung
+        (devices:local, Batterie, pv_P). Wuerde die Abfrageliste - wie zuvor -
+        nur einmal beim Verbinden bestimmt, bliebe ein solches Geraet
+        dauerhaft auf dem reduzierten Satz haengen und lieferte auch tagsueber
+        keine Live-Werte mehr, solange die Verbindung bestehen bleibt."""
         available = await client.get_process_data()
         request: dict[str, list[str]] = {}
         for module, keys in PROCESS_DATA_CANDIDATES.items():
@@ -91,6 +96,16 @@ class PlenticoreDevice:
                 present = [k for k in keys if k in available[module]]
                 if present:
                     request[module] = present
+        return request
+
+    async def _connect(self) -> None:
+        self._session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10)
+        )
+        client = ExtendedApiClient(self._session, self.cfg.host, port=self.cfg.port)
+        await client.login(self.cfg.password)
+
+        request = await self._build_request(client)
 
         self._client = client
         self._request = request
@@ -132,6 +147,12 @@ class PlenticoreDevice:
         try:
             if not self._connected:
                 await self._connect()
+            else:
+                # Verfuegbare Datenpunkte bei jedem Abruf neu bestimmen, damit
+                # ein Geraet, das nachts nur reduzierte Daten liefert und
+                # tagsueber wieder voll verfuegbar ist, nicht dauerhaft auf dem
+                # reduzierten Satz haengenbleibt (siehe _build_request).
+                self._request = await self._build_request(self._client)
             assert self._client is not None
             values = await self._client.get_process_data_values(self._request)
         except asyncio.CancelledError:
