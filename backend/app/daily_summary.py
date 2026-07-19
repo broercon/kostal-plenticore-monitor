@@ -13,10 +13,11 @@ ohne die Logik doppelt zu pflegen.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .aggregation import (
     aggregate_per_device,
@@ -29,7 +30,7 @@ from .aggregation import (
 )
 from .config import settings
 from .database import SessionLocal
-from .models import Reading
+from .models import DailyEnergyCache, Reading
 from .poller import poller
 from .schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 from .timeutil import local_midnight_utc
@@ -193,7 +194,7 @@ def device_battery_snapshot() -> list[dict]:
     return result
 
 
-def _energy_period_ranges() -> list[tuple[str, "date", "date"]]:
+def _energy_period_ranges() -> list[tuple[str, date, date]]:
     """Die neun Zeitraeume (key, from_date, to_date) fuer die Energie-
     Uebersichten: heute, gestern, vorgestern, diese/letzte Woche (Mo-So),
     dieser/letzter Kalendermonat sowie dieses/letztes Kalenderjahr."""
@@ -223,18 +224,118 @@ def _energy_period_ranges() -> list[tuple[str, "date", "date"]]:
     ]
 
 
-def _load_readings_since(earliest) -> list[Reading]:
-    since = datetime.combine(earliest, datetime.min.time(), tzinfo=ZoneInfo(settings.timezone_name))
-    since = since.astimezone(timezone.utc)
+def _load_readings_range(start_date: date, end_date_exclusive: date) -> list[Reading]:
+    """Laedt Messwerte fuer [start_date, end_date_exclusive) - anders als
+    frueher (_load_readings_since bis "jetzt") ein SCHMALES Zeitfenster,
+    passend zu _cached_daily_totals: fuer bereits gecachte Tage wird diese
+    Funktion gar nicht erst aufgerufen, fuer die verbleibenden (neuen/
+    fehlenden) Tage nur fuer genau deren Zeitfenster, nicht fuer den
+    gesamten angefragten Zeitraum (der bei "dieses/letztes Jahr" mehrere
+    Millionen Zeilen umfassen kann)."""
+    tz = ZoneInfo(settings.timezone_name)
+    since = datetime.combine(start_date, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+    until = datetime.combine(end_date_exclusive, datetime.min.time(), tzinfo=tz).astimezone(
+        timezone.utc
+    )
     session = SessionLocal()
     try:
         return list(
             session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+                select(Reading)
+                .where(Reading.timestamp >= since, Reading.timestamp < until)
+                .order_by(Reading.timestamp)
             )
         )
     finally:
         session.close()
+
+
+def invalidate_energy_cache(start_date: date, end_date: date) -> None:
+    """Löscht gecachte Tageswerte (siehe _cached_daily_totals) im
+    angegebenen Datumsbereich (inklusive beider Enden) - aufgerufen nach
+    einem Logdaten-Import (auto_import.py), der rückwirkend Messwerte für
+    diese Tage ergänzt/verändert haben könnte. Ohne das würde die nächste
+    Anfrage den alten (evtl. unvollständigen) Cache-Wert weiterverwenden,
+    statt ihn aus den jetzt vollständigeren Rohmesswerten neu zu berechnen."""
+    session = SessionLocal()
+    try:
+        session.execute(
+            delete(DailyEnergyCache).where(
+                DailyEnergyCache.date >= start_date.strftime("%Y-%m-%d"),
+                DailyEnergyCache.date <= end_date.strftime("%Y-%m-%d"),
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def _cached_daily_totals(
+    field_key: str,
+    earliest: date,
+    today: date,
+    compute_missing: Callable[[date, date], dict[str, float | None]],
+) -> dict[str, float | None]:
+    """Liefert {date_str: kwh} für [earliest, today] unter Ausnutzung von
+    daily_energy_cache: ABGESCHLOSSENE Tage (< today) werden nur EINMAL über
+    compute_missing(start, end_exclusive) berechnet und danach dauerhaft im
+    Cache abgelegt - jeder weitere Aufruf (z.B. alle 5 Minuten durchs
+    Dashboard) liest sie nur noch aus der (kleinen, indizierten)
+    Cache-Tabelle, statt erneut sämtliche Rohmesswerte seit `earliest` zu
+    laden und zu integrieren. "Heute" ist noch nicht abgeschlossen (der Wert
+    wächst über den Tag) und wird deshalb NIE gecacht, sondern bei jedem
+    Aufruf frisch berechnet - aber nur für diesen einen Tag, nicht den
+    gesamten Zeitraum."""
+    session = SessionLocal()
+    try:
+        cached_rows = list(
+            session.scalars(
+                select(DailyEnergyCache).where(
+                    DailyEnergyCache.field == field_key,
+                    DailyEnergyCache.date >= earliest.strftime("%Y-%m-%d"),
+                    DailyEnergyCache.date < today.strftime("%Y-%m-%d"),
+                )
+            )
+        )
+        result: dict[str, float | None] = {row.date: row.kwh for row in cached_rows}
+    finally:
+        session.close()
+
+    num_closed_days = (today - earliest).days
+    all_closed_dates = {
+        (earliest + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(num_closed_days)
+    }
+    missing_closed_dates = sorted(all_closed_dates - result.keys())
+
+    if missing_closed_dates:
+        # In EINEM Rutsch nachberechnen (ein Aufruf von compute_missing über
+        # die gesamte Lücke), statt Tag für Tag einzeln - in der Praxis nur
+        # beim allerersten Aufruf nach dieser Änderung ein größerer Bereich,
+        # danach höchstens noch ein einzelner neuer Tag (der gestrige,
+        # sobald er "abgeschlossen" ist).
+        gap_start = datetime.strptime(missing_closed_dates[0], "%Y-%m-%d").date()
+        gap_end_exclusive = datetime.strptime(missing_closed_dates[-1], "%Y-%m-%d").date() + timedelta(
+            days=1
+        )
+        fresh = compute_missing(gap_start, gap_end_exclusive)
+
+        session = SessionLocal()
+        try:
+            now = datetime.now(timezone.utc)
+            for date_str in missing_closed_dates:
+                session.merge(
+                    DailyEnergyCache(
+                        field=field_key, date=date_str, kwh=fresh.get(date_str), computed_at=now
+                    )
+                )
+            session.commit()
+        finally:
+            session.close()
+        result.update({d: fresh.get(d) for d in missing_closed_dates})
+
+    today_str = today.strftime("%Y-%m-%d")
+    result[today_str] = compute_missing(today, today + timedelta(days=1)).get(today_str)
+    return result
 
 
 def _periods_from_per_day(periods, per_day: dict[str, float | None]) -> list[FeedInPeriod]:
@@ -269,14 +370,22 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     `field` ist das zu integrierende Reading-Feld, z.B. "feed_in_power_w"
     (Einspeisung). Bei mehreren Wechselrichtern wird zuvor auf die hausweite,
     korrigierte Energiebilanz zusammengefasst (siehe _combined_rows). Fuer den
-    PV-Ertrag NICHT verwenden - dafuer build_pv_yield_summary(), das den
-    geraeteeigenen Tageszaehler nutzt (genauer + konsistent mit den Kacheln)."""
+    PV-Ertrag NICHT verwenden - dafuer build_pv_yield_summary().
+
+    Abgeschlossene Tage werden über _cached_daily_totals zwischengespeichert
+    (siehe dort) - ohne das würde jede Anfrage (Dashboard alle 5 Minuten)
+    sämtliche Rohmesswerte seit Anfang des Vorjahres neu integrieren."""
     periods = _energy_period_ranges()
     earliest = min(start for _, start, _ in periods)
-    rows = _load_readings_since(earliest)
-    if len(settings.inverters) > 1:
-        rows = _combined_rows(rows)
-    per_day = {d["date"]: d["kwh"] for d in daily_kwh_totals(rows, field, settings.timezone_name)}
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+
+    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
+        rows = _load_readings_range(start, end_exclusive)
+        if len(settings.inverters) > 1:
+            rows = _combined_rows(rows)
+        return {d["date"]: d["kwh"] for d in daily_kwh_totals(rows, field, settings.timezone_name)}
+
+    per_day = _cached_daily_totals(f"field:{field}", earliest, today, compute)
     return _periods_from_per_day(periods, per_day)
 
 
@@ -288,16 +397,23 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
 def build_pv_yield_summary() -> list[FeedInPeriod]:
     """PV-Ertrag (kWh) je Zeitraum - fuer Dashboard-Leiste und Mail-Report.
 
-    Nutzt den geraeteeigenen Tageszaehler (yield_day_kwh) je Geraet und Tag,
-    summiert ueber alle Wechselrichter - dieselbe Quelle wie die PV-Ertrag-
-    Kacheln oben. Dadurch stimmt "Heute" hier exakt mit dem Hero-Wert und der
-    Summe der Geraetetabelle ueberein. Nur wo kein Zaehlerstand vorliegt
-    (importierte Altdaten), wird die PV-Leistung integriert (siehe
-    daily_pv_yield_totals)."""
+    PV-Ertrag = reine PV-Erzeugung, aus der Leistung integriert (siehe
+    aggregation.daily_pv_yield_totals/integrate_pure_pv_kwh) - bewusst NICHT
+    der geräteeigene Tageszähler Statistic:Yield:Day, der beim Hybrid den
+    Wechselrichter-Ausgang inkl. Batterieentladung mitzählt.
+
+    Abgeschlossene Tage werden über _cached_daily_totals zwischengespeichert
+    (siehe dort) - ohne das würde jede Anfrage (Dashboard alle 5 Minuten)
+    sämtliche Rohmesswerte seit Anfang des Vorjahres neu integrieren."""
     periods = _energy_period_ranges()
     earliest = min(start for _, start, _ in periods)
-    rows = _load_readings_since(earliest)
-    per_day = {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+
+    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
+        rows = _load_readings_range(start, end_exclusive)
+        return {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
+
+    per_day = _cached_daily_totals("pv_yield", earliest, today, compute)
     return _periods_from_per_day(periods, per_day)
 
 

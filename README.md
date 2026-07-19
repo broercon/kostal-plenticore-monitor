@@ -836,6 +836,31 @@ integrierte, korrigierte Hausbilanz und stimmen überein. Bei **nur einem**
 Wechselrichter kann die Kachel (Gerätezähler) minimal von der Summe der drei
 Anteile (Integration) abweichen – zwei legitime Methoden derselben Größe.
 
+## Performance: Energie-Zeitraum-Cache
+
+Die Zeitraum-Übersichten (PV-Ertrag, Einspeisung - "heute" bis "letztes
+Jahr", siehe oben) integrieren die Rohmesswerte je Kalendertag. Damit das
+Dashboard sie nicht bei jeder automatischen Aktualisierung (alle 5 Minuten)
+komplett neu aus sämtlichen Rohmesswerten seit Anfang des Vorjahres
+berechnen muss (bei 15s-Poll-Intervall potenziell mehrere Millionen Zeilen
+pro Anfrage), werden abgeschlossene (vergangene) Kalendertage in der
+Tabelle `daily_energy_cache` zwischengespeichert - nur "heute" (der noch
+laufende, sich ändernde Tag) wird bei jeder Anfrage frisch berechnet.
+
+Ein nachträglicher Logdaten-Import (siehe oben), der rückwirkend Messwerte
+für vergangene Tage ergänzt, invalidiert automatisch die betroffenen
+Cache-Einträge (siehe `app/auto_import.py`), damit sich geänderte
+Altdaten auch tatsächlich in den Übersichten niederschlagen.
+
+Zusätzlich läuft die Datenbank im SQLite-WAL-Modus (`PRAGMA
+journal_mode=WAL`), damit lesende Zugriffe (Dashboard/API) und der
+alle paar Sekunden schreibende Poller sich nicht gegenseitig blockieren,
+sowie mit einem zusätzlichen Index rein auf `readings.timestamp` (der
+bestehende zusammengesetzte Index beginnt mit `device_id` und hilft
+Abfragen ohne Geräte-Filter kaum). Beide Änderungen wirken automatisch
+auch auf Bestandsdatenbanken (siehe `app/database.py`), ein manueller
+Migrationsschritt ist nicht nötig.
+
 ## Grenzen / mögliche Erweiterungen
 
 - Aktuell wird nur eine feste Auswahl an Prozessdaten erfasst (Verbrauch,

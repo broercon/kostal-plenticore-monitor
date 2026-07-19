@@ -29,10 +29,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import InverterConfig, settings
+from .daily_summary import invalidate_energy_cache
 from .import_logdata import _download, import_rows, parse_logdata
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,27 @@ async def _run_import_body() -> None:
     try:
         results = []
         for cfg in settings.inverters:
-            results.append(await _import_one_device(cfg))
+            result = await _import_one_device(cfg)
+            results.append(result)
+            # Nur bei tatsaechlich neuen/nachtraeglich befuellten Zeilen die
+            # betroffenen Tage aus dem Energie-Zeitraum-Cache werfen (siehe
+            # daily_summary._cached_daily_totals) - ein Lauf, der wegen der
+            # Dedup-Logik in import_logdata.py nichts Neues findet (der
+            # Normalfall bei jedem Start), soll den Cache NICHT unnoetig
+            # verwerfen.
+            if result.get("status") == "ok" and (
+                (result.get("inserted") or 0) > 0 or (result.get("updated") or 0) > 0
+            ):
+                try:
+                    invalidate_energy_cache(
+                        date.fromisoformat(result["range_begin"]),
+                        date.fromisoformat(result["range_end"]),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Konnte Energie-Zeitraum-Cache nach Import fuer %s nicht invalidieren",
+                        cfg.name,
+                    )
         _state["results"] = results
     finally:
         _state["running"] = False

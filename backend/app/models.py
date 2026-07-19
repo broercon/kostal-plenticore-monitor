@@ -15,6 +15,12 @@ class Reading(Base):
     __tablename__ = "readings"
     __table_args__ = (
         Index("ix_readings_device_timestamp", "device_id", "timestamp"),
+        # Reine Zeitraum-Abfragen ueber ALLE Geraete (kein device_id-Filter -
+        # z.B. die Energie-Zeitraum-Uebersichten bei mehreren Wechselrichtern,
+        # siehe daily_summary.py) profitieren vom zusammengesetzten Index oben
+        # kaum, da er mit device_id beginnt. Migration fuer Bestandsdaten-
+        # banken siehe database._ensure_readings_timestamp_index.
+        Index("ix_readings_timestamp", "timestamp"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -80,6 +86,31 @@ class DailyReportSettings(Base):
     mail_service_api_key: Mapped[str] = mapped_column(String(256), nullable=False, default="")
     mail_service_from_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DailyEnergyCache(Base):
+    """Cache für abgeschlossene (vergangene) Kalendertage der Energie-
+    Zeitraum-Übersichten (PV-Ertrag/Einspeisung je Zeitraum, siehe
+    daily_summary._cached_daily_totals). Ein abgeschlossener Tag ändert
+    sich nicht mehr - außer ein nachträglicher Logdaten-Import ergänzt
+    rückwirkend genau diesen Tag, dann wird der betroffene Eintrag gelöscht
+    (siehe daily_summary.invalidate_energy_cache, aufgerufen aus
+    auto_import.py).
+
+    Ohne diesen Cache würde jede Anfrage (das Dashboard aktualisiert die
+    Zeitraum-Übersicht alle 5 Minuten) sämtliche Rohmesswerte seit Anfang
+    des Vorjahres neu integrieren - bei 15s-Poll-Intervall potenziell
+    mehrere Millionen Zeilen bei jedem einzelnen Aufruf."""
+
+    __tablename__ = "daily_energy_cache"
+
+    # z.B. "pv_yield" oder "feed_in_power_w" - erlaubt mehrere unabhängige
+    # Zeitraum-Übersichten im selben Cache, ohne dass sie sich gegenseitig
+    # überschreiben.
+    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    date: Mapped[str] = mapped_column(String(10), primary_key=True)  # "YYYY-MM-DD"
+    kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class Session(Base):

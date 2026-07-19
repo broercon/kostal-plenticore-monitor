@@ -1,7 +1,7 @@
 """SQLite-Anbindung ueber SQLAlchemy."""
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import settings
@@ -12,6 +12,23 @@ engine = create_engine(
     f"sqlite:///{settings.db_path}",
     connect_args={"check_same_thread": False},
 )
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ARG001
+    """WAL-Modus statt SQLites Standard-Rollback-Journal: lesende Zugriffe
+    (Dashboard-/API-Abfragen) blockieren dann nicht mehr gegenseitig mit dem
+    Poller, der alle paar Sekunden neue Messwerte schreibt (und umgekehrt) -
+    relevant, weil diese App staendig gleichzeitig liest und schreibt.
+    synchronous=NORMAL ist die fuer WAL uebliche Kombination (etwas
+    schwaecheres Crash-Sicherheitsversprechen als FULL, aber weiterhin
+    konsistente Daten nach einem Prozess-Absturz, nur nicht zwingend nach
+    einem Betriebssystem-/Stromausfall genau im Schreibmoment)."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -31,6 +48,7 @@ def init_db() -> None:
     # hier (siehe _ensure_ac_power_column).
     Base.metadata.create_all(bind=engine)
     _ensure_ac_power_column()
+    _ensure_readings_timestamp_index()
 
 
 def _ensure_ac_power_column() -> None:
@@ -45,3 +63,17 @@ def _ensure_ac_power_column() -> None:
         if "ac_power_w" not in columns:
             conn.exec_driver_sql("ALTER TABLE readings ADD COLUMN ac_power_w FLOAT")
             conn.commit()
+
+
+def _ensure_readings_timestamp_index() -> None:
+    """Ergaenzt einen Index rein auf readings.timestamp (ohne device_id),
+    falls er noch fehlt - fuer Bestandsdatenbanken von vor dieser Aenderung
+    (bei einer frisch angelegten Tabelle ist er bereits ueber
+    models.Reading.__table_args__ vorhanden). CREATE INDEX IF NOT EXISTS ist
+    in SQLite direkt idempotent, eine eigene Existenzpruefung wie bei
+    _ensure_ac_power_column ist hier nicht noetig."""
+    with engine.connect() as conn:
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_readings_timestamp ON readings (timestamp)"
+        )
+        conn.commit()
