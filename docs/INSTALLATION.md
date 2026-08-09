@@ -29,6 +29,23 @@ eigenen Zähler, der per AC die Batterie des ersten mitlädt) unbedingt den
 [Hinweise für mehrere Wechselrichter](CALCULATIONS.md#mehrere-wechselrichter-hausverbrauchnetz-korrekt-berechnen) lesen und `has_grid_meter` passend setzen – sonst werden
 Hausverbrauch und Netzbezug in der "Alle (Summe)"-Ansicht falsch berechnet.
 
+### Konfigurationsreferenz für Wechselrichter
+
+Jeder Eintrag in `config/inverters.json` unterstützt folgende Felder:
+
+| Feld | Erforderlich | Standard | Bedeutung |
+| --- | --- | --- | --- |
+| `id` | ja | – | Eindeutige interne Geräte-ID |
+| `name` | nein | Wert aus `id` | Anzeigename im Dashboard |
+| `host` | ja | – | IP-Adresse oder Hostname |
+| `password` | ja | – | Gerätepasswort des Plenticore |
+| `port` | nein | `80` | HTTP-Port der Wechselrichter-API |
+| `has_grid_meter` | nein | `true` | Kennzeichnet das Gerät mit dem echten Netzzähler/KSEM |
+| `battery_power_inverted` | nein | `false` | Kehrt das Vorzeichen der Batterieleistung für Berechnungen um |
+
+Boolesche Werte müssen in JSON als `true` oder `false` angegeben werden,
+nicht als Zeichenketten.
+
 ### 2. Optional: Abfrageintervall/Zeitzone anpassen
 
 ```bash
@@ -38,6 +55,43 @@ cp .env.example .env
 `POLL_INTERVAL_SECONDS` steuert, wie oft (in Sekunden) abgefragt wird.
 Standard: 15 Sekunden. `TIMEZONE` legt fest, wann der Tag für die
 "heute"-Kacheln beginnt (Standard: `Europe/Berlin`).
+### Umgebungsvariablen
+
+Die mitgelieferte `docker-compose.yml` reicht diese Variablen aus `.env`
+an den Container weiter:
+
+| Variable | Standard | Bedeutung |
+| --- | --- | --- |
+| `POLL_INTERVAL_SECONDS` | `15` | Polling-Intervall in Sekunden |
+| `TIMEZONE` | `Europe/Berlin` | Zeitzone für Tagesgrenzen und Berichte |
+| `AUTO_IMPORT_HISTORY` | `true` | Automatischen Historienabgleich beim Start aktivieren |
+| `AUTO_IMPORT_DAYS` | `35` | Importzeitraum; `0`, `all` oder `unbegrenzt` bedeutet maximal verfügbar |
+| `GRID_POWER_INVERTED` | `false` | Vorzeichen von Netzbezug/Einspeisung global umkehren |
+| `DAILY_REPORT_ENABLED` | `true` | Täglichen Bericht grundsätzlich aktivieren |
+| `DAILY_REPORT_TIME` | `19:00` | Versandzeit in lokaler Zeitzone |
+| `DAILY_REPORT_RECIPIENTS` | leer | Kommagetrennte Empfänger |
+| `MAIL_SERVICE_URL` | leer | Vollständiger `POST /send`-Endpunkt |
+| `MAIL_SERVICE_API_KEY` | leer | API-Key für den Mail-Service |
+| `MAIL_SERVICE_FROM_NAME` | `Kostal Plenticore Monitor` | Anzeigename des Absenders |
+
+Beim direkten Start des Backends oder in einer eigenen Container-
+Konfiguration unterstützt `app/config.py` zusätzlich:
+
+| Variable | Standard | Bedeutung |
+| --- | --- | --- |
+| `CONFIG_PATH` | `/app/config/inverters.json` | Pfad zur Geräte-Konfiguration |
+| `DB_PATH` | `/app/data/kostal.db` | Pfad zur SQLite-Datenbank |
+| `LOG_FILE` | `<DB-Verzeichnis>/logs/app.log` | Persistente Logdatei |
+| `FRONTEND_DIR` | `/app/frontend` | Verzeichnis des statischen Frontends |
+| `INVERTER_HOST`, `INVERTER_PASSWORD` | leer | Fallback für genau ein Gerät, wenn keine Konfigurationsdatei geladen wurde |
+| `INVERTER_ID`, `INVERTER_NAME`, `INVERTER_PORT` | `wr1`, `Wechselrichter`, `80` | Metadaten dieses Fallback-Geräts |
+| `INVERTER_HAS_GRID_METER` | `true` | Netzzähler-Kennzeichen des Fallback-Geräts |
+| `INVERTER_BATTERY_POWER_INVERTED` | `false` | Batterie-Vorzeichen des Fallback-Geräts |
+
+Diese zusätzlichen Variablen stehen zwar im Python-Code zur Verfügung, werden
+von der mitgelieferten Compose-Datei aber nicht automatisch aus `.env`
+durchgereicht.
+
 
 ### 3. Starten
 
@@ -75,7 +129,7 @@ automatisch zur Login-Seite um. Es gibt zwei Rollen:
 Beim allerersten Start (wenn die `users`-Tabelle noch leer ist) legt die App
 automatisch drei Nutzer an: `admin` (Rolle admin), `betreiber1` und `betreiber2`
 (Rolle betreiber) – jeweils mit einem zufällig erzeugten Initial-Passwort.
-Diese Passwörter werden **einmalig** in den Logs ausgegeben:
+Diese Passwörter werden beim ersten Start **einmalig ausgegeben**:
 
 ```bash
 docker compose logs -f kostal-monitor
@@ -96,7 +150,10 @@ und nach dem ersten Login ueber "Passwort aendern" ersetzen):
 Bitte notieren und danach über den Button "Passwort ändern" (oben rechts im
 Dashboard) durch ein eigenes Passwort ersetzen – bei diesen drei
 Initial-Konten öffnet sich der Passwort-Ändern-Dialog beim ersten Login
-automatisch.
+automatisch. Die Aufforderung erfolgt derzeit in der Oberfläche und ist nicht
+serverseitig erzwungen. Die Zugangsdaten landen außerdem in der persistenten
+Logdatei `data/logs/app.log`; diese Datei muss geschützt und nach der
+Übernahme der Konten bei Bedarf bereinigt werden.
 
 ### Passwort ändern / vergessen
 
@@ -107,8 +164,8 @@ bestehenden Sitzungen beendet und eine erneute Anmeldung ist erforderlich. Hat j
 sein Passwort vergessen, kann ein Admin es über die Benutzerverwaltung
 ("Benutzerverwaltung"-Button, nur für Rolle admin sichtbar) zurücksetzen:
 dort wird ein neues, zufälliges Passwort angezeigt (nur einmal – merken
-oder direkt an die Person weitergeben), das beim nächsten Login sofort
-geändert werden muss.
+oder direkt an die Person weitergeben). Beim nächsten Login öffnet die
+Oberfläche automatisch den Dialog zum Ändern dieses Passworts.
 
 ### Technische Details
 
@@ -121,11 +178,15 @@ geändert werden muss.
   ein Passwort-Wechsel oder Admin-Reset invalidiert alle Sitzungen des
   betroffenen Nutzers sofort. Ein Container-Neustart meldet bereits angemeldete
   Nutzer nicht ab (Sitzungen sind 30 Tage gültig).
-- Diese Nutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
-  Passwort-Reset per E-Mail) – für den Heimgebrauch im eigenen Netz
-  gedacht. Falls das Dashboard von außerhalb des eigenen Netzes erreichbar
-  sein soll, zusätzlich HTTPS (z.B. über einen Reverse Proxy) davorschalten,
-  damit Zugangsdaten nicht unverschlüsselt übertragen werden.
+- Das Cookie verwendet `HttpOnly` und `SameSite=Lax`, aber derzeit kein
+  `Secure`-Flag. Die Anwendung ist deshalb für das interne Netz gedacht.
+  Vor einer Veröffentlichung im Internet sollte neben HTTPS auch das
+  Cookie-Verhalten im Code gehärtet und unverschlüsseltes HTTP gesperrt werden.
+- Sitzungs-Token und der Mail-Service-API-Key werden in SQLite gespeichert.
+  Der API-Key wird zwar nie an das Frontend zurückgegeben, liegt in der
+  Datenbank aber im Klartext vor. Backups der Datenbank sind daher geheim zu
+  halten.
+- Die Nutzerverwaltung bietet kein 2FA und keinen Passwort-Reset per E-Mail.
 
 ### Update von einer Version ohne Benutzerverwaltung
 
