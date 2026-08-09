@@ -647,9 +647,9 @@ cookies.txt -b cookies.txt ...`).
 - `GET /api/admin/import-history/status` – Status/Ergebnis des letzten
   Abgleichs (`running`, `last_started_at`, `last_finished_at`, `results`
   je Wechselrichter).
-- `GET /api/admin/daily-report/status` – Status des täglichen Mail-Reports
-  (`enabled`, `scheduled_time`, `recipients`, `last_sent_at`,
-  `last_status`, `last_message`); für alle angemeldeten Nutzer sichtbar.
+- `GET /api/admin/daily-report/status` – (nur Rolle admin) Status des täglichen
+  Mail-Reports (`enabled`, `scheduled_time`, `recipients`,
+  `last_sent_at`, `last_status`, `last_message`).
 - `GET /api/admin/daily-report/config` – (nur Rolle admin) aktuelle
   Konfiguration; der Mail-Service-API-Key selbst wird nie zurückgegeben,
   nur `mail_service_api_key_set` (bool).
