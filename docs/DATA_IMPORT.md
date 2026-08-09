@@ -17,16 +17,15 @@ intern einen Datenlogger, dessen Aufzeichnungen sich über
 `backend/app/import_logdata.py` nachträglich importieren lassen – siehe
 [Alte Daten nachträglich importieren](#alte-daten-nachträglich-importieren).
 
-Die drei "heute"-Kacheln (PV-Ertrag, Verbrauch, Einspeisung) nutzen primär
-die vom Wechselrichter selbst mitgeführten Tageswerte. Manche Geräte/Logins
-liefern diese aber nicht vollständig (z.B. wenn der normale Nutzer-Login
-keinen Zugriff auf das Statistik-Modul hat, oder der virtuelle
-Einspeise-Tageswert eine Batterie voraussetzt). In diesem Fall rechnet die
-Anwendung automatisch aus den seit lokaler Mitternacht gespeicherten
-Leistungswerten hoch (Integration) – das braucht aber ebenfalls etwas
-Vorlauf seit Mitternacht, bis sinnvolle Werte erscheinen; bei einem frisch
-gestarteten Container mitten am Tag zeigt die selbst berechnete Kachel dann
-zunächst nur den Teil des Tages, der bereits erfasst wurde.
+Der heutige PV-Ertrag wird immer aus den seit lokaler Mitternacht
+gespeicherten Leistungswerten integriert. Dadurch wird bei Hybridgeräten die
+Batterieentladung nicht fälschlich als PV-Ertrag gezählt. Für Hausverbrauch
+und Einspeisung verwendet die App bevorzugt die Tageszähler des Geräts und
+fällt nur bei fehlenden Werten auf die Integration zurück.
+
+Ein frisch gestarteter Container kennt bei integrierten Kennzahlen nur den
+seit dem Start erfassten Teil des Tages, sofern die früheren Messpunkte nicht
+über den Historienimport ergänzt wurden.
 
 ## Alte Daten nachträglich importieren
 
@@ -47,7 +46,7 @@ dieser App nachträglich importieren – mit Einschränkungen:
 
 Die App macht das jetzt automatisch: bei jedem Start wird im Hintergrund
 (ohne das Dashboard zu blockieren) für jeden konfigurierten Wechselrichter
-der interne Logger der letzten `AUTO_IMPORT_DAYS` Tage (Standard: 7)
+der interne Logger der letzten `AUTO_IMPORT_DAYS` Tage (Standard: 35)
 abgeglichen. Das ist dank der Dedup-Logik gefahrlos bei jedem Neustart –
 so werden z.B. Lücken durch Ausfallzeiten automatisch nachträglich
 gefüllt, sobald der Server wieder läuft. In den Logs
@@ -117,3 +116,8 @@ erneuter Lauf überspringt bereits importierte Zeitstempel automatisch
 (kein doppelter Import). Falls die PV-Spalten falsch erkannt werden
 (Vorschau prüfen!), lassen sie sich mit `--pv-columns "DC0/P,DC1/P"`
 manuell vorgeben.
+
+Weitere optionale Argumente sind `--port`, `--device-name`,
+`--raw-lines` und `--raw-tail`. Die beiden `--raw-*`-Optionen dienen der
+Formatdiagnose und geben Ausschnitte der vom Wechselrichter gelieferten
+Rohdaten aus. Ohne `--commit` bleibt jeder Aufruf eine reine Vorschau.
