@@ -382,9 +382,9 @@ def get_daily_report_status_endpoint(
     vollstaendig), die eingestellte Uhrzeit/Empfaenger, sowie Zeitpunkt und
     Ausgang (Erfolg/Fehler) des letzten Versands - ohne dafuer die
     Container-Logs durchsuchen zu muessen (analog zu
-    /api/admin/import-history/status). Fuer alle angemeldeten Nutzer
-    sichtbar (nicht nur admin) - die Konfiguration selbst
-    (GET/PUT .../config) ist dagegen admin-only."""
+    /api/admin/import-history/status). Status und Konfiguration sind
+    ausschliesslich fuer Admins sichtbar; der Mail-Service-API-Key selbst
+    wird dabei nie zurueckgegeben."""
     cfg = get_daily_report_config()
     status_data = get_daily_report_status()
     return DailyReportStatusOut(
