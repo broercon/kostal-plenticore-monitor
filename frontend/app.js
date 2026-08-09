@@ -132,8 +132,10 @@ function setupChangePassword() {
         errorEl.textContent = data.detail || "Passwort konnte nicht geändert werden.";
         return;
       }
-      state.currentUser.must_change_password = false;
-      closeChangePasswordModal();
+      // Der Server invalidiert nach einem Passwortwechsel bewusst alle
+      // bisherigen Sessions. Direkt zur erneuten Anmeldung wechseln.
+      window.location.href = "login.html";
+      return;
     } catch (err) {
       console.error(err);
       errorEl.textContent = "Verbindung zum Server fehlgeschlagen.";
