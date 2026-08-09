@@ -70,9 +70,20 @@ ausführen (Node 18+ erforderlich):
 
 ```bash
 cd frontend/tests
-npm install
+npm ci
 npm test
 ```
+
+## Continuous Integration
+
+Der Workflow `.github/workflows/ci.yml` führt bei Pull Requests sowie bei
+Pushes auf `main` und `codex/**` drei unabhängige Checks aus:
+
+- Backend-Tests mit Python 3.12
+- Frontend-Tests mit Node.js 20
+- Build des Docker-Images
+
+## Abgedeckte Frontend-Fälle
 
 Abgedeckt ist u.a. das Verhalten beim Wechsel der Wechselrichter-Tabs
 (WR1/WR2/„Alle"): dass die Anzeige die Daten des gewählten Geräts lädt,
@@ -91,6 +102,5 @@ Aufbau (jsdom + Backend-Mock) steckt in `frontend/tests/harness.mjs`.
   PostgreSQL oder eine Zeitreihen-DB sinnvoll – die Datenzugriffsschicht ist
   bewusst einfach gehalten, damit das leicht austauschbar bleibt.
 - Die Benutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
-  Passwort-Reset per E-Mail, feste Rollen admin/betreiber) – siehe Abschnitt
-  "Benutzerverwaltung / Login" oben für Details und Empfehlungen bei
-  Zugriff von außerhalb des eigenen Netzes.
+  Passwort-Reset per E-Mail, feste Rollen admin/betreiber). Details stehen
+  unter [Benutzerverwaltung und Login](INSTALLATION.md#benutzerverwaltung--login).
