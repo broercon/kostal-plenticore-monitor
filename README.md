@@ -329,7 +329,9 @@ automatisch.
 ### Passwort ändern / vergessen
 
 Jeder angemeldete Nutzer kann über "Passwort ändern" (Topbar) sein eigenes
-Passwort setzen – dafür muss das aktuelle Passwort bekannt sein. Hat jemand
+Passwort setzen – dafür muss das aktuelle Passwort bekannt sein; das neue
+Passwort muss mindestens 12 Zeichen lang sein. Nach dem Wechsel werden alle
+bestehenden Sitzungen beendet und eine erneute Anmeldung ist erforderlich. Hat jemand
 sein Passwort vergessen, kann ein Admin es über die Benutzerverwaltung
 ("Benutzerverwaltung"-Button, nur für Rolle admin sichtbar) zurücksetzen:
 dort wird ein neues, zufälliges Passwort angezeigt (nur einmal – merken
@@ -343,8 +345,9 @@ geändert werden muss.
   Nutzer.
 - Sitzungen laufen über ein httponly-Cookie (kein Zugriff per JavaScript,
   schützt gegen einfaches Auslesen durch eingeschleusten Code) und sind
-  serverseitig gespeichert – ein Logout oder Passwort-Wechsel invalidiert
-  die Sitzung sofort, ein Container-Neustart meldet bereits angemeldete
+  serverseitig gespeichert – ein Logout invalidiert die aktuelle Sitzung;
+  ein Passwort-Wechsel oder Admin-Reset invalidiert alle Sitzungen des
+  betroffenen Nutzers sofort. Ein Container-Neustart meldet bereits angemeldete
   Nutzer nicht ab (Sitzungen sind 30 Tage gültig).
 - Diese Nutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
   Passwort-Reset per E-Mail) – für den Heimgebrauch im eigenen Netz
