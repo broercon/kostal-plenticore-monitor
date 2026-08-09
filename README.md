@@ -23,6 +23,8 @@ Docker-Container.
 - Docker mit Docker Compose
 - Netzwerkzugriff vom Docker-Host auf den Wechselrichter
 - IP-Adresse und Gerätepasswort jedes Wechselrichters
+- Internetzugriff im Browser auf `cdnjs.cloudflare.com`, da Chart.js derzeit
+  von dort geladen wird
 
 ## Schnellstart
 
@@ -62,7 +64,9 @@ Die beim ersten Start erzeugten Zugangsdaten stehen einmalig im Log:
 docker compose logs -f kostal-monitor
 ```
 
-Nach der ersten Anmeldung muss das Initialpasswort geändert werden.
+Nach der ersten Anmeldung sollte das Initialpasswort über den automatisch
+geöffneten Dialog geändert werden. Neue Passwörter benötigen mindestens
+12 Zeichen.
 
 ## Wichtige Konfiguration
 
@@ -99,9 +103,10 @@ Die Messhistorie bleibt im Verzeichnis `data/` erhalten.
 
 ## Backup
 
-Die vollständige Historie liegt in `data/kostal.db`. Für ein konsistentes
-Backup sollte die Anwendung kurz gestoppt und anschließend die Datenbankdatei
-kopiert werden.
+Die Daten liegen in `data/kostal.db`. Für ein konsistentes Backup sollte die
+Anwendung kurz gestoppt und anschließend das Verzeichnis `data/` gesichert
+werden. Die Datenbank enthält neben Messwerten auch Benutzer-, Sitzungs- und
+Mail-Konfigurationsdaten und muss daher vertraulich behandelt werden.
 
 ## Dokumentation
 
