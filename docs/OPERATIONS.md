@@ -49,8 +49,26 @@ Wechselrichter nachts nur schläft, ist der Neustart unschädlich – es wird
 dann einfach weiter erfolglos versucht, bis das Gerät morgens wieder
 antwortet.
 
+## Logs
+
+Neben den Docker-Logs schreibt die Anwendung nach
+`data/logs/app.log`. Die Datei rotiert bei ungefähr 2 MB; drei ältere
+Versionen werden aufbewahrt. Beim ersten Start ausgegebene Initialpasswörter
+können deshalb auch in diesen persistenten Logs stehen.
+
 ## Daten sichern
 
-Die komplette Historie liegt in `./data/kostal.db` (SQLite-Datei). Für ein
-Backup reicht es, diese Datei zu kopieren (idealerweise bei gestopptem
-Container, damit keine Schreiboperation mittendrin ist).
+Die Anwendung verwendet SQLite im WAL-Modus. Für ein konsistentes Backup den
+Container stoppen und anschließend das gesamte Verzeichnis `data/` sichern:
+
+```bash
+docker compose down
+cp -a data/ /pfad/zum/backup/
+docker compose up -d
+```
+
+`kostal.db` enthält nicht nur Messwerte, sondern auch Benutzerkonten,
+Passwort-Hashes, aktive Sitzungstoken, den Energie-Cache und die
+Mail-Report-Konfiguration einschließlich eines eventuell gespeicherten
+API-Keys. Backup und Logdateien müssen daher wie Zugangsdaten behandelt
+werden.
