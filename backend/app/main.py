@@ -184,14 +184,22 @@ def get_me(user: User = Depends(auth.get_current_user)) -> MeOut:
 
 @app.post("/api/auth/change-password", response_model=ChangePasswordOut)
 def post_change_password(
-    payload: ChangePasswordIn, user: User = Depends(auth.get_current_user)
+    payload: ChangePasswordIn,
+    response: Response,
+    user: User = Depends(auth.get_current_user),
 ) -> ChangePasswordOut:
     ok = auth.change_own_password(user.id, payload.current_password, payload.new_password)
     if not ok:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Aktuelles Passwort ist falsch."
         )
-    return ChangePasswordOut(success=True, message="Passwort geändert.")
+    # auth.change_own_password() invalidiert alle Sessions des Nutzers,
+    # einschliesslich der aktuellen. Das nun wertlose Cookie ebenfalls
+    # entfernen; das Frontend fordert anschliessend eine neue Anmeldung.
+    response.delete_cookie(auth.SESSION_COOKIE_NAME, path="/")
+    return ChangePasswordOut(
+        success=True, message="Passwort geändert. Bitte neu anmelden."
+    )
 
 
 @app.get("/api/admin/users", response_model=list[AdminUserOut])
@@ -414,9 +422,9 @@ def get_daily_report_status_endpoint(
     vollstaendig), die eingestellte Uhrzeit/Empfaenger, sowie Zeitpunkt und
     Ausgang (Erfolg/Fehler) des letzten Versands - ohne dafuer die
     Container-Logs durchsuchen zu muessen (analog zu
-    /api/admin/import-history/status). Fuer alle angemeldeten Nutzer
-    sichtbar (nicht nur admin) - die Konfiguration selbst
-    (GET/PUT .../config) ist dagegen admin-only."""
+    /api/admin/import-history/status). Status und Konfiguration sind
+    ausschliesslich fuer Admins sichtbar; der Mail-Service-API-Key selbst
+    wird dabei nie zurueckgegeben."""
     cfg = get_daily_report_config()
     status_data = get_daily_report_status()
     return DailyReportStatusOut(

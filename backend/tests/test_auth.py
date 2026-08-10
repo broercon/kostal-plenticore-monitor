@@ -101,11 +101,13 @@ def test_change_own_password_flow(client):
         json={"current_password": "altes-passwort", "new_password": "neues-passwort-123"},
     )
     assert ok.status_code == 200
-    assert client.get("/api/auth/me").json()["must_change_password"] is False
 
-    # Altes Passwort funktioniert nach dem Wechsel (neuer Login) nicht mehr,
-    # das neue schon.
-    client.post("/api/auth/logout")
+    # Der Wechsel invalidiert aus Sicherheitsgruenden alle bisherigen
+    # Sitzungen, auch die aktuelle. Fuer den weiteren Zugriff ist eine neue
+    # Anmeldung mit dem neuen Passwort erforderlich.
+    assert client.get("/api/auth/me").status_code == 401
+
+    # Altes Passwort funktioniert nach dem Wechsel nicht mehr, das neue schon.
     old_login = client.post(
         "/api/auth/login", json={"username": "betreiber1-test", "password": "altes-passwort"}
     )
@@ -115,6 +117,20 @@ def test_change_own_password_flow(client):
         "/api/auth/login", json={"username": "betreiber1-test", "password": "neues-passwort-123"}
     )
     assert new_login.status_code == 200
+
+
+
+def test_change_password_rejects_too_short_new_password(client):
+    make_user("betreiber1-test", "altes-passwort")
+    client.post("/api/auth/login", json={"username": "betreiber1-test", "password": "altes-passwort"})
+
+    res = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "altes-passwort", "new_password": "zu-kurz"},
+    )
+    assert res.status_code == 422
+    # Bei abgelehnter Aenderung bleibt die bestehende Sitzung gueltig.
+    assert client.get("/api/auth/me").status_code == 200
 
 
 def test_admin_endpoints_forbidden_for_betreiber(client):
@@ -130,6 +146,9 @@ def test_admin_endpoints_forbidden_for_betreiber(client):
 def test_admin_can_list_and_reset_other_users_password(client):
     target = make_user("betreiber2-test", "betreiber2-pw", role="betreiber")
     make_user("admin-test", "admin-pw", role="admin")
+
+    # Eine bereits bestehende Sitzung des Zielnutzers simulieren.
+    client.post("/api/auth/login", json={"username": "betreiber2-test", "password": "betreiber2-pw"})
     client.post("/api/auth/login", json={"username": "admin-test", "password": "admin-pw"})
 
     listing = client.get("/api/admin/users")
@@ -141,6 +160,16 @@ def test_admin_can_list_and_reset_other_users_password(client):
     assert reset.status_code == 200
     new_password = reset.json()["new_password"]
     assert new_password  # ein zufaelliges Passwort wurde erzeugt und zurueckgegeben
+
+    # Der Reset invalidiert auch alle bereits offenen Sitzungen des Nutzers.
+    from app.database import SessionLocal
+    from app.models import Session as SessionModel
+
+    db = SessionLocal()
+    try:
+        assert db.query(SessionModel).filter(SessionModel.user_id == target.id).count() == 0
+    finally:
+        db.close()
 
     # Mit dem alten Passwort geht nach dem Reset nichts mehr, mit dem neuen schon.
     client.post("/api/auth/logout")

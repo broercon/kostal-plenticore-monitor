@@ -215,6 +215,11 @@ def change_own_password(user_id: int, current_password: str, new_password: str) 
         user.password_salt = salt_hex
         user.password_hash = hash_hex
         user.must_change_password = False
+        # Ein Passwortwechsel muss auch bereits gestohlene oder auf anderen
+        # Geraeten noch offene Sitzungen unbrauchbar machen.
+        db.query(SessionModel).filter(SessionModel.user_id == user.id).delete(
+            synchronize_session=False
+        )
         db.commit()
         return True
     finally:
@@ -237,6 +242,11 @@ def admin_reset_password(target_user_id: int, new_password: str | None) -> tuple
         user.password_salt = salt_hex
         user.password_hash = hash_hex
         user.must_change_password = True
+        # Ein Admin-Reset waere wirkungslos, wenn bestehende Sessions des
+        # betroffenen Nutzers bis zu 30 Tage lang weiter gueltig blieben.
+        db.query(SessionModel).filter(SessionModel.user_id == user.id).delete(
+            synchronize_session=False
+        )
         db.commit()
         db.refresh(user)
         db.expunge(user)

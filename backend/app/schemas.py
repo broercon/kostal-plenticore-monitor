@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class DeviceOut(BaseModel):
@@ -145,7 +145,7 @@ class MeOut(BaseModel):
 
 class ChangePasswordIn(BaseModel):
     current_password: str
-    new_password: str
+    new_password: str = Field(min_length=12, max_length=256)
 
 
 class ChangePasswordOut(BaseModel):
@@ -163,7 +163,7 @@ class AdminUserOut(BaseModel):
 class AdminResetPasswordIn(BaseModel):
     # Leer lassen, um automatisch ein zufaelliges neues Passwort zu
     # generieren (wird in der Antwort zurueckgegeben).
-    new_password: str | None = None
+    new_password: str | None = Field(default=None, min_length=12, max_length=256)
 
 
 class AdminResetPasswordOut(BaseModel):
