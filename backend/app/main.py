@@ -31,7 +31,16 @@ from .daily_report import (
     generate_and_send_daily_report,
     get_daily_report_status,
 )
-from .daily_report_config import InvalidReportTime, get_config as get_daily_report_config, update_config as update_daily_report_config
+from .daily_report_config import (
+    InvalidReportTime,
+    get_config as get_daily_report_config,
+    update_config as update_daily_report_config,
+)
+from .forecast_config import (
+    InvalidForecastConfig,
+    get_config as get_forecast_config,
+    update_config as update_forecast_config,
+)
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
@@ -57,6 +66,8 @@ from .schemas import (
     DeviceOut,
     FeedInPeriod,
     FeedInSummaryOut,
+    ForecastConfigIn,
+    ForecastConfigOut,
     PvYieldSummaryOut,
     HistoryPoint,
     HourlyPerDeviceOut,
@@ -209,6 +220,35 @@ def post_admin_reset_password(
             "geaendert werden."
         ),
     )
+
+
+@app.get("/api/admin/forecast/config", response_model=ForecastConfigOut)
+def get_forecast_config_endpoint(
+    _admin: User = Depends(auth.require_admin),
+) -> ForecastConfigOut:
+    """Liefert Standort und PV-Felder je Wechselrichter fuer die Prognose.
+
+    Solange noch nichts im Admin-Bereich gespeichert wurde, stammen die
+    Startwerte optional aus inverters.json. Das Feld ``source`` macht diese
+    Herkunft fuer die Oberflaeche sichtbar.
+    """
+    return ForecastConfigOut.model_validate(get_forecast_config())
+
+
+@app.put("/api/admin/forecast/config", response_model=ForecastConfigOut)
+def put_forecast_config_endpoint(
+    payload: ForecastConfigIn, _admin: User = Depends(auth.require_admin)
+) -> ForecastConfigOut:
+    """Speichert die Prognose-Konfiguration in SQLite.
+
+    Die inverters.json wird nicht veraendert (sie ist im Container read-only);
+    nach dem ersten Speichern hat die Datenbank Vorrang vor Datei-Startwerten.
+    """
+    try:
+        result = update_forecast_config(payload.model_dump())
+    except InvalidForecastConfig as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return ForecastConfigOut.model_validate(result)
 
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)

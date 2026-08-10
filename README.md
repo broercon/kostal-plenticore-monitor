@@ -55,6 +55,46 @@ Einträge in der Liste lassen, für einen nur einen Eintrag:
 Das Passwort ist dasselbe, mit dem du dich auch an der Web-Oberfläche des
 Wechselrichters (`http://<ip-des-wechselrichters>`) anmeldest.
 
+#### PV-Prognose konfigurieren
+
+Standort und PV-Felder lassen sich im Dashboard unter **Admin →
+PV-Prognose** pflegen. Ein Wechselrichter kann mehrere PV-Felder besitzen,
+beispielsweise Ost und West mit jeweils eigener Leistung, Neigung und
+Ausrichtung. Die Anlagenleistung kann entweder direkt als `peak_power_kwp`
+oder über `module_count × module_power_wp` angegeben werden.
+
+Optional können dieselben Werte als Startkonfiguration direkt beim jeweiligen
+Wechselrichter in `inverters.json` stehen:
+
+```json
+{
+  "id": "wr1",
+  "name": "Wechselrichter Dach Süd",
+  "host": "192.168.1.50",
+  "password": "...",
+  "location_name": "Beispielstandort",
+  "latitude": 50.000000,
+  "longitude": 8.000000,
+  "pv_arrays": [
+    {
+      "name": "Dach Süd",
+      "module_count": 20,
+      "module_power_wp": 430,
+      "tilt_degrees": 35,
+      "azimuth_degrees": 0,
+      "inverter_limit_kw": 8
+    }
+  ]
+}
+```
+
+Standortdaten müssen nur bei einem Wechselrichter hinterlegt werden. Für die
+Ausrichtung gilt: `0` = Süd, `-90` = Ost, `90` = West und `±180` = Nord.
+Nach dem ersten Speichern im Admin-Bereich liegt die Prognosekonfiguration in
+SQLite und hat Vorrang vor den Startwerten aus `inverters.json`. Die Datei
+bleibt unverändert, da sie im Docker-Container absichtlich nur lesbar
+eingebunden ist.
+
 **Bei zwei oder mehr Wechselrichtern am selben Hausanschluss** (z.B. ein
 Wechselrichter mit Batterie + Netzzähler/KSEM als "Master", ein zweiter ohne
 eigenen Zähler, der per AC die Batterie des ersten mitlädt) unbedingt den
@@ -607,6 +647,12 @@ cookies.txt -b cookies.txt ...`).
 - `POST /api/admin/users/{id}/reset-password` – (nur Rolle admin) Passwort
   eines Nutzers zurücksetzen; ohne `new_password` im Body wird eines
   zufällig erzeugt und in der Antwort zurückgegeben.
+- `GET /api/admin/forecast/config` – (nur Rolle admin) Standort und
+  PV-Felder je Wechselrichter. `source` zeigt, ob die Werte noch aus
+  `inverters.json` oder bereits aus SQLite stammen.
+- `PUT /api/admin/forecast/config` – (nur Rolle admin) speichert Standort,
+  Prognosezeitraum, Systemverluste und beliebig viele PV-Felder mit
+  Wechselrichter-Zuordnung in SQLite.
 - `GET /api/devices` – konfigurierte Wechselrichter
 - `GET /api/readings/latest` – letzter bekannter Messwert je Wechselrichter;
   bei mehreren konfigurierten Geräten zusätzlich ein Eintrag mit

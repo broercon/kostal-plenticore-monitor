@@ -268,6 +268,139 @@ async function extractErrorMessage(res) {
   return "Speichern fehlgeschlagen.";
 }
 
+function optionalNumber(value) {
+  const trimmed = String(value ?? "").trim();
+  if (trimmed === "") return null;
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+function updateEffectivePeak(row) {
+  const direct = optionalNumber(row.querySelector('[data-field="peak_power_kwp"]').value);
+  const modules = optionalNumber(row.querySelector('[data-field="module_count"]').value);
+  const moduleWp = optionalNumber(row.querySelector('[data-field="module_power_wp"]').value);
+  const effective = direct ?? (modules !== null && moduleWp !== null ? modules * moduleWp / 1000 : 0);
+  row.querySelector(".forecast-effective").textContent =
+    effective > 0 ? `Wirksame Generatorleistung: ${effective.toFixed(3)} kWp` : "Leistung noch nicht vollständig";
+}
+
+function addForecastNumberField(grid, labelText, field, value, attrs = {}) {
+  const label = document.createElement("label");
+  label.append(document.createTextNode(labelText));
+  const input = document.createElement("input");
+  input.type = "number";
+  input.dataset.field = field;
+  input.value = value ?? "";
+  for (const [key, attrValue] of Object.entries(attrs)) input.setAttribute(key, attrValue);
+  label.appendChild(input);
+  grid.appendChild(label);
+  return input;
+}
+
+function addForecastArrayRow(list, device, data = {}) {
+  const row = document.createElement("div");
+  row.className = "forecast-array";
+  row.dataset.deviceId = device.id;
+
+  const head = document.createElement("div");
+  head.className = "forecast-array-head";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.dataset.field = "name";
+  nameInput.required = true;
+  nameInput.placeholder = "z. B. Dach Süd";
+  nameInput.value = data.name || "PV-Feld";
+  head.appendChild(nameInput);
+
+  const actions = document.createElement("div");
+  actions.className = "forecast-array-actions";
+  const enabledLabel = document.createElement("label");
+  enabledLabel.className = "modal-checkbox";
+  const enabledInput = document.createElement("input");
+  enabledInput.type = "checkbox";
+  enabledInput.dataset.field = "enabled";
+  enabledInput.checked = data.enabled !== false;
+  enabledLabel.append(enabledInput, document.createTextNode("Aktiv"));
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Entfernen";
+  remove.addEventListener("click", () => row.remove());
+  actions.append(enabledLabel, remove);
+  head.appendChild(actions);
+  row.appendChild(head);
+
+  const grid = document.createElement("div");
+  grid.className = "forecast-array-grid";
+  const watched = [
+    addForecastNumberField(grid, "Module", "module_count", data.module_count, { min: "1", step: "1" }),
+    addForecastNumberField(grid, "Leistung je Modul (Wp)", "module_power_wp", data.module_power_wp, { min: "1", step: "0.1" }),
+    addForecastNumberField(grid, "Direkte Anlagenleistung (kWp)", "peak_power_kwp", data.peak_power_kwp, { min: "0.001", step: "0.001" }),
+  ];
+  addForecastNumberField(grid, "Neigung (°)", "tilt_degrees", data.tilt_degrees ?? 30, { min: "0", max: "90", step: "0.1", required: "" });
+  addForecastNumberField(grid, "Azimut (°)", "azimuth_degrees", data.azimuth_degrees ?? 0, { min: "-180", max: "180", step: "0.1", required: "" });
+  addForecastNumberField(grid, "WR-Limit (kW, optional)", "inverter_limit_kw", data.inverter_limit_kw, { min: "0.001", step: "0.001" });
+  row.appendChild(grid);
+  const effective = document.createElement("p");
+  effective.className = "forecast-effective muted";
+  row.appendChild(effective);
+  for (const input of watched) input.addEventListener("input", () => updateEffectivePeak(row));
+  list.appendChild(row);
+  updateEffectivePeak(row);
+}
+
+function renderForecastArrays(arrays) {
+  const container = el("forecast-device-fields");
+  container.innerHTML = "";
+  for (const device of state.devices) {
+    const section = document.createElement("div");
+    section.className = "forecast-device";
+    const head = document.createElement("div");
+    head.className = "forecast-device-head";
+    const title = document.createElement("h4");
+    title.textContent = `${device.name} (${device.id})`;
+    const add = document.createElement("button");
+    add.type = "button";
+    add.textContent = "+ PV-Feld";
+    const list = document.createElement("div");
+    list.className = "forecast-array-list";
+    add.addEventListener("click", () => addForecastArrayRow(list, device));
+    head.append(title, add);
+    section.append(head, list);
+    for (const array of arrays.filter((item) => item.device_id === device.id)) {
+      addForecastArrayRow(list, device, array);
+    }
+    container.appendChild(section);
+  }
+}
+
+async function loadForecastConfigIntoForm() {
+  const cfg = await fetchJson("/api/admin/forecast/config");
+  el("fc-enabled").checked = cfg.enabled;
+  el("fc-location-name").value = cfg.location_name || "";
+  el("fc-latitude").value = cfg.latitude ?? "";
+  el("fc-longitude").value = cfg.longitude ?? "";
+  el("fc-days").value = cfg.forecast_days;
+  el("fc-loss").value = cfg.system_loss_percent;
+  el("fc-source-hint").textContent = cfg.source === "database"
+    ? "Quelle: im Admin-Bereich gespeicherte Datenbankkonfiguration."
+    : "Quelle: Startwerte aus inverters.json. Beim Speichern übernimmt die Datenbank.";
+  renderForecastArrays(cfg.arrays || []);
+}
+
+function collectForecastArrays() {
+  return [...document.querySelectorAll(".forecast-array")].map((row) => ({
+    device_id: row.dataset.deviceId,
+    name: row.querySelector('[data-field="name"]').value.trim(),
+    module_count: optionalNumber(row.querySelector('[data-field="module_count"]').value),
+    module_power_wp: optionalNumber(row.querySelector('[data-field="module_power_wp"]').value),
+    peak_power_kwp: optionalNumber(row.querySelector('[data-field="peak_power_kwp"]').value),
+    tilt_degrees: Number(row.querySelector('[data-field="tilt_degrees"]').value),
+    azimuth_degrees: Number(row.querySelector('[data-field="azimuth_degrees"]').value),
+    inverter_limit_kw: optionalNumber(row.querySelector('[data-field="inverter_limit_kw"]').value),
+    enabled: row.querySelector('[data-field="enabled"]').checked,
+  }));
+}
+
 function setupAdminArea() {
   // Eine konsolidierte Admin-Seite (Benutzerverwaltung, Mail-Report,
   // Logdaten-Abgleich). Nur fuer Admins sichtbar; die zugehoerigen Endpunkte
@@ -276,6 +409,7 @@ function setupAdminArea() {
 
   el("admin-area-btn").addEventListener("click", async () => {
     el("admin-reset-result").textContent = "";
+    el("fc-save-result").textContent = "";
     el("dr-save-result").textContent = "";
     el("dr-trigger-result").textContent = "";
     overlay.classList.remove("hidden");
@@ -283,6 +417,12 @@ function setupAdminArea() {
       await loadAdminUserTable();
     } catch (err) {
       console.error(err);
+    }
+    try {
+      await loadForecastConfigIntoForm();
+    } catch (err) {
+      console.error(err);
+      el("fc-save-result").textContent = "Prognosekonfiguration konnte nicht geladen werden.";
     }
     try {
       await loadDailyReportConfigIntoForm();
@@ -298,6 +438,38 @@ function setupAdminArea() {
   el("admin-area-close").addEventListener("click", () => {
     overlay.classList.add("hidden");
     stopImportPolling();
+  });
+
+  // --- PV-Prognose: Standort und PV-Felder speichern ---
+  el("forecast-config-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = el("fc-save-result");
+    result.textContent = "Speichert …";
+    const payload = {
+      enabled: el("fc-enabled").checked,
+      location_name: el("fc-location-name").value.trim(),
+      latitude: optionalNumber(el("fc-latitude").value),
+      longitude: optionalNumber(el("fc-longitude").value),
+      forecast_days: Number(el("fc-days").value),
+      system_loss_percent: Number(el("fc-loss").value),
+      arrays: collectForecastArrays(),
+    };
+    try {
+      const res = await fetch("/api/admin/forecast/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        result.textContent = await extractErrorMessage(res);
+        return;
+      }
+      result.textContent = "Gespeichert.";
+      await loadForecastConfigIntoForm();
+    } catch (err) {
+      console.error(err);
+      result.textContent = "Verbindung zum Server fehlgeschlagen.";
+    }
   });
 
   // --- Mail-Report: Speichern + Testmail ---

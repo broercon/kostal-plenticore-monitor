@@ -104,9 +104,9 @@ export async function bootApp({ fetchHandler }) {
   // setInterval den Prozess offen und die Timer stoeren die Assertions.
   window.setInterval = () => 0;
 
-  window.fetch = async (input) => {
+  window.fetch = async (input, options = {}) => {
     const url = new URL(input, "http://localhost");
-    const body = await fetchHandler(url);
+    const body = await fetchHandler(url, options);
     return { ok: true, status: 200, json: async () => body };
   };
 

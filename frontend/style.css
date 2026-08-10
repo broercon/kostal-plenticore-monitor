@@ -546,6 +546,69 @@ canvas {
   margin: 8px 0 0;
 }
 
+.forecast-site-grid,
+.forecast-array-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.forecast-site-grid label,
+.forecast-array-grid label {
+  display: flex;
+  flex-direction: column;
+}
+
+.forecast-help {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.forecast-device {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+
+.forecast-device-head,
+.forecast-array-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.forecast-device-head h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.forecast-array {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.forecast-array-head > input[type="text"] {
+  flex: 1;
+}
+
+.forecast-array-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.forecast-array-actions .modal-checkbox {
+  margin: 0;
+}
+
+.forecast-effective {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+}
+
 /* ---- Aktualisierungs-Ring in der Topbar: fuellt sich ueber das
    Auto-Refresh-Intervall und ist "voll", wenn die Werte aktualisiert
    werden. ---- */
@@ -636,6 +699,11 @@ canvas {
   /* Diagramme etwas hoeher fuer mehr Detail auf kleinen Bildschirmen. */
   .chart-canvas-wrapper {
     height: 340px;
+  }
+
+  .forecast-site-grid,
+  .forecast-array-grid {
+    grid-template-columns: 1fr;
   }
 
   /* Topbar-Aktionen in ein aufklappbares Menue, damit nichts ueber den

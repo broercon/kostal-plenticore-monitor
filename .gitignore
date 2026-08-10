@@ -4,3 +4,4 @@ config/inverters.json
 __pycache__/
 *.pyc
 node_modules/
+.venv*/

@@ -245,3 +245,106 @@ class DailyReportConfigIn(BaseModel):
             if "@" not in addr:
                 raise ValueError(f"Keine gültige E-Mail-Adresse: {addr!r}")
         return cleaned
+
+
+class PVArrayConfigIn(BaseModel):
+    device_id: str
+    name: str
+    module_count: int | None = None
+    module_power_wp: float | None = None
+    peak_power_kwp: float | None = None
+    tilt_degrees: float = 30.0
+    azimuth_degrees: float = 0.0
+    inverter_limit_kw: float | None = None
+    enabled: bool = True
+
+    @field_validator("device_id", "name")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("darf nicht leer sein")
+        return value
+
+    @field_validator("module_count")
+    @classmethod
+    def _valid_module_count(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Modulanzahl muss groesser als 0 sein")
+        return value
+
+    @field_validator("module_power_wp", "peak_power_kwp", "inverter_limit_kw")
+    @classmethod
+    def _positive_optional(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("Leistung muss groesser als 0 sein")
+        return value
+
+    @field_validator("tilt_degrees")
+    @classmethod
+    def _valid_tilt(cls, value: float) -> float:
+        if not 0 <= value <= 90:
+            raise ValueError("Neigung muss zwischen 0 und 90 Grad liegen")
+        return value
+
+    @field_validator("azimuth_degrees")
+    @classmethod
+    def _valid_azimuth(cls, value: float) -> float:
+        if not -180 <= value <= 180:
+            raise ValueError("Azimut muss zwischen -180 und 180 Grad liegen")
+        return value
+
+
+class PVArrayConfigOut(PVArrayConfigIn):
+    id: int | None = None
+    device_name: str
+    effective_peak_power_kwp: float
+
+
+class ForecastConfigIn(BaseModel):
+    enabled: bool = False
+    location_name: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
+    forecast_days: int = 7
+    system_loss_percent: float = 14.0
+    arrays: list[PVArrayConfigIn] = []
+
+    @field_validator("latitude")
+    @classmethod
+    def _valid_latitude(cls, value: float | None) -> float | None:
+        if value is not None and not -90 <= value <= 90:
+            raise ValueError("Breitengrad muss zwischen -90 und 90 liegen")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def _valid_longitude(cls, value: float | None) -> float | None:
+        if value is not None and not -180 <= value <= 180:
+            raise ValueError("Laengengrad muss zwischen -180 und 180 liegen")
+        return value
+
+    @field_validator("forecast_days")
+    @classmethod
+    def _valid_forecast_days(cls, value: int) -> int:
+        if not 1 <= value <= 16:
+            raise ValueError("Prognosezeitraum muss zwischen 1 und 16 Tagen liegen")
+        return value
+
+    @field_validator("system_loss_percent")
+    @classmethod
+    def _valid_losses(cls, value: float) -> float:
+        if not 0 <= value <= 80:
+            raise ValueError("Systemverluste muessen zwischen 0 und 80 Prozent liegen")
+        return value
+
+
+class ForecastConfigOut(BaseModel):
+    enabled: bool
+    location_name: str
+    latitude: float | None = None
+    longitude: float | None = None
+    forecast_days: int
+    system_loss_percent: float
+    source: str
+    arrays: list[PVArrayConfigOut]
