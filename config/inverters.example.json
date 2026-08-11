@@ -5,33 +5,14 @@
     "host": "192.168.1.50",
     "password": "DEIN_PLENTICORE_PASSWORT",
     "has_grid_meter": true,
-    "location_name": "Beispielstandort",
     "latitude": 50.000000,
-    "longitude": 8.000000,
-    "pv_arrays": [
-      {
-        "name": "Dach Süd",
-        "module_count": 20,
-        "module_power_wp": 430,
-        "tilt_degrees": 35,
-        "azimuth_degrees": 0,
-        "inverter_limit_kw": 8
-      }
-    ]
+    "longitude": 8.000000
   },
   {
     "id": "wr2",
     "name": "Wechselrichter Dach Nord",
     "host": "192.168.1.51",
     "password": "DEIN_PLENTICORE_PASSWORT",
-    "has_grid_meter": false,
-    "pv_arrays": [
-      {
-        "name": "Dach West",
-        "peak_power_kwp": 5.2,
-        "tilt_degrees": 25,
-        "azimuth_degrees": 90
-      }
-    ]
+    "has_grid_meter": false
   }
 ]

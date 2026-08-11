@@ -21,6 +21,7 @@ const state = {
   // Werte-Anzeige der Diagramme (Tooltip/Hover). Auf Touch-Geraeten
   // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
   chartsInteractive: true,
+  forecastChart: null,
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -277,130 +278,118 @@ function optionalNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function updateEffectivePeak(row) {
-  const direct = optionalNumber(row.querySelector('[data-field="peak_power_kwp"]').value);
-  const modules = optionalNumber(row.querySelector('[data-field="module_count"]').value);
-  const moduleWp = optionalNumber(row.querySelector('[data-field="module_power_wp"]').value);
-  const effective = direct ?? (modules !== null && moduleWp !== null ? modules * moduleWp / 1000 : 0);
-  row.querySelector(".forecast-effective").textContent =
-    effective > 0 ? `Wirksame Generatorleistung: ${effective.toFixed(3)} kWp` : "Leistung noch nicht vollständig";
-}
-
-function addForecastNumberField(grid, labelText, field, value, attrs = {}) {
-  const label = document.createElement("label");
-  label.append(document.createTextNode(labelText));
-  const input = document.createElement("input");
-  input.type = "number";
-  input.dataset.field = field;
-  input.value = value ?? "";
-  for (const [key, attrValue] of Object.entries(attrs)) input.setAttribute(key, attrValue);
-  label.appendChild(input);
-  grid.appendChild(label);
-  return input;
-}
-
-function addForecastArrayRow(list, device, data = {}) {
-  const row = document.createElement("div");
-  row.className = "forecast-array";
-  row.dataset.deviceId = device.id;
-
-  const head = document.createElement("div");
-  head.className = "forecast-array-head";
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.dataset.field = "name";
-  nameInput.required = true;
-  nameInput.placeholder = "z. B. Dach Süd";
-  nameInput.value = data.name || "PV-Feld";
-  head.appendChild(nameInput);
-
-  const actions = document.createElement("div");
-  actions.className = "forecast-array-actions";
-  const enabledLabel = document.createElement("label");
-  enabledLabel.className = "modal-checkbox";
-  const enabledInput = document.createElement("input");
-  enabledInput.type = "checkbox";
-  enabledInput.dataset.field = "enabled";
-  enabledInput.checked = data.enabled !== false;
-  enabledLabel.append(enabledInput, document.createTextNode("Aktiv"));
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.textContent = "Entfernen";
-  remove.addEventListener("click", () => row.remove());
-  actions.append(enabledLabel, remove);
-  head.appendChild(actions);
-  row.appendChild(head);
-
-  const grid = document.createElement("div");
-  grid.className = "forecast-array-grid";
-  const watched = [
-    addForecastNumberField(grid, "Module", "module_count", data.module_count, { min: "1", step: "1" }),
-    addForecastNumberField(grid, "Leistung je Modul (Wp)", "module_power_wp", data.module_power_wp, { min: "1", step: "0.1" }),
-    addForecastNumberField(grid, "Direkte Anlagenleistung (kWp)", "peak_power_kwp", data.peak_power_kwp, { min: "0.001", step: "0.001" }),
-  ];
-  addForecastNumberField(grid, "Neigung (°)", "tilt_degrees", data.tilt_degrees ?? 30, { min: "0", max: "90", step: "0.1", required: "" });
-  addForecastNumberField(grid, "Azimut (°)", "azimuth_degrees", data.azimuth_degrees ?? 0, { min: "-180", max: "180", step: "0.1", required: "" });
-  addForecastNumberField(grid, "WR-Limit (kW, optional)", "inverter_limit_kw", data.inverter_limit_kw, { min: "0.001", step: "0.001" });
-  row.appendChild(grid);
-  const effective = document.createElement("p");
-  effective.className = "forecast-effective muted";
-  row.appendChild(effective);
-  for (const input of watched) input.addEventListener("input", () => updateEffectivePeak(row));
-  list.appendChild(row);
-  updateEffectivePeak(row);
-}
-
-function renderForecastArrays(arrays) {
-  const container = el("forecast-device-fields");
-  container.innerHTML = "";
-  for (const device of state.devices) {
-    const section = document.createElement("div");
-    section.className = "forecast-device";
-    const head = document.createElement("div");
-    head.className = "forecast-device-head";
-    const title = document.createElement("h4");
-    title.textContent = `${device.name} (${device.id})`;
-    const add = document.createElement("button");
-    add.type = "button";
-    add.textContent = "+ PV-Feld";
-    const list = document.createElement("div");
-    list.className = "forecast-array-list";
-    add.addEventListener("click", () => addForecastArrayRow(list, device));
-    head.append(title, add);
-    section.append(head, list);
-    for (const array of arrays.filter((item) => item.device_id === device.id)) {
-      addForecastArrayRow(list, device, array);
-    }
-    container.appendChild(section);
-  }
-}
-
 async function loadForecastConfigIntoForm() {
   const cfg = await fetchJson("/api/admin/forecast/config");
   el("fc-enabled").checked = cfg.enabled;
-  el("fc-location-name").value = cfg.location_name || "";
   el("fc-latitude").value = cfg.latitude ?? "";
   el("fc-longitude").value = cfg.longitude ?? "";
-  el("fc-days").value = cfg.forecast_days;
-  el("fc-loss").value = cfg.system_loss_percent;
   el("fc-source-hint").textContent = cfg.source === "database"
     ? "Quelle: im Admin-Bereich gespeicherte Datenbankkonfiguration."
     : "Quelle: Startwerte aus inverters.json. Beim Speichern übernimmt die Datenbank.";
-  renderForecastArrays(cfg.arrays || []);
 }
 
-function collectForecastArrays() {
-  return [...document.querySelectorAll(".forecast-array")].map((row) => ({
-    device_id: row.dataset.deviceId,
-    name: row.querySelector('[data-field="name"]').value.trim(),
-    module_count: optionalNumber(row.querySelector('[data-field="module_count"]').value),
-    module_power_wp: optionalNumber(row.querySelector('[data-field="module_power_wp"]').value),
-    peak_power_kwp: optionalNumber(row.querySelector('[data-field="peak_power_kwp"]').value),
-    tilt_degrees: Number(row.querySelector('[data-field="tilt_degrees"]').value),
-    azimuth_degrees: Number(row.querySelector('[data-field="azimuth_degrees"]').value),
-    inverter_limit_kw: optionalNumber(row.querySelector('[data-field="inverter_limit_kw"]').value),
-    enabled: row.querySelector('[data-field="enabled"]').checked,
-  }));
+function fmtForecastTime(value) {
+  if (!value) return "–";
+  return new Date(value).toLocaleTimeString("de-DE", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function refreshForecast() {
+  const data = await fetchJson("/api/forecast");
+  const status = el("forecast-status");
+  const dayContainer = el("forecast-days");
+  dayContainer.innerHTML = "";
+  if (!data.available) {
+    status.textContent = data.message;
+    if (state.forecastChart) {
+      state.forecastChart.destroy();
+      state.forecastChart = null;
+    }
+    return;
+  }
+
+  status.textContent =
+    `${data.message} Grundlage: ${data.training_samples} historische Stunden, ` +
+    `aktualisiert ${fmtDateTime(data.generated_at)}.`;
+  for (const day of data.days) {
+    const card = document.createElement("div");
+    card.className = "forecast-day";
+    const date = document.createElement("strong");
+    date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+    });
+    const value = document.createElement("span");
+    value.className = "forecast-day-value";
+    value.textContent = `${day.expected_kwh.toFixed(1)} kWh`;
+    const range = document.createElement("span");
+    range.className = "muted";
+    range.textContent = `Bereich ${day.low_kwh.toFixed(1)}–${day.high_kwh.toFixed(1)} kWh`;
+    const windowText = document.createElement("span");
+    windowText.className = "muted";
+    windowText.textContent = day.production_start
+      ? `${fmtForecastTime(day.production_start)}–${fmtForecastTime(day.production_end)}, Spitze ${day.peak_kw.toFixed(1)} kW`
+      : "Keine nennenswerte Erzeugung erwartet";
+    const devices = document.createElement("span");
+    devices.className = "forecast-day-devices";
+    devices.textContent = day.devices
+      .map((device) => `${device.device_name}: ${device.expected_kwh.toFixed(1)} kWh`)
+      .join(" · ");
+    card.append(date, value, range, windowText, devices);
+    dayContainer.appendChild(card);
+  }
+
+  const labels = data.hours.map((hour) =>
+    new Date(hour.timestamp).toLocaleString("de-DE", {
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  );
+  const datasets = [
+    {
+      label: "Unterer Bereich",
+      data: data.hours.map((hour) => hour.low_kw),
+      borderColor: "rgba(59, 130, 246, 0)",
+      pointRadius: 0,
+      fill: false,
+    },
+    {
+      label: "Prognosebereich",
+      data: data.hours.map((hour) => hour.high_kw),
+      borderColor: "rgba(59, 130, 246, 0)",
+      backgroundColor: "rgba(59, 130, 246, 0.16)",
+      pointRadius: 0,
+      fill: "-1",
+    },
+    {
+      label: "Erwartete PV-Leistung",
+      data: data.hours.map((hour) => hour.expected_kw),
+      borderColor: "#38bdf8",
+      backgroundColor: "#38bdf8",
+      pointRadius: 0,
+      borderWidth: 2,
+      tension: 0.2,
+    },
+  ];
+  if (state.forecastChart) state.forecastChart.destroy();
+  state.forecastChart = new Chart(el("forecast-chart").getContext("2d"), {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      events: chartEvents(),
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { ticks: { maxTicksLimit: 14 } },
+        y: { beginAtZero: true, title: { display: true, text: "kW" } },
+      },
+    },
+  });
 }
 
 function setupAdminArea() {
@@ -442,19 +431,15 @@ function setupAdminArea() {
     stopImportPolling();
   });
 
-  // --- PV-Prognose: Standort und PV-Felder speichern ---
+  // --- PV-Prognose: Aktivierung und Standort speichern ---
   el("forecast-config-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const result = el("fc-save-result");
     result.textContent = "Speichert …";
     const payload = {
       enabled: el("fc-enabled").checked,
-      location_name: el("fc-location-name").value.trim(),
       latitude: optionalNumber(el("fc-latitude").value),
       longitude: optionalNumber(el("fc-longitude").value),
-      forecast_days: Number(el("fc-days").value),
-      system_loss_percent: Number(el("fc-loss").value),
-      arrays: collectForecastArrays(),
     };
     try {
       const res = await fetch("/api/admin/forecast/config", {
@@ -468,6 +453,7 @@ function setupAdminArea() {
       }
       result.textContent = "Gespeichert.";
       await loadForecastConfigIntoForm();
+      await refreshForecast();
     } catch (err) {
       console.error(err);
       result.textContent = "Verbindung zum Server fehlgeschlagen.";
@@ -1465,6 +1451,7 @@ function setChartsInteractive(on) {
     state.dayCompare.chart,
     state.dailyTotals.chart,
     state.hourlyCompare.chart,
+    state.forecastChart,
   ];
   for (const c of charts) {
     if (!c || !c.options) continue;
@@ -1533,6 +1520,7 @@ async function init() {
   setupHourlyCompareControls();
   setupChartInteractionToggle();
   await refreshAll({ showLoading: true });
+  refreshForecast().catch(console.error);
   refreshPvYieldSummary().catch(console.error);
   setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
@@ -1548,6 +1536,7 @@ async function init() {
   setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshForecast().catch(console.error), 60 * 60 * 1000);
 }
 
 init();

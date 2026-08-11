@@ -95,31 +95,9 @@ class ForecastSettings(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    location_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
-    forecast_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
-    system_loss_percent: Mapped[float] = mapped_column(Float, nullable=False, default=14.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class PVArraySettings(Base):
-    """Ein PV-Modulfeld, eindeutig einem Wechselrichter zugeordnet."""
-
-    __tablename__ = "pv_array_settings"
-    __table_args__ = (Index("ix_pv_array_settings_device", "device_id"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    device_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
-    module_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    module_power_wp: Mapped[float | None] = mapped_column(Float, nullable=True)
-    peak_power_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
-    tilt_degrees: Mapped[float] = mapped_column(Float, nullable=False, default=30.0)
-    azimuth_degrees: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    inverter_limit_kw: Mapped[float | None] = mapped_column(Float, nullable=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class DailyEnergyCache(Base):

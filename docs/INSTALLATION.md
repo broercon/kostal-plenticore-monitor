@@ -42,20 +42,17 @@ Jeder Eintrag in `config/inverters.json` unterstützt folgende Felder:
 | `port` | nein | `80` | HTTP-Port der Wechselrichter-API |
 | `has_grid_meter` | nein | `true` | Kennzeichnet das Gerät mit dem echten Netzzähler/KSEM |
 | `battery_power_inverted` | nein | `false` | Kehrt das Vorzeichen der Batterieleistung für Berechnungen um |
-| `location_name` | nein | leer | Gemeinsame Standortbezeichnung für die PV-Prognose |
 | `latitude`, `longitude` | nein | leer | Standortkoordinaten für die Wetterprognose |
-| `pv_arrays` | nein | `[]` | PV-Felder dieses Wechselrichters mit eigener Leistung und Ausrichtung |
 
 Boolesche Werte müssen in JSON als `true` oder `false` angegeben werden,
 nicht als Zeichenketten.
 
 ### PV-Prognose konfigurieren
 
-Standort und PV-Felder lassen sich im Dashboard unter **Admin →
-PV-Prognose** pflegen. Ein Wechselrichter kann mehrere PV-Felder besitzen,
-beispielsweise Ost und West mit jeweils eigener Leistung, Neigung und
-Ausrichtung. Die Anlagenleistung kann direkt als `peak_power_kwp` oder über
-`module_count × module_power_wp` angegeben werden.
+Die Standortkoordinaten lassen sich im Dashboard unter **Admin →
+PV-Prognose** pflegen. Weitere technische Anlagendaten sind nicht nötig: Die
+App lernt die Leistung und den zeitlichen Verlauf jedes Wechselrichters aus
+seinen historischen PV-Messwerten und den historischen Wetterdaten.
 
 Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 `inverters.json` als Startkonfiguration stehen:
@@ -66,28 +63,15 @@ Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
   "name": "Wechselrichter Dach Süd",
   "host": "192.168.1.50",
   "password": "...",
-  "location_name": "Beispielstandort",
   "latitude": 50.000000,
-  "longitude": 8.000000,
-  "pv_arrays": [
-    {
-      "name": "Dach Süd",
-      "module_count": 20,
-      "module_power_wp": 430,
-      "tilt_degrees": 35,
-      "azimuth_degrees": 0,
-      "inverter_limit_kw": 8
-    }
-  ]
+  "longitude": 8.000000
 }
 ```
 
-Standortdaten müssen nur bei einem Wechselrichter hinterlegt werden. Für die
-Ausrichtung gilt: `0` = Süd, `-90` = Ost, `90` = West und `±180` = Nord.
-Nach dem ersten Speichern im Admin-Bereich liegt die Konfiguration in SQLite
-und hat Vorrang vor den Startwerten aus `inverters.json`. Die Datei selbst
-bleibt unverändert, da sie im Container absichtlich nur lesbar eingebunden
-ist.
+Standortdaten müssen nur bei einem Wechselrichter hinterlegt werden. Nach dem
+ersten Speichern im Admin-Bereich liegt die Konfiguration in SQLite und hat
+Vorrang vor den Startwerten aus `inverters.json`. Die Datei selbst bleibt
+unverändert, da sie im Container absichtlich nur lesbar eingebunden ist.
 
 ### 2. Optional: Abfrageintervall/Zeitzone anpassen
 

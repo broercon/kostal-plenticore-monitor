@@ -1,19 +1,14 @@
-// Der Admin-Button (und damit die Admin-Seite) ist fuer Nicht-Admins in der
-// UI ausgeblendet. Die eigentliche Absicherung liegt serverseitig
-// (require_admin, siehe backend/tests) - das hier prueft nur die UI-Gating.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
 
 test("Admin-Button ist fuer Nicht-Admins ausgeblendet", async () => {
-  // makeBackend liefert /api/auth/me mit role "user" (kein Admin).
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.document.querySelectorAll("#device-tabs button").length > 0);
-  const btn = app.document.getElementById("admin-area-btn");
-  assert.ok(btn.classList.contains("hidden"), "Admin-Button muss versteckt sein");
+  assert.ok(app.document.getElementById("admin-area-btn").classList.contains("hidden"));
 });
 
-test("PV-Felder werden im Admin-Bereich je Wechselrichter getrennt dargestellt", async () => {
+test("Prognosekonfiguration enthaelt nur Aktivierung und Koordinaten", async () => {
   const base = makeBackend();
   let savedPayload = null;
   const app = await bootApp({
@@ -22,58 +17,12 @@ test("PV-Felder werden im Admin-Bereich je Wechselrichter getrennt dargestellt",
         return { id: 1, username: "admin", role: "admin", must_change_password: false };
       }
       if (url.pathname === "/api/admin/forecast/config") {
-        if (options.method === "PUT") {
-          savedPayload = JSON.parse(options.body);
-          return {
-            ...savedPayload,
-            source: "database",
-            arrays: savedPayload.arrays.map((array, index) => ({
-              ...array,
-              id: index + 1,
-              device_name: array.device_id === "wr1" ? "WR1" : "WR2",
-              effective_peak_power_kwp:
-                array.peak_power_kwp ?? array.module_count * array.module_power_wp / 1000,
-            })),
-          };
-        }
+        if (options.method === "PUT") savedPayload = JSON.parse(options.body);
         return {
           enabled: true,
-          location_name: "Beispielstandort",
-          latitude: 51.1,
-          longitude: 7.2,
-          forecast_days: 7,
-          system_loss_percent: 14,
+          latitude: savedPayload?.latitude ?? 51.1,
+          longitude: savedPayload?.longitude ?? 7.2,
           source: "database",
-          arrays: [
-            {
-              id: 1,
-              device_id: "wr1",
-              device_name: "WR1",
-              name: "Sued",
-              module_count: 20,
-              module_power_wp: 430,
-              peak_power_kwp: null,
-              effective_peak_power_kwp: 8.6,
-              tilt_degrees: 35,
-              azimuth_degrees: 0,
-              inverter_limit_kw: 8,
-              enabled: true,
-            },
-            {
-              id: 2,
-              device_id: "wr2",
-              device_name: "WR2",
-              name: "West",
-              module_count: null,
-              module_power_wp: null,
-              peak_power_kwp: 5.2,
-              effective_peak_power_kwp: 5.2,
-              tilt_degrees: 20,
-              azimuth_degrees: 90,
-              inverter_limit_kw: null,
-              enabled: true,
-            },
-          ],
         };
       }
       if (url.pathname === "/api/admin/users") return [];
@@ -93,32 +42,29 @@ test("PV-Felder werden im Admin-Bereich je Wechselrichter getrennt dargestellt",
       if (url.pathname === "/api/admin/import-history/status") {
         return { running: false, last_finished_at: null, results: [] };
       }
-      return base(url);
+      return base(url, options);
     },
   });
 
   app.document.getElementById("admin-area-btn").click();
-  await waitFor(() => app.document.querySelectorAll(".forecast-array").length === 2);
+  await waitFor(() => app.document.getElementById("fc-latitude").value === "51.1");
+  assert.equal(app.document.querySelectorAll("#forecast-config-form input").length, 3);
+  assert.equal(app.document.querySelector("#forecast-device-fields"), null);
 
-  const rows = [...app.document.querySelectorAll(".forecast-array")];
-  assert.deepEqual(rows.map((row) => row.dataset.deviceId), ["wr1", "wr2"]);
-  assert.equal(
-    rows[0].querySelector('[data-field="name"]').value,
-    "Sued"
-  );
-  assert.match(rows[0].querySelector(".forecast-effective").textContent, /8\.600 kWp/);
-
-  const secondDevice = [...app.document.querySelectorAll(".forecast-device")]
-    .find((node) => node.querySelector("h4").textContent.includes("WR2"));
-  secondDevice.querySelector("button").click();
-  assert.equal(secondDevice.querySelectorAll(".forecast-array").length, 2);
-
-  const added = secondDevice.querySelectorAll(".forecast-array")[1];
-  added.querySelector('[data-field="peak_power_kwp"]').value = "3.4";
+  app.document.getElementById("fc-latitude").value = "50.5";
   app.document.getElementById("forecast-config-form").dispatchEvent(
     new app.window.Event("submit", { bubbles: true, cancelable: true })
   );
   await waitFor(() => savedPayload !== null);
-  assert.deepEqual(savedPayload.arrays.map((array) => array.device_id), ["wr1", "wr2", "wr2"]);
-  assert.equal(savedPayload.arrays[2].peak_power_kwp, 3.4);
+  assert.deepEqual(savedPayload, { enabled: true, latitude: 50.5, longitude: 7.2 });
+});
+
+test("Dashboard zeigt Energie, Zeitraum und Wechselrichter der Prognose", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  await waitFor(() => app.document.querySelectorAll(".forecast-day").length === 1);
+  const text = app.document.getElementById("forecast-days").textContent;
+  assert.match(text, /12\.4 kWh/);
+  assert.match(text, /WR1: 8\.0 kWh/);
+  assert.match(text, /WR2: 4\.4 kWh/);
+  assert.ok(app.state.forecastChart);
 });

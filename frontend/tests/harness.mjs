@@ -67,6 +67,35 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
         return { periods: [] };
+      case "/api/forecast":
+        return {
+          available: true,
+          message: "Prognose aus historischen PV- und Wetterdaten.",
+          generated_at: "2026-07-13T06:00:00Z",
+          training_start: "2026-05-01T00:00:00Z",
+          training_end: "2026-07-12T23:00:00Z",
+          training_samples: 1200,
+          weather_source: "Open-Meteo",
+          days: [
+            {
+              date: "2026-07-13",
+              expected_kwh: 12.4,
+              low_kwh: 10.1,
+              high_kwh: 14.8,
+              production_start: "2026-07-13T05:00:00Z",
+              production_end: "2026-07-13T19:00:00Z",
+              peak_at: "2026-07-13T12:00:00Z",
+              peak_kw: 4.2,
+              devices: [
+                { device_id: "wr1", device_name: "WR1", expected_kwh: 8.0, low_kwh: 6.5, high_kwh: 9.4 },
+                { device_id: "wr2", device_name: "WR2", expected_kwh: 4.4, low_kwh: 3.6, high_kwh: 5.4 },
+              ],
+            },
+          ],
+          hours: [
+            { timestamp: "2026-07-13T12:00:00Z", expected_kw: 4.2, low_kw: 3.4, high_kw: 5.0 },
+          ],
+        };
       default:
         return {};
     }
@@ -85,6 +114,7 @@ export async function bootApp({ fetchHandler }) {
   window.Chart = class {
     constructor(_ctx, config) {
       this.data = config.data;
+      this.options = config.options;
     }
     update() {}
     destroy() {}

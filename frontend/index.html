@@ -78,9 +78,9 @@
 
     <section class="admin-section">
       <h3>PV-Prognose</h3>
-      <p class="muted">Standort und Modulfelder für die Ertragsprognose. Jeder
-        Wechselrichter kann mehrere Felder mit eigener Leistung und Ausrichtung
-        besitzen. Änderungen werden in der Datenbank gespeichert.</p>
+      <p class="muted">Die Prognose lernt für jeden Wechselrichter aus den
+        historischen PV-Messwerten und den zugehörigen Wetterdaten. Dafür wird
+        nur der Anlagenstandort benötigt.</p>
       <form id="forecast-config-form">
         <label class="modal-checkbox">
           <input type="checkbox" id="fc-enabled" />
@@ -88,27 +88,13 @@
         </label>
 
         <div class="forecast-site-grid">
-          <label>Standortbezeichnung
-            <input type="text" id="fc-location-name" placeholder="z. B. Beispielstandort" />
-          </label>
           <label>Breitengrad
             <input type="number" id="fc-latitude" min="-90" max="90" step="0.000001" placeholder="50.000000" />
           </label>
           <label>Längengrad
             <input type="number" id="fc-longitude" min="-180" max="180" step="0.000001" placeholder="8.000000" />
           </label>
-          <label>Prognosezeitraum (Tage)
-            <input type="number" id="fc-days" min="1" max="16" step="1" required />
-          </label>
-          <label>Systemverluste (%)
-            <input type="number" id="fc-loss" min="0" max="80" step="0.1" required />
-          </label>
         </div>
-        <p class="muted forecast-help">Azimut-Konvention: 0° = Süd, −90° = Ost,
-          +90° = West, ±180° = Nord. Die Anlagenleistung kann direkt als kWp
-          oder über Modulanzahl × Wp angegeben werden.</p>
-
-        <div id="forecast-device-fields"></div>
 
         <div class="modal-actions">
           <button type="submit" id="fc-save">Prognosekonfiguration speichern</button>
@@ -229,6 +215,17 @@
       <span class="pvyield-divider" aria-hidden="true"></span>
       <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-pvyield="this_year">–</span></div>
       <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-pvyield="last_year">–</span></div>
+    </div>
+  </section>
+
+  <section class="chart-section forecast-section" id="forecast-section">
+    <div class="daycompare-header">
+      <h2>PV-Prognose</h2>
+      <p class="muted" id="forecast-status">Wird geladen …</p>
+    </div>
+    <div class="forecast-days" id="forecast-days"></div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="forecast-chart"></canvas>
     </div>
   </section>
 

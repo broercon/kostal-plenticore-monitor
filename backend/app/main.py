@@ -41,6 +41,7 @@ from .forecast_config import (
     get_config as get_forecast_config,
     update_config as update_forecast_config,
 )
+from .energy_forecast import forecast_service
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
@@ -68,6 +69,7 @@ from .schemas import (
     FeedInSummaryOut,
     ForecastConfigIn,
     ForecastConfigOut,
+    EnergyForecastOut,
     PvYieldSummaryOut,
     HistoryPoint,
     HourlyPerDeviceOut,
@@ -256,7 +258,16 @@ def put_forecast_config_endpoint(
         result = update_forecast_config(payload.model_dump())
     except InvalidForecastConfig as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    forecast_service.invalidate()
     return ForecastConfigOut.model_validate(result)
+
+
+@app.get("/api/forecast", response_model=EnergyForecastOut)
+async def get_energy_forecast_endpoint(
+    _user: User = Depends(auth.get_current_user),
+) -> EnergyForecastOut:
+    """Sieben-Tage-Prognose aus historischen PV- und Wetterdaten."""
+    return EnergyForecastOut.model_validate(await forecast_service.get())
 
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)

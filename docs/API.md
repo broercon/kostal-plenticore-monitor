@@ -80,12 +80,11 @@ Alle folgenden Endpunkte benötigen die Rolle `admin`:
   Nutzers zurücksetzen. Ohne `new_password` wird ein zufälliges Passwort
   erzeugt. Ein manuell gesetztes Passwort benötigt 12 bis 256 Zeichen.
   Bestehende Sitzungen des Nutzers werden beendet.
-- `GET /api/admin/forecast/config` – Standort und PV-Felder je
-  Wechselrichter abrufen. `source` zeigt, ob die Startwerte aus
+- `GET /api/admin/forecast/config` – Aktivierung und Standortkoordinaten
+  abrufen. `source` zeigt, ob die Startwerte aus
   `inverters.json` oder die gespeicherten SQLite-Werte verwendet werden.
-- `PUT /api/admin/forecast/config` – Standort, Prognosezeitraum,
-  Systemverluste und beliebig viele PV-Felder mit Wechselrichter-Zuordnung
-  in SQLite speichern.
+- `PUT /api/admin/forecast/config` – Aktivierung und Standortkoordinaten in
+  SQLite speichern.
 - `POST /api/admin/import-history` – Historienabgleich im Hintergrund
   starten; funktioniert auch bei `AUTO_IMPORT_HISTORY=false`.
 - `GET /api/admin/import-history/status` – Laufstatus und Ergebnis je Gerät.
@@ -97,3 +96,10 @@ Alle folgenden Endpunkte benötigen die Rolle `admin`:
   Ein leer gelassener API-Key behält den vorhandenen Wert bei.
 - `POST /api/admin/daily-report/trigger` – Bericht sofort versenden,
   unabhängig vom Aktiv-Schalter.
+
+## PV-Prognose
+
+- `GET /api/forecast` – sieben Tage erwartete PV-Leistung und Energie aus
+  den historischen Messwerten jedes Wechselrichters und Open-Meteo-
+  Strahlungsdaten. Liefert Stundenwerte, Tagesenergie, Prognosebereich,
+  Produktionszeitraum und getrennte Tageswerte je Wechselrichter.

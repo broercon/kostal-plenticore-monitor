@@ -11,25 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class PVArrayConfig:
-    """Optionale Startwerte fuer ein PV-Modulfeld aus inverters.json.
-
-    Ein Wechselrichter darf mehrere Felder mit unterschiedlicher Ausrichtung
-    haben. Die Werte werden nur benutzt, solange noch keine Prognose-
-    Konfiguration ueber den Admin-Bereich in der Datenbank gespeichert wurde.
-    """
-
-    name: str
-    peak_power_kwp: float | None = None
-    module_count: int | None = None
-    module_power_wp: float | None = None
-    tilt_degrees: float = 30.0
-    azimuth_degrees: float = 0.0
-    inverter_limit_kw: float | None = None
-    enabled: bool = True
-
-
-@dataclass
 class InverterConfig:
     id: str
     name: str
@@ -53,50 +34,10 @@ class InverterConfig:
     # falls das bei einem Geraet umgekehrt ist, hier auf True setzen (siehe
     # README).
     battery_power_inverted: bool = False
-    # Optionale Prognose-Startwerte. Mehrere Felder pro Wechselrichter sind
-    # erlaubt, z.B. Ost/West mit eigener Neigung und Leistung.
-    pv_arrays: list[PVArrayConfig] | None = None
+    # Optionale Startwerte fuer den gemeinsamen Anlagenstandort. Fuer mehrere
+    # Wechselrichter genuegt die Angabe bei einem Eintrag.
     latitude: float | None = None
     longitude: float | None = None
-    location_name: str = ""
-
-
-def _parse_pv_arrays(raw: object) -> list[PVArrayConfig]:
-    if not isinstance(raw, list):
-        return []
-    result: list[PVArrayConfig] = []
-    for index, item in enumerate(raw):
-        if not isinstance(item, dict):
-            continue
-        result.append(
-            PVArrayConfig(
-                name=str(item.get("name") or f"PV-Feld {index + 1}"),
-                peak_power_kwp=(
-                    float(item["peak_power_kwp"])
-                    if item.get("peak_power_kwp") is not None
-                    else None
-                ),
-                module_count=(
-                    int(item["module_count"])
-                    if item.get("module_count") is not None
-                    else None
-                ),
-                module_power_wp=(
-                    float(item["module_power_wp"])
-                    if item.get("module_power_wp") is not None
-                    else None
-                ),
-                tilt_degrees=float(item.get("tilt_degrees", 30.0)),
-                azimuth_degrees=float(item.get("azimuth_degrees", 0.0)),
-                inverter_limit_kw=(
-                    float(item["inverter_limit_kw"])
-                    if item.get("inverter_limit_kw") is not None
-                    else None
-                ),
-                enabled=bool(item.get("enabled", True)),
-            )
-        )
-    return result
 
 
 def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
@@ -113,14 +54,12 @@ def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
                 port=int(entry.get("port", 80)),
                 has_grid_meter=bool(entry.get("has_grid_meter", True)),
                 battery_power_inverted=bool(entry.get("battery_power_inverted", False)),
-                pv_arrays=_parse_pv_arrays(entry.get("pv_arrays")),
                 latitude=(
                     float(entry["latitude"]) if entry.get("latitude") is not None else None
                 ),
                 longitude=(
                     float(entry["longitude"]) if entry.get("longitude") is not None else None
                 ),
-                location_name=str(entry.get("location_name", "")),
             )
         )
     return inverters
