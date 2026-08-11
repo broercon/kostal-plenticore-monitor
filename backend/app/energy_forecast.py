@@ -41,7 +41,7 @@ class TrainingPoint:
 
 @dataclass(frozen=True)
 class DistanceWeights:
-    """Relative Wichtigkeit jeder Merkmalsdimension in _sample_distance().
+    """Relative Wichtigkeit jeder Merkmalsdimension in _sample_distances().
 
     Ersetzt handgeschaetzte Konstanten durch pro Wechselrichter aus dessen
     eigener Historie gelernte Werte, siehe fit_distance_weights().
@@ -140,35 +140,6 @@ def build_training_data(
     return result
 
 
-def _cyclic_distance(a: int, b: int, period: int) -> float:
-    difference = abs(a - b)
-    return min(difference, period - difference)
-
-
-def _sample_distance(
-    sample: TrainingPoint, target: WeatherPoint, weights: DistanceWeights
-) -> float:
-    source = sample.weather
-    hour_distance = _cyclic_distance(source.timestamp.hour, target.timestamp.hour, 24) / 3
-    day_distance = _cyclic_distance(
-        source.timestamp.timetuple().tm_yday,
-        target.timestamp.timetuple().tm_yday,
-        366,
-    ) / 45
-    ghi_distance = abs(source.shortwave_w_m2 - target.shortwave_w_m2) / 180
-    direct_distance = abs(source.direct_w_m2 - target.direct_w_m2) / 180
-    diffuse_distance = abs(source.diffuse_w_m2 - target.diffuse_w_m2) / 140
-    temperature_distance = abs(source.temperature_c - target.temperature_c) / 20
-    return (
-        weights.hour * hour_distance
-        + weights.day * day_distance
-        + weights.ghi * ghi_distance
-        + weights.direct * direct_distance
-        + weights.diffuse * diffuse_distance
-        + weights.temperature * temperature_distance
-    )
-
-
 def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
     """8 Merkmale je Messpunkt fuer fit_distance_weights(): Tageszeit und
     Jahrestag als Sinus/Kosinus (damit der Jahres-/Tageswechsel fuer die
@@ -191,7 +162,7 @@ def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
 
 def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
     """Lernt die relative Wichtigkeit jeder Merkmalsdimension in
-    _sample_distance() aus der Historie eines einzelnen Wechselrichters,
+    _sample_distances() aus der Historie eines einzelnen Wechselrichters,
     statt sie (wie bisher in DEFAULT_DISTANCE_WEIGHTS) von Hand zu schaetzen.
 
     Vorgehen: Ridge-Regression (kleinste Quadrate + L2-Strafe, geschlossene
@@ -270,48 +241,115 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
     )
 
 
+@dataclass(frozen=True)
+class _TrainingArrays:
+    """training als numpy-Arrays statt als Liste von TrainingPoint-Objekten.
+
+    predict_power() wird pro Wechselrichter bis zu 168x aufgerufen (7 Tage
+    Stundenwerte); ohne diese Vorab-Umwandlung wuerde jeder Aufruf erneut
+    ueber alle (ggf. bis zu TRAINING_DAYS*24) TrainingPoints iterieren und
+    sortieren. Einmal mit _prepare_training_arrays() gebaut, laeuft die
+    Distanzberechnung in predict_power() vektorisiert.
+    """
+
+    hours: np.ndarray
+    days: np.ndarray
+    ghi: np.ndarray
+    direct: np.ndarray
+    diffuse: np.ndarray
+    temperature: np.ndarray
+    power: np.ndarray
+
+
+def _prepare_training_arrays(training: list[TrainingPoint]) -> _TrainingArrays:
+    return _TrainingArrays(
+        hours=np.array(
+            [s.weather.timestamp.hour + s.weather.timestamp.minute / 60 for s in training]
+        ),
+        days=np.array([s.weather.timestamp.timetuple().tm_yday for s in training], dtype=float),
+        ghi=np.array([s.weather.shortwave_w_m2 for s in training]),
+        direct=np.array([s.weather.direct_w_m2 for s in training]),
+        diffuse=np.array([s.weather.diffuse_w_m2 for s in training]),
+        temperature=np.array([s.weather.temperature_c for s in training]),
+        power=np.array([s.power_w for s in training]),
+    )
+
+
+def _cyclic_distance_array(values: np.ndarray, target: float, period: float) -> np.ndarray:
+    difference = np.abs(values - target)
+    return np.minimum(difference, period - difference)
+
+
+def _sample_distances(
+    arrays: _TrainingArrays, target: WeatherPoint, weights: DistanceWeights
+) -> np.ndarray:
+    """Gewichtete Distanz zwischen target und jedem Trainingspunkt in
+    arrays, fuer alle Trainingspunkte gleichzeitig berechnet (siehe
+    DistanceWeights/fit_distance_weights fuer die Herkunft der Gewichte).
+    Jeder Term ist auf eine grobe, vergleichbare Groessenordnung skaliert
+    (Divisoren 3/45/180/180/140/20), bevor er mit dem gelernten (oder
+    Standard-)Gewicht multipliziert wird.
+    """
+    target_hour = target.timestamp.hour + target.timestamp.minute / 60
+    target_day = target.timestamp.timetuple().tm_yday
+    hour_distance = _cyclic_distance_array(arrays.hours, target_hour, 24) / 3
+    day_distance = _cyclic_distance_array(arrays.days, target_day, 366) / 45
+    ghi_distance = np.abs(arrays.ghi - target.shortwave_w_m2) / 180
+    direct_distance = np.abs(arrays.direct - target.direct_w_m2) / 180
+    diffuse_distance = np.abs(arrays.diffuse - target.diffuse_w_m2) / 140
+    temperature_distance = np.abs(arrays.temperature - target.temperature_c) / 20
+    return (
+        weights.hour * hour_distance
+        + weights.day * day_distance
+        + weights.ghi * ghi_distance
+        + weights.direct * direct_distance
+        + weights.diffuse * diffuse_distance
+        + weights.temperature * temperature_distance
+    )
+
+
 def predict_power(
     training: list[TrainingPoint],
     target: WeatherPoint,
     weights: DistanceWeights | None = None,
+    arrays: _TrainingArrays | None = None,
 ) -> tuple[float, float, float]:
     """KNN-Prognose mit Strahlungsskalierung und empirischem Streubereich.
 
     weights bestimmt die relative Wichtigkeit der Merkmalsdimensionen in der
-    Distanzmetrik (siehe fit_distance_weights). Per Default (None) werden sie
-    aus training gelernt; wer wiederholt fuer denselben Trainingsdatensatz
-    vorhersagt (siehe _summarize(), eine Vorhersage je Prognosestunde),
-    sollte sie einmal vorab berechnen und explizit uebergeben, statt sie bei
-    jedem Aufruf neu zu lernen.
+    Distanzmetrik (siehe fit_distance_weights). arrays ist dieselbe
+    Trainingshistorie als numpy-Arrays (siehe _prepare_training_arrays).
+    Beide sind per Default (None) aus training abgeleitet; wer wiederholt
+    fuer denselben Trainingsdatensatz vorhersagt (siehe _summarize(), eine
+    Vorhersage je Prognosestunde), sollte sie einmal vorab berechnen und
+    explizit uebergeben, statt sie bei jedem Aufruf neu aufzubauen.
     """
     if target.shortwave_w_m2 < 3 or not training:
         return 0.0, 0.0, 0.0
     if weights is None:
         weights = fit_distance_weights(training)
+    if arrays is None:
+        arrays = _prepare_training_arrays(training)
 
-    nearest = sorted(training, key=lambda point: _sample_distance(point, target, weights))[:24]
-    observed_max = max(point.power_w for point in training)
-    estimates = []
-    sample_weights = []
-    for sample in nearest:
-        source_ghi = sample.weather.shortwave_w_m2
-        if source_ghi < 3:
-            continue
-        scale = max(0.35, min(2.75, target.shortwave_w_m2 / source_ghi))
-        estimate = min(observed_max * 1.08, sample.power_w * scale)
-        distance = _sample_distance(sample, target, weights)
-        estimates.append(estimate)
-        sample_weights.append(1.0 / (0.15 + distance))
+    distances = _sample_distances(arrays, target, weights)
+    k = min(24, len(distances))
+    nearest_idx = np.argpartition(distances, k - 1)[:k]
 
-    if not estimates:
+    source_ghi = arrays.ghi[nearest_idx]
+    valid = source_ghi >= 3
+    if not np.any(valid):
         return 0.0, 0.0, 0.0
-    weight_sum = sum(sample_weights)
-    expected = (
-        sum(value * weight for value, weight in zip(estimates, sample_weights)) / weight_sum
-    )
-    variance = sum(
-        weight * (value - expected) ** 2 for value, weight in zip(estimates, sample_weights)
-    ) / weight_sum
+    nearest_idx = nearest_idx[valid]
+    source_ghi = source_ghi[valid]
+
+    observed_max = arrays.power.max()
+    scale = np.clip(target.shortwave_w_m2 / source_ghi, 0.35, 2.75)
+    estimates = np.minimum(observed_max * 1.08, arrays.power[nearest_idx] * scale)
+    sample_weights = 1.0 / (0.15 + distances[nearest_idx])
+
+    weight_sum = float(sample_weights.sum())
+    expected = float((estimates * sample_weights).sum() / weight_sum)
+    variance = float((sample_weights * (estimates - expected) ** 2).sum() / weight_sum)
     spread = math.sqrt(max(0.0, variance))
     return expected, max(0.0, expected - 1.28 * spread), expected + 1.28 * spread
 
@@ -348,8 +386,9 @@ def _summarize(
         # Gewichte einmal je Geraet lernen (nicht je Prognosestunde) - sie
         # haengen nur von der Trainingshistorie ab, siehe fit_distance_weights.
         weights = fit_distance_weights(samples)
+        arrays = _prepare_training_arrays(samples)
         per_device_hour[device_id] = {
-            point.timestamp - timedelta(hours=1): predict_power(samples, point, weights)
+            point.timestamp - timedelta(hours=1): predict_power(samples, point, weights, arrays)
             for point in forecast_weather
         }
     if not per_device_hour:
