@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
@@ -17,6 +18,7 @@ from app.energy_forecast import (
     _summarize,
     build_training_data,
     fit_distance_weights,
+    forecast_weather_for_local_days,
     load_hourly_pv_history,
     predict_power,
     select_model,
@@ -44,6 +46,41 @@ def test_training_data_joins_weather_and_pv_by_utc_hour():
     result = build_training_data(history, [point])
     assert len(result["wr1"]) == 1
     assert result["wr1"][0].power_w == 4200.0
+
+
+def test_forecast_uses_exactly_seven_local_days_without_zero_edge_day():
+    start = datetime(2026, 8, 11, tzinfo=timezone.utc)
+    weather = [
+        WeatherPoint(
+            timestamp=start + timedelta(hours=index),
+            shortwave_w_m2=500.0,
+            direct_w_m2=350.0,
+            diffuse_w_m2=150.0,
+            temperature_c=20.0,
+        )
+        for index in range(8 * 24)
+    ]
+
+    result = forecast_weather_for_local_days(
+        weather, start.date(), 7, "Europe/Berlin"
+    )
+    local_dates = {
+        (point.timestamp - timedelta(hours=1))
+        .astimezone(ZoneInfo("Europe/Berlin"))
+        .date()
+        for point in result
+    }
+    assert local_dates == {start.date() + timedelta(days=index) for index in range(7)}
+    assert len(
+        [
+            point
+            for point in result
+            if (point.timestamp - timedelta(hours=1))
+            .astimezone(ZoneInfo("Europe/Berlin"))
+            .date()
+            == start.date() + timedelta(days=6)
+        ]
+    ) == 24
 
 
 def test_hourly_history_uses_pure_pv_per_inverter(client):
