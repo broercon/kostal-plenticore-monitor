@@ -5,9 +5,12 @@ HTML-Mail mit einem Schnappschuss der Anlage: welche Wechselrichter
 aktiv/erreichbar waren, wie viel PV-Ertrag sie (einzeln + in Summe) an
 diesem Tag bereits erzielt haben, den PV-Ertrag über mehrere Zeiträume
 (wie die "PV-Ertrag"-Tabelle im Dashboard), der heutige Hausverbrauch
-aufgeschlüsselt nach PV/Batterie/Netz (wie das "Tagesverbrauch"-Diagramm)
-sowie der aktuelle Batterie-Ladestand – verschickt an die konfigurierten
-Empfänger über den zentralen Mail-Service (siehe broercon/Mailserver).
+aufgeschlüsselt nach PV/Batterie/Netz (wie das "Tagesverbrauch"-Diagramm),
+der aktuelle Batterie-Ladestand sowie die PV-Prognose für die kommenden
+Tage (aus energy_forecast.forecast_service - derselbe 30-Minuten-Cache wie
+im Dashboard, kein zusätzlicher Wetter-Abruf nur für die Mail) – verschickt
+an die konfigurierten Empfänger über den zentralen Mail-Service (siehe
+broercon/Mailserver).
 
 Die gesamte Konfiguration (aktiv/inaktiv, Uhrzeit, Empfänger, Mail-Service-
 URL/API-Key/Absendername) kommt aus daily_report_config.get_config() und
@@ -26,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import html as html_lib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import settings
@@ -38,6 +41,7 @@ from .daily_summary import (
     device_battery_snapshot,
     device_online_map,
 )
+from .energy_forecast import forecast_service
 from .report_mailer import ReportMailError, send_report_mail
 from .schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 
@@ -175,12 +179,99 @@ def _card(label: str, value: str, color: str) -> str:
     )
 
 
+_WEEKDAYS_DE = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+
+def _relative_day_label(offset: int, day_date: date) -> str:
+    """"Morgen"/"Übermorgen" fuer die ersten beiden Tage, danach Wochentag
+    + Datum (z.B. "Fr., 14.08.") - offset ist die Anzahl Tage ab "heute"."""
+    if offset == 1:
+        return "Morgen"
+    if offset == 2:
+        return "Übermorgen"
+    return f"{_WEEKDAYS_DE[day_date.weekday()]}., {day_date.strftime('%d.%m.')}"
+
+
+def _forecast_section_html(forecast: dict, today_local: date) -> str:
+    """Baut die "PV-Prognose"-Sektion aus dem Ergebnis von
+    energy_forecast.forecast_service.get() (bzw. dessen Test-Doubles).
+
+    Zeigt bewusst nur die KOMMENDEN Tage (nicht "heute" - das steht schon
+    als Ist-Wert oben in der Mail, und der Prognose-Tag "heute" deckt auch
+    bereits vergangene Stunden ab, waere also missverstaendlich neben dem
+    tatsaechlichen Ist-Wert). Faellt die Prognose aus (deaktiviert, keine
+    Koordinaten, zu wenig Historie), wird die jeweilige Erklaerung aus
+    `forecast["message"]` direkt uebernommen - dieselbe, die auch im
+    Dashboard angezeigt wuerde."""
+    if not forecast.get("available"):
+        message = forecast.get("message") or "Keine Prognose verfügbar."
+        return f'<p style="color:{_COLOR_MUTED};margin:0;">{_esc(message)}</p>'
+
+    upcoming = []
+    for day in forecast.get("days") or []:
+        try:
+            day_date = date.fromisoformat(day["date"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        offset = (day_date - today_local).days
+        if offset <= 0:
+            continue
+        upcoming.append((offset, day_date, day))
+    upcoming.sort(key=lambda item: item[0])
+
+    if not upcoming:
+        return (
+            f'<p style="color:{_COLOR_MUTED};margin:0;">'
+            f"Für die kommenden Tage liegt noch keine Prognose vor.</p>"
+        )
+
+    tomorrow_offset, tomorrow_date, tomorrow = upcoming[0]
+    tomorrow_devices = tomorrow.get("devices") or []
+    device_line = (
+        f'<div style="font-size:12px;color:{_COLOR_TEXT};margin-top:8px;">'
+        + " &nbsp;&nbsp; ".join(
+            f'{_esc(d["device_name"])}: {_fmt_kwh(d["expected_kwh"])}' for d in tomorrow_devices
+        )
+        + "</div>"
+        if len(tomorrow_devices) > 1
+        else ""
+    )
+    tomorrow_html = (
+        f'<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;'
+        f'padding:14px;margin-bottom:12px;">'
+        f'<div style="font-size:12px;color:{_COLOR_MUTED};text-transform:uppercase;'
+        f'letter-spacing:0.03em;">{_esc(_relative_day_label(tomorrow_offset, tomorrow_date))}</div>'
+        f'<div style="font-size:24px;font-weight:700;color:{_COLOR_PV};margin-top:2px;">'
+        f'{_fmt_kwh(tomorrow["expected_kwh"])}</div>'
+        f'<div style="font-size:12px;color:{_COLOR_MUTED};margin-top:2px;">'
+        f'Erwarteter Bereich: {_fmt_kwh(tomorrow["low_kwh"])} – {_fmt_kwh(tomorrow["high_kwh"])}</div>'
+        f"{device_line}"
+        f"</div>"
+    )
+
+    rest_rows = "".join(
+        f'<tr><td style="padding:6px 10px;border-bottom:1px solid {_COLOR_BORDER};">'
+        f'{_esc(_relative_day_label(offset, day_date))}</td>'
+        f'<td style="padding:6px 10px;border-bottom:1px solid {_COLOR_BORDER};'
+        f'text-align:right;">{_fmt_kwh(day["expected_kwh"])}</td></tr>'
+        for offset, day_date, day in upcoming[1:]
+    )
+    rest_table = (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border-collapse:collapse;font-size:14px;">{rest_rows}</table>'
+        if rest_rows
+        else ""
+    )
+    return tomorrow_html + rest_table
+
+
 def build_report_html(
     summaries: list[SummaryOut],
     online_map: dict[str, bool],
     pv_yield_periods: list[FeedInPeriod],
     home_breakdown_today: DailyHomeBreakdownDay | None,
     battery_snapshot: list[dict],
+    forecast: dict,
     now: datetime,
     tz_name: str,
 ) -> tuple[str, str]:
@@ -283,6 +374,9 @@ def build_report_html(
     else:
         battery_html = f'<p style="color:{_COLOR_MUTED};">Keine Batterie konfiguriert/erkannt.</p>'
 
+    # --- PV-Prognose (kommende Tage) ---
+    forecast_html = _forecast_section_html(forecast, local_now.date())
+
     def _section(title: str, content: str) -> str:
         return (
             f'<div style="background:{_COLOR_CARD};border:1px solid {_COLOR_BORDER};'
@@ -304,6 +398,7 @@ def build_report_html(
       {_section("Hausverbrauch heute nach Quelle", breakdown_html)}
       {_section("PV-Ertrag", pv_yield_table)}
       {_section("Batterie-Ladestand (aktuell)", battery_html)}
+      {_section("PV-Prognose (kommende Tage)", forecast_html)}
       <p style="color:{_COLOR_MUTED};font-size:11px;text-align:center;margin-top:20px;">
         Automatisch versendet von Kostal Plenticore Monitor.
       </p>
@@ -334,12 +429,14 @@ async def generate_and_send_daily_report() -> dict:
         home_breakdown_days = build_daily_home_breakdown(days=1)
         home_breakdown_today = home_breakdown_days[-1] if home_breakdown_days else None
         battery_snapshot = device_battery_snapshot()
+        forecast_data = await forecast_service.get()
         subject, body = build_report_html(
             summaries,
             online_map,
             pv_yield_periods,
             home_breakdown_today,
             battery_snapshot,
+            forecast_data,
             now,
             settings.timezone_name,
         )
