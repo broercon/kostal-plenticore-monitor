@@ -39,6 +39,29 @@ def _hour_key(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
+def _pure_pv_sql_expression():
+    """SQL-Ausdruck fuer reine PV-Leistung je Messpunkt (fuer AVG-Aggregation
+    in load_hourly_pv_history()).
+
+    Muss exakt aggregation.pure_pv_power_w() entsprechen (max(0, pv_power_w -
+    battery_power_w), Details dort). Diese Aggregation laeuft bewusst in SQL
+    statt in Python, weil load_hourly_pv_history() bis zu TRAINING_DAYS Tage
+    Rohmessungen (Sekunden-/Minutentakt) zusammenfasst - das rohreihenweise
+    Laden in Python waere fuer diese Datenmenge zu teuer (siehe die
+    Performance-Arbeit an den Energie-Zeitraum-Uebersichten). Ein
+    Cross-Check-Test (test_pure_pv_sql_matches_python_helper) vergleicht
+    beide Implementierungen gegen dieselben Beispieldaten, damit sie nicht
+    unbemerkt auseinanderlaufen.
+    """
+    return case(
+        (Reading.pv_power_w.is_(None), None),
+        else_=func.max(
+            0.0,
+            Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
+        ),
+    )
+
+
 def load_hourly_pv_history(
     since: datetime, until: datetime
 ) -> dict[str, dict[datetime, float]]:
@@ -46,13 +69,7 @@ def load_hourly_pv_history(
     # Open-Meteo kennzeichnet Strahlung als Mittel der vorangegangenen Stunde.
     # Daher bekommt z.B. die Messstunde 12:00-13:00 den Endzeitpunkt 13:00.
     bucket = func.strftime("%Y-%m-%dT%H:00:00", Reading.timestamp, "+1 hour")
-    pure_pv = case(
-        (Reading.pv_power_w.is_(None), None),
-        else_=func.max(
-            0.0,
-            Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
-        ),
-    )
+    pure_pv = _pure_pv_sql_expression()
     session = SessionLocal()
     try:
         rows = session.execute(
@@ -171,9 +188,15 @@ def _summarize(
     device_names = {device.id: device.name for device in settings.inverters}
     local_tz = ZoneInfo(settings.timezone_name)
     per_device_hour: dict[str, dict[datetime, tuple[float, float, float]]] = {}
+    # Nur Geraete mit genuegend Historie fliessen in die Vorhersage UND in die
+    # unten berichteten Trainings-Metadaten (training_samples/_start/_end)
+    # ein - ein zu junges Geraet soll die gemeldete Datengrundlage nicht
+    # verzerren.
+    used_samples: dict[str, list[TrainingPoint]] = {}
     for device_id, samples in training.items():
         if len(samples) < MIN_TRAINING_SAMPLES:
             continue
+        used_samples[device_id] = samples
         per_device_hour[device_id] = {
             point.timestamp - timedelta(hours=1): predict_power(samples, point)
             for point in forecast_weather
@@ -236,7 +259,7 @@ def _summarize(
             }
         )
 
-    all_samples = [sample for samples in training.values() for sample in samples]
+    all_samples = [sample for samples in used_samples.values() for sample in samples]
     return {
         "available": True,
         "message": "Prognose aus historischen PV- und Wetterdaten.",

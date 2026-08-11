@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
     MIN_TRAINING_SAMPLES,
     TrainingPoint,
@@ -130,3 +131,73 @@ def test_forecast_endpoint_requires_login_and_returns_service_result(client, mon
     response = client.get("/api/forecast")
     assert response.status_code == 200
     assert response.json()["message"] == "Test"
+
+
+def test_pure_pv_sql_matches_python_helper(client):
+    """load_hourly_pv_history() bildet die reine PV-Leistung als SQL-
+    Ausdruck; aggregation.pure_pv_power_w() ist dieselbe Formel in Python
+    (fuer die Tages-kWh-Integration). Dieser Test stellt sicher, dass beide
+    Implementierungen fuer dieselben Rohdaten identische Werte liefern, auch
+    wenn sich die Formel irgendwann aendert.
+    """
+    start = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    samples = [
+        (0, 5000.0, 1000.0),
+        (15, 3000.0, None),
+        (30, 800.0, -200.0),
+        (45, 0.0, 0.0),
+    ]
+    db = SessionLocal()
+    try:
+        db.add_all(
+            [
+                Reading(
+                    device_id="wr1",
+                    device_name="WR 1",
+                    timestamp=start + timedelta(minutes=minute),
+                    pv_power_w=pv,
+                    battery_power_w=battery,
+                )
+                for minute, pv, battery in samples
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    sql_result = load_hourly_pv_history(start, start + timedelta(hours=1))
+    expected = sum(pure_pv_power_w(pv, battery) for _, pv, battery in samples) / len(
+        samples
+    )
+    assert sql_result["wr1"][start + timedelta(hours=1)] == round(expected, 6)
+
+
+def test_summary_excludes_immature_devices_from_training_metadata(monkeypatch):
+    """Ein Geraet mit zu wenig Historie darf die berichtete Datengrundlage
+    (training_samples/_start/_end) nicht verzerren, auch wenn es aus der
+    eigentlichen Vorhersage bereits ausgeschlossen ist.
+    """
+    import app.energy_forecast as module
+
+    class Device:
+        def __init__(self, device_id, name):
+            self.id = device_id
+            self.name = name
+
+    monkeypatch.setattr(
+        module.settings,
+        "inverters",
+        [Device("wr1", "Dach"), Device("wr2", "Garage")],
+    )
+    mature_samples = [
+        TrainingPoint(_weather(12, 600, day=(i % 27) + 1), 3000)
+        for i in range(MIN_TRAINING_SAMPLES)
+    ]
+    immature_samples = [TrainingPoint(_weather(12, 600, day=1), 1000)]
+    training = {"wr1": mature_samples, "wr2": immature_samples}
+
+    result = _summarize(training, [_weather(12, 600)])
+
+    assert result["available"] is True
+    assert [item["device_id"] for item in result["days"][0]["devices"]] == ["wr1"]
+    assert result["training_samples"] == len(mature_samples)
