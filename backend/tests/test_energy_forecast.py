@@ -13,6 +13,7 @@ from app.energy_forecast import (
     MIN_TRAINING_SAMPLES,
     ModelProfile,
     TrainingPoint,
+    _aggregate_bounds,
     _predict_with_profile,
     _prepare_training_arrays,
     _summarize,
@@ -120,6 +121,71 @@ def test_prediction_learns_output_without_technical_plant_data():
 def test_prediction_is_zero_at_night():
     training = [TrainingPoint(_weather(12, 700), 4000.0)]
     assert predict_power(training, _weather(1, 0)) == (0.0, 0.0, 0.0)
+
+
+# --- _aggregate_bounds ------------------------------------------------------
+
+
+def test_aggregate_bounds_combines_independent_spreads_not_naive_sum():
+    """Zwei Stunden mit je +/-2 Halbbreite sollen sich teilweise ausgleichen
+    (sqrt(2^2+2^2) ~= 2.83), statt sich zur naiven Summe von 4.0 zu addieren -
+    genau das ist der Fix fuer den zu breiten Tages-Spannbereich."""
+    expected, low, high = _aggregate_bounds([(10.0, 8.0, 12.0), (10.0, 8.0, 12.0)])
+    assert expected == 20.0
+    combined_half_width = 8 ** 0.5  # sqrt(2^2 + 2^2)
+    assert round(low, 4) == round(20.0 - combined_half_width, 4)
+    assert round(high, 4) == round(20.0 + combined_half_width, 4)
+    assert high < 24.0  # naive Summe der Extremwerte waere 10+12+10+12-20 = 24
+    assert low > 16.0
+
+
+def test_aggregate_bounds_clips_low_at_zero():
+    _, low, _ = _aggregate_bounds([(1.0, -5.0, 7.0)])
+    assert low == 0.0
+
+
+def test_summarize_day_bounds_combine_hourly_spreads_instead_of_summing_naively(
+    monkeypatch,
+):
+    """Regression fuer den Mail-Report/Dashboard: der Tages-Spannbereich
+    darf nicht mehr die Summe der stuendlichen Extremwerte sein (das
+    unterstellt, dass jede Stunde gleichzeitig maximal daneben liegt),
+    sondern muss die stuendlichen Halbbreiten quadratisch kombinieren."""
+    import app.energy_forecast as module
+
+    class Device:
+        def __init__(self, device_id, name):
+            self.id = device_id
+            self.name = name
+
+    monkeypatch.setattr(module.settings, "inverters", [Device("wr1", "Dach")])
+    monkeypatch.setattr(
+        module,
+        "_predict_with_profile",
+        lambda training, target, profile, arrays: (1000.0, 800.0, 1200.0),
+    )
+
+    training = {
+        "wr1": [
+            TrainingPoint(_weather(12, 600, day=(i % 27) + 1), 3000)
+            for i in range(MIN_TRAINING_SAMPLES)
+        ]
+    }
+    forecast_weather = [_weather(11, 600), _weather(12, 600)]  # zwei Stunden, ein Tag
+
+    result = module._summarize(training, forecast_weather)
+    day = result["days"][0]
+
+    assert day["expected_kwh"] == 2.0  # 1.0 + 1.0 kWh, unveraendert
+    naive_sum_high_kwh = 2.4  # 2 * 1.2 kWh - so war es VOR dem Fix
+    naive_sum_low_kwh = 1.6  # 2 * 0.8 kWh - so war es VOR dem Fix
+    assert day["high_kwh"] < naive_sum_high_kwh
+    assert day["low_kwh"] > naive_sum_low_kwh
+    assert day["high_kwh"] == 2.28
+    assert day["low_kwh"] == 1.72
+    # dieselbe Korrektur greift auch fuer die Pro-Geraet-Aufschluesselung
+    assert day["devices"][0]["high_kwh"] == 2.28
+    assert day["devices"][0]["low_kwh"] == 1.72
 
 
 def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
