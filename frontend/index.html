@@ -157,203 +157,229 @@
 <main>
   <div class="device-tabs" id="device-tabs"></div>
 
-  <section class="cards" id="live-cards">
-    <div class="card card--home">
-      <span class="card-label">Hausverbrauch</span>
-      <span class="card-value" id="card-home">–</span>
-      <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
-    </div>
-    <div class="card card--feedin">
-      <span class="card-label">Einspeisung</span>
-      <span class="card-value" id="card-feedin">–</span>
-      <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
-    </div>
-    <div class="card card--grid">
-      <span class="card-label">Netzbezug</span>
-      <span class="card-value" id="card-griddraw">–</span>
-      <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
-    </div>
-    <div class="card card--pv">
-      <span class="card-label">PV-Leistung</span>
-      <span class="card-value" id="card-pv">–</span>
-    </div>
-    <div class="card card--battery" id="card-battery-wrapper">
-      <span class="card-label">Batterie</span>
-      <span class="card-value" id="card-battery">–</span>
-    </div>
-  </section>
+  <nav class="view-tabs" id="view-tabs" aria-label="Ansicht">
+    <button type="button" data-tab="overview" class="active">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Übersicht
+    </button>
+    <button type="button" data-tab="trend">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verlauf
+    </button>
+    <button type="button" data-tab="consumption">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verbrauch &amp; Wechselrichter
+    </button>
+    <button type="button" data-tab="forecast">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Prognose
+    </button>
+  </nav>
 
-  <section class="cards" id="summary-cards">
-    <div class="card small card--pv">
-      <span class="card-label">PV-Ertrag heute</span>
-      <span class="card-value" id="summary-yield">–</span>
-    </div>
-    <div class="card small card--home">
-      <span class="card-label">Verbrauch heute</span>
-      <span class="card-value" id="summary-consumption">–</span>
-      <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
-    </div>
-    <div class="card small card--feedin">
-      <span class="card-label">Einspeisung heute</span>
-      <span class="card-value" id="summary-grid">–</span>
-      <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
-    </div>
-  </section>
+  <div class="tab-panel" id="tab-panel-overview" data-tab-panel="overview">
+    <section class="cards" id="live-cards">
+      <div class="card card--home">
+        <span class="card-label">Hausverbrauch</span>
+        <span class="card-value" id="card-home">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+      <div class="card card--feedin">
+        <span class="card-label">Einspeisung</span>
+        <span class="card-value" id="card-feedin">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+      <div class="card card--grid">
+        <span class="card-label">Netzbezug</span>
+        <span class="card-value" id="card-griddraw">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+      <div class="card card--pv">
+        <span class="card-label">PV-Leistung</span>
+        <span class="card-value" id="card-pv">–</span>
+      </div>
+      <div class="card card--battery" id="card-battery-wrapper">
+        <span class="card-label">Batterie</span>
+        <span class="card-value" id="card-battery">–</span>
+      </div>
+    </section>
 
-  <section class="pvyield-summary" id="pv-yield-summary">
-    <span class="pvyield-eyebrow">PV-Ertrag gesamt</span>
-    <div class="pvyield-items">
-      <div class="pvyield-item"><span class="pvyield-label">Heute</span><span class="pvyield-value" data-pvyield="today">–</span></div>
-      <div class="pvyield-item"><span class="pvyield-label">Gestern</span><span class="pvyield-value" data-pvyield="yesterday">–</span></div>
-      <div class="pvyield-item"><span class="pvyield-label">Vorgestern</span><span class="pvyield-value" data-pvyield="day_before_yesterday">–</span></div>
-      <span class="pvyield-divider" aria-hidden="true"></span>
-      <div class="pvyield-item"><span class="pvyield-label">Diese Woche</span><span class="pvyield-value" data-pvyield="this_week">–</span></div>
-      <div class="pvyield-item"><span class="pvyield-label">Letzte Woche</span><span class="pvyield-value" data-pvyield="last_week">–</span></div>
-      <span class="pvyield-divider" aria-hidden="true"></span>
-      <div class="pvyield-item"><span class="pvyield-label">Dieser Monat</span><span class="pvyield-value" data-pvyield="this_month">–</span></div>
-      <div class="pvyield-item"><span class="pvyield-label">Letzter Monat</span><span class="pvyield-value" data-pvyield="last_month">–</span></div>
-      <span class="pvyield-divider" aria-hidden="true"></span>
-      <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-pvyield="this_year">–</span></div>
-      <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-pvyield="last_year">–</span></div>
-    </div>
-  </section>
+    <section class="cards" id="summary-cards">
+      <div class="card small card--pv">
+        <span class="card-label">PV-Ertrag heute</span>
+        <span class="card-value" id="summary-yield">–</span>
+      </div>
+      <div class="card small card--home">
+        <span class="card-label">Verbrauch heute</span>
+        <span class="card-value" id="summary-consumption">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+      <div class="card small card--feedin">
+        <span class="card-label">Einspeisung heute</span>
+        <span class="card-value" id="summary-grid">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+    </section>
 
-  <section class="chart-section forecast-section" id="forecast-section">
-    <div class="daycompare-header">
-      <h2>PV-Prognose</h2>
-      <p class="muted" id="forecast-status">Wird geladen …</p>
-    </div>
-    <div class="forecast-days" id="forecast-days"></div>
-    <div class="chart-canvas-wrapper">
-      <canvas id="forecast-chart"></canvas>
-    </div>
-    <div class="forecast-accuracy-header">
-      <h3>Prognosekontrolle</h3>
-      <p class="muted" id="forecast-accuracy-status">Wird geladen …</p>
-    </div>
-    <div class="forecast-accuracy-days" id="forecast-accuracy-days"></div>
-    <div class="chart-canvas-wrapper forecast-accuracy-chart-wrapper">
-      <canvas id="forecast-accuracy-chart"></canvas>
-    </div>
-  </section>
+    <section class="pvyield-summary" id="pv-yield-summary">
+      <span class="pvyield-eyebrow">PV-Ertrag gesamt</span>
+      <div class="pvyield-items">
+        <div class="pvyield-item"><span class="pvyield-label">Heute</span><span class="pvyield-value" data-pvyield="today">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Gestern</span><span class="pvyield-value" data-pvyield="yesterday">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Vorgestern</span><span class="pvyield-value" data-pvyield="day_before_yesterday">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Diese Woche</span><span class="pvyield-value" data-pvyield="this_week">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzte Woche</span><span class="pvyield-value" data-pvyield="last_week">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieser Monat</span><span class="pvyield-value" data-pvyield="this_month">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzter Monat</span><span class="pvyield-value" data-pvyield="last_month">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-pvyield="this_year">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-pvyield="last_year">–</span></div>
+      </div>
+    </section>
+  </div>
 
-  <section class="chart-section">
-    <div class="daycompare-header">
-      <h2>Leistungsverlauf</h2>
-      <p class="muted">
-        Momentanleistung im Zeitverlauf: Hausverbrauch, Einspeisung,
-        Netzbezug, PV-Leistung und Batterie. Für die letzten 7 bzw. 30 Tage
-        oben den passenden Zeitraum wählen.
+  <div class="tab-panel hidden" id="tab-panel-trend" data-tab-panel="trend">
+    <section class="chart-section">
+      <div class="daycompare-header">
+        <h2>Leistungsverlauf</h2>
+        <p class="muted">
+          Momentanleistung im Zeitverlauf: Hausverbrauch, Einspeisung,
+          Netzbezug, PV-Leistung und Batterie. Für die letzten 7 bzw. 30 Tage
+          oben den passenden Zeitraum wählen.
+        </p>
+      </div>
+      <div class="chart-toolbar">
+        <div class="range-buttons" id="range-buttons">
+          <button data-hours="24" class="active">24 Std</button>
+          <button data-hours="168">7 Tage</button>
+          <button data-hours="720">30 Tage</button>
+        </div>
+        <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
+      </div>
+      <div class="chart-canvas-wrapper" id="power-chart-wrapper">
+        <canvas id="power-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Auf einen Eintrag in der Legende klicken, um die jeweilige Kurve
+        ein- oder auszublenden. Für die letzten 7 Tage oben "7 Tage" wählen.
       </p>
-    </div>
-    <div class="chart-toolbar">
-      <div class="range-buttons" id="range-buttons">
-        <button data-hours="24" class="active">24 Std</button>
-        <button data-hours="168">7 Tage</button>
-        <button data-hours="720">30 Tage</button>
-      </div>
-      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
-    </div>
-    <div class="chart-canvas-wrapper">
-      <canvas id="power-chart"></canvas>
-    </div>
-    <p class="chart-hint muted">
-      Tipp: Auf einen Eintrag in der Legende klicken, um die jeweilige Kurve
-      ein- oder auszublenden. Für die letzten 7 Tage oben "7 Tage" wählen.
-    </p>
-  </section>
+    </section>
 
-  <section class="chart-section daycompare-section">
-    <div class="daycompare-header">
-      <h2>Tagesvergleich</h2>
-      <p class="muted">
-        Jeder Tag als eigene Kurve auf einer festen 00:00–24:00-Achse –
-        so lassen sich einzelne Tage direkt übereinander vergleichen.
+    <section class="chart-section daycompare-section">
+      <div class="daycompare-header">
+        <h2>Tagesvergleich</h2>
+        <p class="muted">
+          Jeder Tag als eigene Kurve auf einer festen 00:00–24:00-Achse –
+          so lassen sich einzelne Tage direkt übereinander vergleichen.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="metric-buttons" id="daycompare-metric-buttons">
+          <button data-metric="pv" class="active">PV-Erzeugung</button>
+          <button data-metric="solar_battery">Verbrauch aus Solar &amp; Batterie</button>
+          <button data-metric="grid">Verbrauch aus dem Netz</button>
+        </div>
+        <div class="range-buttons" id="daycompare-day-buttons">
+          <button data-days="1">1 Tag</button>
+          <button data-days="3">3 Tage</button>
+          <button data-days="7" class="active">7 Tage</button>
+          <button data-days="14">14 Tage</button>
+          <button data-days="30">30 Tage</button>
+        </div>
+        <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
+      </div>
+      <div class="chart-canvas-wrapper" id="daycompare-chart-wrapper">
+        <canvas id="daycompare-chart"></canvas>
+      </div>
+      <p class="chart-hint muted" id="daycompare-hint">
+        Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder
+        auszublenden – hilfreich, um z.B. nur zwei bestimmte Tage
+        gegenüberzustellen. Jeder Tag hat eine eigene, feste Farbe (der
+        aktuellste Tag etwas dicker gezeichnet).
       </p>
-    </div>
-    <div class="chart-toolbar daycompare-toolbar">
-      <div class="metric-buttons" id="daycompare-metric-buttons">
-        <button data-metric="pv" class="active">PV-Erzeugung</button>
-        <button data-metric="solar_battery">Verbrauch aus Solar &amp; Batterie</button>
-        <button data-metric="grid">Verbrauch aus dem Netz</button>
-      </div>
-      <div class="range-buttons" id="daycompare-day-buttons">
-        <button data-days="1">1 Tag</button>
-        <button data-days="3">3 Tage</button>
-        <button data-days="7" class="active">7 Tage</button>
-        <button data-days="14">14 Tage</button>
-        <button data-days="30">30 Tage</button>
-      </div>
-      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
-    </div>
-    <div class="chart-canvas-wrapper">
-      <canvas id="daycompare-chart"></canvas>
-    </div>
-    <p class="chart-hint muted" id="daycompare-hint">
-      Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder
-      auszublenden – hilfreich, um z.B. nur zwei bestimmte Tage
-      gegenüberzustellen. Jeder Tag hat eine eigene, feste Farbe (der
-      aktuellste Tag etwas dicker gezeichnet).
-    </p>
-  </section>
+    </section>
+  </div>
 
-  <section class="chart-section">
-    <div class="daycompare-header">
-      <h2>Tagesverbrauch</h2>
-      <p class="muted">
-        Hausverbrauch je Tag als Summe (kWh), aufgeteilt danach, woher die
-        Energie kam: PV, Speicher (Batterie) oder Netzbezug – funktioniert
-        auch für vergangene Tage, die nur über den Logdaten-Import erfasst
-        wurden.
-      </p>
-    </div>
-    <div class="chart-toolbar daycompare-toolbar">
-      <div class="range-buttons" id="dailytotals-day-buttons">
-        <button data-days="14">14 Tage</button>
-        <button data-days="30" class="active">30 Tage</button>
-        <button data-days="90">90 Tage</button>
-        <button data-days="365">365 Tage</button>
+  <div class="tab-panel hidden" id="tab-panel-consumption" data-tab-panel="consumption">
+    <section class="chart-section">
+      <div class="daycompare-header">
+        <h2>Tagesverbrauch</h2>
+        <p class="muted">
+          Hausverbrauch je Tag als Summe (kWh), aufgeteilt danach, woher die
+          Energie kam: PV, Speicher (Batterie) oder Netzbezug – funktioniert
+          auch für vergangene Tage, die nur über den Logdaten-Import erfasst
+          wurden.
+        </p>
       </div>
-      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
-    </div>
-    <div class="chart-canvas-wrapper">
-      <canvas id="dailytotals-chart"></canvas>
-    </div>
-    <p class="chart-hint muted">
-      Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
-      Tageswerts zu sehen.
-    </p>
-  </section>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="dailytotals-day-buttons">
+          <button data-days="14">14 Tage</button>
+          <button data-days="30" class="active">30 Tage</button>
+          <button data-days="90">90 Tage</button>
+          <button data-days="365">365 Tage</button>
+        </div>
+        <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
+      </div>
+      <div class="chart-canvas-wrapper" id="dailytotals-chart-wrapper">
+        <canvas id="dailytotals-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
+        Tageswerts zu sehen.
+      </p>
+    </section>
 
-  <section class="chart-section" id="hourly-section">
-    <div class="daycompare-header">
-      <h2>Wechselrichter-Vergleich</h2>
-      <p class="muted">
-        PV-Ertrag pro Stunde, je Wechselrichter farblich getrennt gestapelt –
-        die gesamte erzeugte Energie, unabhängig davon, ob sie eingespeist
-        oder direkt im Haus verbraucht wurde. So lässt sich der Beitrag der
-        einzelnen Wechselrichter direkt vergleichen. Nur sichtbar in der
-        Ansicht "Alle (Summe)" oben, da ein einzelner Wechselrichter nichts
-        zum Vergleichen hat.
-      </p>
-    </div>
-    <div class="chart-toolbar daycompare-toolbar">
-      <div class="range-buttons" id="hourly-day-buttons">
-        <button data-days="1" class="active">1 Tag</button>
-        <button data-days="7">7 Tage</button>
-        <button data-days="30">30 Tage</button>
+    <section class="chart-section" id="hourly-section">
+      <div class="daycompare-header">
+        <h2>Wechselrichter-Vergleich</h2>
+        <p class="muted">
+          PV-Ertrag pro Stunde, je Wechselrichter farblich getrennt gestapelt –
+          die gesamte erzeugte Energie, unabhängig davon, ob sie eingespeist
+          oder direkt im Haus verbraucht wurde. So lässt sich der Beitrag der
+          einzelnen Wechselrichter direkt vergleichen. Nur sichtbar in der
+          Ansicht "Alle (Summe)" oben, da ein einzelner Wechselrichter nichts
+          zum Vergleichen hat.
+        </p>
       </div>
-      <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
-    </div>
-    <div class="chart-canvas-wrapper">
-      <canvas id="hourly-chart"></canvas>
-    </div>
-    <p class="chart-hint muted">
-      Tipp: Bei 7 oder 30 Tagen werden die Balken entsprechend schmal – Maus
-      über eine Säule halten zeigt trotzdem die genaue Stunde und den
-      genauen Wert je Wechselrichter.
-    </p>
-  </section>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="hourly-day-buttons">
+          <button data-days="1" class="active">1 Tag</button>
+          <button data-days="7">7 Tage</button>
+          <button data-days="30">30 Tage</button>
+        </div>
+        <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
+      </div>
+      <div class="chart-canvas-wrapper" id="hourly-chart-wrapper">
+        <canvas id="hourly-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Bei 7 oder 30 Tagen werden die Balken entsprechend schmal – Maus
+        über eine Säule halten zeigt trotzdem die genaue Stunde und den
+        genauen Wert je Wechselrichter.
+      </p>
+    </section>
+  </div>
+
+  <div class="tab-panel hidden" id="tab-panel-forecast" data-tab-panel="forecast">
+    <section class="chart-section forecast-section" id="forecast-section">
+      <div class="daycompare-header">
+        <h2>PV-Prognose</h2>
+        <p class="muted" id="forecast-status">Wird geladen …</p>
+      </div>
+      <div class="forecast-days" id="forecast-days"></div>
+      <div class="chart-canvas-wrapper" id="forecast-chart-wrapper">
+        <canvas id="forecast-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="chart-section forecast-section" id="forecast-accuracy-section">
+      <div class="forecast-accuracy-header">
+        <h3>Prognosekontrolle</h3>
+        <p class="muted" id="forecast-accuracy-status">Wird geladen …</p>
+      </div>
+      <div class="forecast-accuracy-days" id="forecast-accuracy-days"></div>
+      <div class="chart-canvas-wrapper forecast-accuracy-chart-wrapper" id="forecast-accuracy-chart-wrapper">
+        <canvas id="forecast-accuracy-chart"></canvas>
+      </div>
+    </section>
+  </div>
 </main>
 
 <script src="app.js"></script>

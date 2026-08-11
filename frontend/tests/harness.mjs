@@ -195,7 +195,20 @@ export async function bootApp({ fetchHandler }) {
     btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   }
 
+  // Klickt einen der Ansichts-Tabs (Uebersicht/Verlauf/Verbrauch & WR/
+  // Prognose, siehe setupViewTabs() in app.js) - anhand seiner data-tab-ID,
+  // nicht des sichtbaren Labels (robuster gegen Textaenderungen).
+  function clickViewTab(tabId) {
+    const btn = document.querySelector(`#view-tabs button[data-tab="${tabId}"]`);
+    if (!btn) throw new Error(`Ansichts-Tab nicht gefunden: ${tabId}`);
+    btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  }
+
   const loadingCount = () => document.querySelectorAll(".is-loading").length;
+  const isLoading = (selector) => {
+    const node = document.querySelector(selector);
+    return !!node && node.classList.contains("is-loading");
+  };
 
   // Letzter Y-Wert einer Kurve im Hauptdiagramm (Punkte sind im Tagesmodus
   // {x, y}-Objekte, sonst reine Zahlen).
@@ -206,5 +219,15 @@ export async function bootApp({ fetchHandler }) {
     return last && typeof last === "object" ? last.y : last;
   }
 
-  return { dom, window, document, state, clickTab, loadingCount, chartMetricLast };
+  return {
+    dom,
+    window,
+    document,
+    state,
+    clickTab,
+    clickViewTab,
+    loadingCount,
+    isLoading,
+    chartMetricLast,
+  };
 }

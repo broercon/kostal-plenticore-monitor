@@ -17,6 +17,9 @@ test("Chart: PV-Leistung = reine PV, Batterie separat", async () => {
       : base(url);
 
   const app = await bootApp({ fetchHandler: handler });
+  // Der Leistungsverlauf-Chart gehoert zum "trend"-Tab und laedt erst bei
+  // dessen erstem Oeffnen, siehe setupViewTabs()/TAB_LOADERS in app.js.
+  app.clickViewTab("trend");
   await waitFor(() => app.chartMetricLast("Batterie") !== null);
   assert.equal(app.chartMetricLast("PV-Leistung"), 0);   // 4000 - 4000 (Batterie raus)
   assert.equal(app.chartMetricLast("Batterie"), 4000);   // Batterie unveraendert

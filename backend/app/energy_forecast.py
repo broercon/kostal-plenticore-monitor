@@ -5,7 +5,7 @@ import asyncio
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -151,6 +151,31 @@ def build_training_data(
                 samples.append(TrainingPoint(weather_point, power_w))
         result[device_id] = samples
     return result
+
+
+def forecast_weather_for_local_days(
+    weather: list[WeatherPoint],
+    start_date: date,
+    days: int,
+    timezone_name: str,
+) -> list[WeatherPoint]:
+    """Begrenzt UTC-Wetterstunden auf vollstaendige lokale Prognosetage.
+
+    Open-Meteo liefert UTC-Kalendertage. Nach der Verschiebung auf das von
+    den Strahlungswerten beschriebene Stundenintervall und der Umrechnung in
+    die Anlagen-Zeitzone kann am Ende ein einzelner Wert in den Folgetag
+    rutschen. Dieser unvollstaendige Randtag darf nicht als eigener Tag mit
+    0 kWh im Dashboard erscheinen.
+    """
+    local_tz = ZoneInfo(timezone_name)
+    end_date = start_date + timedelta(days=days)
+    return [
+        point
+        for point in weather
+        if start_date
+        <= (point.timestamp - timedelta(hours=1)).astimezone(local_tz).date()
+        < end_date
+    ]
 
 
 def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
@@ -618,7 +643,16 @@ async def build_forecast() -> dict:
             earliest.date(),
             (until - timedelta(days=1)).date(),
         ),
-        fetch_forecast_weather(latitude, longitude, FORECAST_DAYS),
+        # Einen zusaetzlichen UTC-Tag abrufen, damit der letzte lokale Tag
+        # auch in Zeitzonen mit UTC-Versatz vollstaendig vorliegt. Direkt
+        # danach wird exakt auf FORECAST_DAYS lokale Kalendertage begrenzt.
+        fetch_forecast_weather(latitude, longitude, FORECAST_DAYS + 1),
+    )
+    forecast_weather = forecast_weather_for_local_days(
+        forecast_weather,
+        now.astimezone(ZoneInfo(settings.timezone_name)).date(),
+        FORECAST_DAYS,
+        settings.timezone_name,
     )
     training = build_training_data(history, historical_weather)
     return _summarize(

@@ -23,6 +23,11 @@ const state = {
   chartsInteractive: true,
   forecastChart: null,
   forecastAccuracyChart: null,
+  // Welche Ansichts-Tabs (siehe setupViewTabs) schon mindestens einmal
+  // geladen wurden - nur fuer diese laeuft ein periodisches Auto-Refresh und
+  // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
+  // nie besuchter Tab laedt seine Daten erst beim ersten Oeffnen.
+  tabsLoaded: new Set(),
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -298,195 +303,201 @@ function fmtForecastTime(value) {
 }
 
 async function refreshForecast() {
-  const data = await fetchJson("/api/forecast");
-  const status = el("forecast-status");
-  const dayContainer = el("forecast-days");
-  dayContainer.innerHTML = "";
-  if (!data.available) {
-    status.textContent = data.message;
-    if (state.forecastChart) {
-      state.forecastChart.destroy();
-      state.forecastChart = null;
+  return withLoading(["#forecast-section"], async () => {
+    const data = await fetchJson("/api/forecast");
+    const status = el("forecast-status");
+    const dayContainer = el("forecast-days");
+    dayContainer.innerHTML = "";
+    if (!data.available) {
+      status.textContent = data.message;
+      if (state.forecastChart) {
+        state.forecastChart.destroy();
+        state.forecastChart = null;
+      }
+      return;
     }
-    return;
-  }
 
-  status.textContent =
-    `${data.message} Grundlage: ${data.training_samples} historische Stunden, ` +
-    `aktualisiert ${fmtDateTime(data.generated_at)}.`;
-  if (data.models?.length) {
-    const modelText = data.models.map((model) => {
-      const method = model.method === "learned" ? "gelernt" : "Standard";
-      const error = model.validation_error_percent === null
-        ? "noch ohne Rückvergleich"
-        : `${model.validation_error_percent.toFixed(1)} % historischer Fehler`;
-      return `${model.device_name}: ${method}, ${error}`;
-    }).join(" · ");
-    status.textContent += ` Modelle: ${modelText}.`;
-  }
-  for (const day of data.days) {
-    const card = document.createElement("div");
-    card.className = "forecast-day";
-    const date = document.createElement("strong");
-    date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
-      weekday: "short",
-      day: "2-digit",
-      month: "2-digit",
-    });
-    const value = document.createElement("span");
-    value.className = "forecast-day-value";
-    value.textContent = `${day.expected_kwh.toFixed(1)} kWh`;
-    const range = document.createElement("span");
-    range.className = "muted";
-    range.textContent = `Bereich ${day.low_kwh.toFixed(1)}–${day.high_kwh.toFixed(1)} kWh`;
-    const windowText = document.createElement("span");
-    windowText.className = "muted";
-    windowText.textContent = day.production_start
-      ? `${fmtForecastTime(day.production_start)}–${fmtForecastTime(day.production_end)}, Spitze ${day.peak_kw.toFixed(1)} kW`
-      : "Keine nennenswerte Erzeugung erwartet";
-    const devices = document.createElement("span");
-    devices.className = "forecast-day-devices";
-    devices.textContent = day.devices
-      .map((device) => `${device.device_name}: ${device.expected_kwh.toFixed(1)} kWh`)
-      .join(" · ");
-    card.append(date, value, range, windowText, devices);
-    dayContainer.appendChild(card);
-  }
-
-  const labels = data.hours.map((hour) =>
-    new Date(hour.timestamp).toLocaleString("de-DE", {
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  );
-  const datasets = [
-    {
-      label: "Unterer Bereich",
-      data: data.hours.map((hour) => hour.low_kw),
-      borderColor: "rgba(59, 130, 246, 0)",
-      pointRadius: 0,
-      fill: false,
-    },
-    {
-      label: "Prognosebereich",
-      data: data.hours.map((hour) => hour.high_kw),
-      borderColor: "rgba(59, 130, 246, 0)",
-      backgroundColor: "rgba(59, 130, 246, 0.16)",
-      pointRadius: 0,
-      fill: "-1",
-    },
-    {
-      label: "Erwartete PV-Leistung",
-      data: data.hours.map((hour) => hour.expected_kw),
-      borderColor: "#38bdf8",
-      backgroundColor: "#38bdf8",
-      pointRadius: 0,
-      borderWidth: 2,
-      tension: 0.2,
-    },
-  ];
-  if (state.forecastChart) state.forecastChart.destroy();
-  state.forecastChart = new Chart(el("forecast-chart").getContext("2d"), {
-    type: "line",
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      events: chartEvents(),
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: { ticks: { maxTicksLimit: 14 } },
-        y: { beginAtZero: true, title: { display: true, text: "kW" } },
-      },
-    },
-  });
-}
-
-async function refreshForecastAccuracy() {
-  const data = await fetchJson("/api/forecast/accuracy?days=30");
-  const status = el("forecast-accuracy-status");
-  const container = el("forecast-accuracy-days");
-  const chartWrapper = el("forecast-accuracy-chart").parentElement;
-  container.innerHTML = "";
-  if (!data.available) {
-    status.textContent = data.message;
-    chartWrapper.classList.add("hidden");
-    if (state.forecastAccuracyChart) {
-      state.forecastAccuracyChart.destroy();
-      state.forecastAccuracyChart = null;
+    status.textContent =
+      `${data.message} Grundlage: ${data.training_samples} historische Stunden, ` +
+      `aktualisiert ${fmtDateTime(data.generated_at)}.`;
+    if (data.models?.length) {
+      const modelText = data.models.map((model) => {
+        const method = model.method === "learned" ? "gelernt" : "Standard";
+        const error = model.validation_error_percent === null
+          ? "noch ohne Rückvergleich"
+          : `${model.validation_error_percent.toFixed(1)} % historischer Fehler`;
+        return `${model.device_name}: ${method}, ${error}`;
+      }).join(" · ");
+      status.textContent += ` Modelle: ${modelText}.`;
     }
-    return;
-  }
+    for (const day of data.days) {
+      const card = document.createElement("div");
+      card.className = "forecast-day";
+      const date = document.createElement("strong");
+      date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+        weekday: "short",
+        day: "2-digit",
+        month: "2-digit",
+      });
+      const value = document.createElement("span");
+      value.className = "forecast-day-value";
+      value.textContent = `${day.expected_kwh.toFixed(1)} kWh`;
+      const range = document.createElement("span");
+      range.className = "muted";
+      range.textContent = `Bereich ${day.low_kwh.toFixed(1)}–${day.high_kwh.toFixed(1)} kWh`;
+      const windowText = document.createElement("span");
+      windowText.className = "muted";
+      windowText.textContent = day.production_start
+        ? `${fmtForecastTime(day.production_start)}–${fmtForecastTime(day.production_end)}, Spitze ${day.peak_kw.toFixed(1)} kW`
+        : "Keine nennenswerte Erzeugung erwartet";
+      const devices = document.createElement("span");
+      devices.className = "forecast-day-devices";
+      devices.textContent = day.devices
+        .map((device) => `${device.device_name}: ${device.expected_kwh.toFixed(1)} kWh`)
+        .join(" · ");
+      card.append(date, value, range, windowText, devices);
+      dayContainer.appendChild(card);
+    }
 
-  status.textContent = data.overall_accuracy_percent === null
-    ? data.message
-    : `${data.message} Gesamtgenauigkeit: ${data.overall_accuracy_percent.toFixed(1)} %.`;
-  for (const day of data.days.slice(0, 7)) {
-    const card = document.createElement("div");
-    card.className = "forecast-accuracy-day";
-    const date = document.createElement("strong");
-    date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
-      weekday: "short",
-      day: "2-digit",
-      month: "2-digit",
-    });
-    const values = document.createElement("span");
-    values.className = "forecast-accuracy-values";
-    values.textContent = `Erwartet ${day.expected_kwh.toFixed(1)} · tatsächlich ${day.actual_kwh.toFixed(1)} kWh`;
-    const difference = document.createElement("span");
-    difference.className = "muted";
-    const sign = day.difference_kwh > 0 ? "+" : "";
-    const accuracy = day.accuracy_percent === null
-      ? "Genauigkeit –"
-      : `Genauigkeit ${day.accuracy_percent.toFixed(1)} %`;
-    difference.textContent = `Abweichung ${sign}${day.difference_kwh.toFixed(1)} kWh · ${accuracy}`;
-    difference.textContent += ` · ${day.matched_hours} Stundenwerte verglichen`;
-    const devices = document.createElement("span");
-    devices.className = "forecast-accuracy-devices";
-    devices.textContent = day.devices.map((device) => {
-      const deviceSign = device.difference_kwh > 0 ? "+" : "";
-      return `${device.device_name}: ${device.expected_kwh.toFixed(1)} → ${device.actual_kwh.toFixed(1)} kWh (${deviceSign}${device.difference_kwh.toFixed(1)})`;
-    }).join(" · ");
-    card.append(date, values, difference, devices);
-    container.appendChild(card);
-  }
-
-  const chronological = [...data.days].reverse();
-  chartWrapper.classList.remove("hidden");
-  if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
-  state.forecastAccuracyChart = new Chart(
-    el("forecast-accuracy-chart").getContext("2d"),
-    {
-      type: "bar",
-      data: {
-        labels: chronological.map((day) =>
-          new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
-            day: "2-digit",
-            month: "2-digit",
-          })
-        ),
-        datasets: [
-          {
-            label: "Erwartet",
-            data: chronological.map((day) => day.expected_kwh),
-            backgroundColor: "rgba(56, 189, 248, 0.55)",
-          },
-          {
-            label: "Tatsächlich",
-            data: chronological.map((day) => day.actual_kwh),
-            backgroundColor: "rgba(34, 197, 94, 0.65)",
-          },
-        ],
+    const labels = data.hours.map((hour) =>
+      new Date(hour.timestamp).toLocaleString("de-DE", {
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    );
+    const datasets = [
+      {
+        label: "Unterer Bereich",
+        data: data.hours.map((hour) => hour.low_kw),
+        borderColor: "rgba(59, 130, 246, 0)",
+        pointRadius: 0,
+        fill: false,
       },
+      {
+        label: "Prognosebereich",
+        data: data.hours.map((hour) => hour.high_kw),
+        borderColor: "rgba(59, 130, 246, 0)",
+        backgroundColor: "rgba(59, 130, 246, 0.16)",
+        pointRadius: 0,
+        fill: "-1",
+      },
+      {
+        label: "Erwartete PV-Leistung",
+        data: data.hours.map((hour) => hour.expected_kw),
+        borderColor: "#38bdf8",
+        backgroundColor: "#38bdf8",
+        pointRadius: 0,
+        borderWidth: 2,
+        tension: 0.2,
+      },
+    ];
+    if (state.forecastChart) state.forecastChart.destroy();
+    state.forecastChart = new Chart(el("forecast-chart").getContext("2d"), {
+      type: "line",
+      data: { labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         events: chartEvents(),
-        scales: { y: { beginAtZero: true, title: { display: true, text: "kWh" } } },
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { ticks: { maxTicksLimit: 14 } },
+          y: { beginAtZero: true, title: { display: true, text: "kW" } },
+        },
       },
+    });
+
+  });
+}
+
+async function refreshForecastAccuracy() {
+  return withLoading(["#forecast-accuracy-section"], async () => {
+    const data = await fetchJson("/api/forecast/accuracy?days=30");
+    const status = el("forecast-accuracy-status");
+    const container = el("forecast-accuracy-days");
+    const chartWrapper = el("forecast-accuracy-chart").parentElement;
+    container.innerHTML = "";
+    if (!data.available) {
+      status.textContent = data.message;
+      chartWrapper.classList.add("hidden");
+      if (state.forecastAccuracyChart) {
+        state.forecastAccuracyChart.destroy();
+        state.forecastAccuracyChart = null;
+      }
+      return;
     }
-  );
+
+    status.textContent = data.overall_accuracy_percent === null
+      ? data.message
+      : `${data.message} Gesamtgenauigkeit: ${data.overall_accuracy_percent.toFixed(1)} %.`;
+    for (const day of data.days.slice(0, 7)) {
+      const card = document.createElement("div");
+      card.className = "forecast-accuracy-day";
+      const date = document.createElement("strong");
+      date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+        weekday: "short",
+        day: "2-digit",
+        month: "2-digit",
+      });
+      const values = document.createElement("span");
+      values.className = "forecast-accuracy-values";
+      values.textContent = `Erwartet ${day.expected_kwh.toFixed(1)} · tatsächlich ${day.actual_kwh.toFixed(1)} kWh`;
+      const difference = document.createElement("span");
+      difference.className = "muted";
+      const sign = day.difference_kwh > 0 ? "+" : "";
+      const accuracy = day.accuracy_percent === null
+        ? "Genauigkeit –"
+        : `Genauigkeit ${day.accuracy_percent.toFixed(1)} %`;
+      difference.textContent = `Abweichung ${sign}${day.difference_kwh.toFixed(1)} kWh · ${accuracy}`;
+      difference.textContent += ` · ${day.matched_hours} Stundenwerte verglichen`;
+      const devices = document.createElement("span");
+      devices.className = "forecast-accuracy-devices";
+      devices.textContent = day.devices.map((device) => {
+        const deviceSign = device.difference_kwh > 0 ? "+" : "";
+        return `${device.device_name}: ${device.expected_kwh.toFixed(1)} → ${device.actual_kwh.toFixed(1)} kWh (${deviceSign}${device.difference_kwh.toFixed(1)})`;
+      }).join(" · ");
+      card.append(date, values, difference, devices);
+      container.appendChild(card);
+    }
+
+    const chronological = [...data.days].reverse();
+    chartWrapper.classList.remove("hidden");
+    if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
+    state.forecastAccuracyChart = new Chart(
+      el("forecast-accuracy-chart").getContext("2d"),
+      {
+        type: "bar",
+        data: {
+          labels: chronological.map((day) =>
+            new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+              day: "2-digit",
+              month: "2-digit",
+            })
+          ),
+          datasets: [
+            {
+              label: "Erwartet",
+              data: chronological.map((day) => day.expected_kwh),
+              backgroundColor: "rgba(56, 189, 248, 0.55)",
+            },
+            {
+              label: "Tatsächlich",
+              data: chronological.map((day) => day.actual_kwh),
+              backgroundColor: "rgba(34, 197, 94, 0.65)",
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          events: chartEvents(),
+          scales: { y: { beginAtZero: true, title: { display: true, text: "kWh" } } },
+        },
+      }
+    );
+
+  });
 }
 
 function setupAdminArea() {
@@ -661,8 +672,9 @@ async function loadDevices() {
     if (!btn) return;
     state.selectedDeviceId = btn.dataset.deviceId;
     applyActiveTab();
-    refreshAll({ showLoading: true });
-    refreshPvYieldSummary().catch(console.error);
+    // Nur bereits besuchte Ansichts-Tabs neu laden (siehe setupViewTabs) -
+    // ein noch nie geoeffneter Tab laedt beim ersten Oeffnen sowieso frisch.
+    refreshLoadedTabs().catch(console.error);
   });
 }
 
@@ -693,106 +705,112 @@ function updateHouseWideNotes() {
 }
 
 async function refreshLiveCards() {
-  // Snapshot der Auswahl VOR dem Netzwerk-Aufruf: wird waehrenddessen ein
-  // anderer Tab gewaehlt (schnelles Klicken), darf die verspaetete Antwort
-  // die Anzeige nicht mehr ueberschreiben (Race Condition).
-  const dev = state.selectedDeviceId;
-  const latest = await fetchJson("/api/readings/latest");
-  if (state.selectedDeviceId !== dev) return;
-  const combined = latest.find((r) => r.device_id === COMBINED_DEVICE_ID);
-  const perDevice = latest.filter((r) => r.device_id !== COMBINED_DEVICE_ID);
+  return withLoading(["#live-cards"], async () => {
+    // Snapshot der Auswahl VOR dem Netzwerk-Aufruf: wird waehrenddessen ein
+    // anderer Tab gewaehlt (schnelles Klicken), darf die verspaetete Antwort
+    // die Anzeige nicht mehr ueberschreiben (Race Condition).
+    const dev = state.selectedDeviceId;
+    const latest = await fetchJson("/api/readings/latest");
+    if (state.selectedDeviceId !== dev) return;
+    const combined = latest.find((r) => r.device_id === COMBINED_DEVICE_ID);
+    const perDevice = latest.filter((r) => r.device_id !== COMBINED_DEVICE_ID);
 
-  const relevant = state.selectedDeviceId
-    ? perDevice.filter((r) => r.device_id === state.selectedDeviceId)
-    : perDevice;
+    const relevant = state.selectedDeviceId
+      ? perDevice.filter((r) => r.device_id === state.selectedDeviceId)
+      : perDevice;
 
-  // Fuer "Alle (Summe)" den vom Backend bereits korrekt zusammengefassten
-  // Eintrag bevorzugen, falls vorhanden (nur bei mehreren konfigurierten
-  // Wechselrichtern geliefert) - sonst wie bisher die einzelnen Geraete
-  // client-seitig summieren (z.B. bei nur einem konfigurierten Geraet).
-  const cardSource = !state.selectedDeviceId && combined ? [combined] : relevant;
+    // Fuer "Alle (Summe)" den vom Backend bereits korrekt zusammengefassten
+    // Eintrag bevorzugen, falls vorhanden (nur bei mehreren konfigurierten
+    // Wechselrichtern geliefert) - sonst wie bisher die einzelnen Geraete
+    // client-seitig summieren (z.B. bei nur einem konfigurierten Geraet).
+    const cardSource = !state.selectedDeviceId && combined ? [combined] : relevant;
 
-  // Hausverbrauch/Einspeisung/Netzbezug sind hausweite Groessen - bei
-  // mehreren Wechselrichtern IMMER den zusammengefassten Wert nutzen, auch
-  // wenn oben ein einzelnes Geraet ausgewaehlt ist. Grund: der eigene
-  // Home_P-Wert eines einzelnen Wechselrichters kann bei einem zweiten,
-  // unbeachteten Wechselrichter am selben Hausanschluss stark falsch/negativ
-  // sein (siehe README "Mehrere Wechselrichter ..."). Nur PV-Leistung/
-  // Batterie bleiben pro ausgewaehltem Geraet.
-  const houseWideSource = combined ? [combined] : relevant;
+    // Hausverbrauch/Einspeisung/Netzbezug sind hausweite Groessen - bei
+    // mehreren Wechselrichtern IMMER den zusammengefassten Wert nutzen, auch
+    // wenn oben ein einzelnes Geraet ausgewaehlt ist. Grund: der eigene
+    // Home_P-Wert eines einzelnen Wechselrichters kann bei einem zweiten,
+    // unbeachteten Wechselrichter am selben Hausanschluss stark falsch/negativ
+    // sein (siehe README "Mehrere Wechselrichter ..."). Nur PV-Leistung/
+    // Batterie bleiben pro ausgewaehltem Geraet.
+    const houseWideSource = combined ? [combined] : relevant;
 
-  el("card-home").textContent = fmtWatt(sumField(houseWideSource, "home_power_w"));
-  el("card-feedin").textContent = fmtWatt(sumField(houseWideSource, "feed_in_power_w"));
-  el("card-griddraw").textContent = fmtWatt(sumField(houseWideSource, "grid_draw_power_w"));
-  const pvPureSum = cardSource.reduce((acc, r) => {
-    const v = purePvWatt(r);
-    return v === null ? acc : acc === null ? v : acc + v;
-  }, null);
-  el("card-pv").textContent = fmtWatt(pvPureSum);
+    el("card-home").textContent = fmtWatt(sumField(houseWideSource, "home_power_w"));
+    el("card-feedin").textContent = fmtWatt(sumField(houseWideSource, "feed_in_power_w"));
+    el("card-griddraw").textContent = fmtWatt(sumField(houseWideSource, "grid_draw_power_w"));
+    const pvPureSum = cardSource.reduce((acc, r) => {
+      const v = purePvWatt(r);
+      return v === null ? acc : acc === null ? v : acc + v;
+    }, null);
+    el("card-pv").textContent = fmtWatt(pvPureSum);
 
-  // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
-  // zusammengefasste "_all_"-Eintrag hat keinen eigenen SoC-Wert) - dafuer
-  // immer die einzelnen Geraete verwenden, auch in der "Alle"-Ansicht. Die
-  // Kachel wird angezeigt, sobald ueberhaupt ein Batteriewert vorliegt -
-  // Leistung ODER SoC. Nachts meldet der Wechselrichter zeitweise keinen SoC
-  // mehr (SoC = null), waehrend die Batterie durchaus noch Leistung abgibt;
-  // frueher verschwand die Kachel dann ganz. Jetzt bleibt sie sichtbar und
-  // zeigt den SoC als "-" an, solange nur die Leistung bekannt ist.
-  const hasBattery = (r) =>
-    (r.battery_soc_percent !== null && r.battery_soc_percent !== undefined) ||
-    (r.battery_power_w !== null && r.battery_power_w !== undefined);
-  const batteryEntries = relevant.filter(hasBattery);
-  if (batteryEntries.length === 0) {
-    el("card-battery-wrapper").style.display = "none";
-  } else {
-    el("card-battery-wrapper").style.display = "";
-    const batteryPower = fmtWatt(sumField(cardSource, "battery_power_w"));
-    // Geraetename nur anzeigen, wenn mehrere Batterien gleichzeitig sichtbar
-    // sind (z.B. "Alle (Summe)" mit zwei Wechselrichtern mit Batterie) - bei
-    // nur einem Eintrag ist die Zuordnung schon durch den Filter oben
-    // eindeutig, der Name waere redundant.
-    const socText =
-      batteryEntries.length > 1
-        ? batteryEntries
-            .map((r) => `${r.device_name}: ${fmtPercent(r.battery_soc_percent)}`)
-            .join(" · ")
-        : fmtPercent(batteryEntries[0].battery_soc_percent);
-    el("card-battery").textContent = `${batteryPower} (${socText})`;
-  }
+    // Batterie-Ladezustand (SoC) gibt es nur pro echtem Geraet (der
+    // zusammengefasste "_all_"-Eintrag hat keinen eigenen SoC-Wert) - dafuer
+    // immer die einzelnen Geraete verwenden, auch in der "Alle"-Ansicht. Die
+    // Kachel wird angezeigt, sobald ueberhaupt ein Batteriewert vorliegt -
+    // Leistung ODER SoC. Nachts meldet der Wechselrichter zeitweise keinen SoC
+    // mehr (SoC = null), waehrend die Batterie durchaus noch Leistung abgibt;
+    // frueher verschwand die Kachel dann ganz. Jetzt bleibt sie sichtbar und
+    // zeigt den SoC als "-" an, solange nur die Leistung bekannt ist.
+    const hasBattery = (r) =>
+      (r.battery_soc_percent !== null && r.battery_soc_percent !== undefined) ||
+      (r.battery_power_w !== null && r.battery_power_w !== undefined);
+    const batteryEntries = relevant.filter(hasBattery);
+    if (batteryEntries.length === 0) {
+      el("card-battery-wrapper").style.display = "none";
+    } else {
+      el("card-battery-wrapper").style.display = "";
+      const batteryPower = fmtWatt(sumField(cardSource, "battery_power_w"));
+      // Geraetename nur anzeigen, wenn mehrere Batterien gleichzeitig sichtbar
+      // sind (z.B. "Alle (Summe)" mit zwei Wechselrichtern mit Batterie) - bei
+      // nur einem Eintrag ist die Zuordnung schon durch den Filter oben
+      // eindeutig, der Name waere redundant.
+      const socText =
+        batteryEntries.length > 1
+          ? batteryEntries
+              .map((r) => `${r.device_name}: ${fmtPercent(r.battery_soc_percent)}`)
+              .join(" · ")
+          : fmtPercent(batteryEntries[0].battery_soc_percent);
+      el("card-battery").textContent = `${batteryPower} (${socText})`;
+    }
 
-  if (relevant.length > 0) {
-    const newest = relevant.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
-    const t = new Date(newest.timestamp);
-    el("last-update").textContent = "Letzte Aktualisierung: " + t.toLocaleTimeString("de-DE");
-  }
+    if (relevant.length > 0) {
+      const newest = relevant.reduce((a, b) => (a.timestamp > b.timestamp ? a : b));
+      const t = new Date(newest.timestamp);
+      el("last-update").textContent = "Letzte Aktualisierung: " + t.toLocaleTimeString("de-DE");
+    }
 
-  updateHouseWideNotes();
+    updateHouseWideNotes();
+
+  });
 }
 
 async function refreshSummaryCards() {
-  const dev = state.selectedDeviceId;
-  const summaries = await fetchJson("/api/readings/today-summary");
-  if (state.selectedDeviceId !== dev) return;
-  const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
-  const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
+  return withLoading(["#summary-cards"], async () => {
+    const dev = state.selectedDeviceId;
+    const summaries = await fetchJson("/api/readings/today-summary");
+    if (state.selectedDeviceId !== dev) return;
+    const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
+    const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
 
-  const relevant = state.selectedDeviceId
-    ? perDevice.filter((s) => s.device_id === state.selectedDeviceId)
-    : perDevice;
-  // Wie bei refreshLiveCards(): fuer "Alle (Summe)" den vom Backend bereits
-  // korrekt berechneten Eintrag bevorzugen, falls vorhanden.
-  const summarySource = !state.selectedDeviceId && combined ? [combined] : relevant;
-  // Verbrauch/Einspeisung heute sind hausweite Groessen - siehe
-  // refreshLiveCards() fuer die Begruendung.
-  const houseWideSource = combined ? [combined] : relevant;
+    const relevant = state.selectedDeviceId
+      ? perDevice.filter((s) => s.device_id === state.selectedDeviceId)
+      : perDevice;
+    // Wie bei refreshLiveCards(): fuer "Alle (Summe)" den vom Backend bereits
+    // korrekt berechneten Eintrag bevorzugen, falls vorhanden.
+    const summarySource = !state.selectedDeviceId && combined ? [combined] : relevant;
+    // Verbrauch/Einspeisung heute sind hausweite Groessen - siehe
+    // refreshLiveCards() fuer die Begruendung.
+    const houseWideSource = combined ? [combined] : relevant;
 
-  el("summary-yield").textContent = fmtKwh(sumField(summarySource, "yield_day_kwh"));
-  el("summary-consumption").textContent = fmtKwh(
-    sumField(houseWideSource, "home_consumption_day_kwh")
-  );
-  el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
+    el("summary-yield").textContent = fmtKwh(sumField(summarySource, "yield_day_kwh"));
+    el("summary-consumption").textContent = fmtKwh(
+      sumField(houseWideSource, "home_consumption_day_kwh")
+    );
+    el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
 
-  updateHouseWideNotes();
+    updateHouseWideNotes();
+
+  });
 }
 
 function bucketMinutesForRange(hours) {
@@ -814,107 +832,110 @@ function minuteOfLocalDay(d) {
 }
 
 async function refreshChart() {
-  const reqDeviceId = state.selectedDeviceId;
-  const reqHours = state.hours;
-  const isDayMode = state.hours <= 24;
-  const mode = isDayMode ? "day" : "range";
-  const bucketMinutes = bucketMinutesForRange(state.hours);
-  const params = new URLSearchParams({
-    hours: String(state.hours),
-    bucket_minutes: String(bucketMinutes),
-  });
-  if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
-
-  const points = await fetchJson(`/api/readings/history?${params.toString()}`);
-  // Auswahl waehrend des Ladens geaendert? Dann Ergebnis verwerfen.
-  if (state.selectedDeviceId !== reqDeviceId || state.hours !== reqHours) return;
-
-  let labels = null;
-  const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w", battery: "battery_power_w" };
-  const metricLabel = { home: "Hausverbrauch", feedin: "Einspeisung", griddraw: "Netzbezug", pv: "PV-Leistung", battery: "Batterie" };
-
-  let datasets;
-  if (isDayMode) {
-    // Feste 00:00-24:00-Achse (wie beim Tagesvergleich): das Diagramm zeigt
-    // also immer den ganzen Tag, auch wenn aktuell erst z.B. 14 Uhr ist -
-    // der restliche Tag bleibt dann leer, statt dass die Achse "dynamisch"
-    // beim jeweils letzten Messwert endet.
-    datasets = Object.keys(fieldFor).map((key) => ({
-      label: metricLabel[key],
-      data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: key === "pv" ? purePvWatt(p) : p[fieldFor[key]] })),
-      borderColor: CHART_METRIC_COLORS[key],
-      backgroundColor: CHART_METRIC_COLORS[key] + "33",
-      tension: 0.25,
-      pointRadius: 0,
-    }));
-  } else {
-    labels = points.map((p) => {
-      const d = new Date(p.timestamp);
-      return d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return withLoading(["#power-chart-wrapper"], async () => {
+    const reqDeviceId = state.selectedDeviceId;
+    const reqHours = state.hours;
+    const isDayMode = state.hours <= 24;
+    const mode = isDayMode ? "day" : "range";
+    const bucketMinutes = bucketMinutesForRange(state.hours);
+    const params = new URLSearchParams({
+      hours: String(state.hours),
+      bucket_minutes: String(bucketMinutes),
     });
-    datasets = Object.keys(fieldFor).map((key) => ({
-      label: metricLabel[key],
-      data: points.map((p) => (key === "pv" ? purePvWatt(p) : p[fieldFor[key]])),
-      borderColor: CHART_METRIC_COLORS[key],
-      backgroundColor: CHART_METRIC_COLORS[key] + "33",
-      tension: 0.25,
-      pointRadius: 0,
-    }));
-  }
+    if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
 
-  if (state.chart && state.chartMode === mode) {
-    state.chart.data.labels = labels;
-    state.chart.data.datasets = datasets;
-    state.chart.update();
-    return;
-  }
+    const points = await fetchJson(`/api/readings/history?${params.toString()}`);
+    // Auswahl waehrend des Ladens geaendert? Dann Ergebnis verwerfen.
+    if (state.selectedDeviceId !== reqDeviceId || state.hours !== reqHours) return;
 
-  if (state.chart) {
-    state.chart.destroy();
-    state.chart = null;
-  }
-  state.chartMode = mode;
+    let labels = null;
+    const fieldFor = { home: "home_power_w", feedin: "feed_in_power_w", griddraw: "grid_draw_power_w", pv: "pv_power_w", battery: "battery_power_w" };
+    const metricLabel = { home: "Hausverbrauch", feedin: "Einspeisung", griddraw: "Netzbezug", pv: "PV-Leistung", battery: "Batterie" };
 
-  const ctx = el("power-chart").getContext("2d");
-  const xScale = isDayMode
-    ? {
-        type: "linear",
-        min: 0,
-        max: 1440,
-        ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
-        grid: { color: "#334155" },
-      }
-    : {
-        ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
-        grid: { color: "#334155" },
-      };
+    let datasets;
+    if (isDayMode) {
+      // Feste 00:00-24:00-Achse (wie beim Tagesvergleich): das Diagramm zeigt
+      // also immer den ganzen Tag, auch wenn aktuell erst z.B. 14 Uhr ist -
+      // der restliche Tag bleibt dann leer, statt dass die Achse "dynamisch"
+      // beim jeweils letzten Messwert endet.
+      datasets = Object.keys(fieldFor).map((key) => ({
+        label: metricLabel[key],
+        data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: key === "pv" ? purePvWatt(p) : p[fieldFor[key]] })),
+        borderColor: CHART_METRIC_COLORS[key],
+        backgroundColor: CHART_METRIC_COLORS[key] + "33",
+        tension: 0.25,
+        pointRadius: 0,
+      }));
+    } else {
+      labels = points.map((p) => {
+        const d = new Date(p.timestamp);
+        return d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      });
+      datasets = Object.keys(fieldFor).map((key) => ({
+        label: metricLabel[key],
+        data: points.map((p) => (key === "pv" ? purePvWatt(p) : p[fieldFor[key]])),
+        borderColor: CHART_METRIC_COLORS[key],
+        backgroundColor: CHART_METRIC_COLORS[key] + "33",
+        tension: 0.25,
+        pointRadius: 0,
+      }));
+    }
 
-  state.chart = new Chart(ctx, {
-    type: "line",
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      events: chartEvents(),
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: xScale,
-        y: {
-          ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
+    if (state.chart && state.chartMode === mode) {
+      state.chart.data.labels = labels;
+      state.chart.data.datasets = datasets;
+      state.chart.update();
+      return;
+    }
+
+    if (state.chart) {
+      state.chart.destroy();
+      state.chart = null;
+    }
+    state.chartMode = mode;
+
+    const ctx = el("power-chart").getContext("2d");
+    const xScale = isDayMode
+      ? {
+          type: "linear",
+          min: 0,
+          max: 1440,
+          ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
           grid: { color: "#334155" },
+        }
+      : {
+          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+          grid: { color: "#334155" },
+        };
+
+    state.chart = new Chart(ctx, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: xScale,
+          y: {
+            ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
+            grid: { color: "#334155" },
+          },
         },
-      },
-      plugins: {
-        legend: { labels: { color: "#e2e8f0" } },
-        tooltip: {
-          callbacks: {
-            title: (items) =>
-              isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
-            label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+        plugins: {
+          legend: { labels: { color: "#e2e8f0" } },
+          tooltip: {
+            callbacks: {
+              title: (items) =>
+                isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
+              label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+            },
           },
         },
       },
-    },
+    });
+
   });
 }
 
@@ -1049,73 +1070,76 @@ function updateDayCompareHint(metric) {
 }
 
 async function refreshDayCompareChart() {
-  const { metric, days } = state.dayCompare;
-  const reqDeviceId = state.selectedDeviceId;
-  const params = new URLSearchParams({
-    days: String(days),
-    bucket_minutes: "15",
-  });
-  if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
+  return withLoading(["#daycompare-chart-wrapper"], async () => {
+    const { metric, days } = state.dayCompare;
+    const reqDeviceId = state.selectedDeviceId;
+    const params = new URLSearchParams({
+      days: String(days),
+      bucket_minutes: "15",
+    });
+    if (state.selectedDeviceId) params.set("device_id", state.selectedDeviceId);
 
-  const result = await fetchJson(`/api/readings/day-profile?${params.toString()}`);
-  if (
-    state.selectedDeviceId !== reqDeviceId ||
-    state.dayCompare.metric !== metric ||
-    state.dayCompare.days !== days
-  )
-    return;
-  const datasets = buildDayCompareDatasets(result.days, metric);
+    const result = await fetchJson(`/api/readings/day-profile?${params.toString()}`);
+    if (
+      state.selectedDeviceId !== reqDeviceId ||
+      state.dayCompare.metric !== metric ||
+      state.dayCompare.days !== days
+    )
+      return;
+    const datasets = buildDayCompareDatasets(result.days, metric);
 
-  const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Solar / Batterie";
+    const yLabel = metric === "pv" ? "PV-Leistung" : metric === "grid" ? "Netzbezug" : "Solar / Batterie";
 
-  if (state.dayCompare.chart) {
-    state.dayCompare.chart.data.datasets = datasets;
-    state.dayCompare.chart.update();
-    return;
-  }
+    if (state.dayCompare.chart) {
+      state.dayCompare.chart.data.datasets = datasets;
+      state.dayCompare.chart.update();
+      return;
+    }
 
-  const ctx = el("daycompare-chart").getContext("2d");
-  state.dayCompare.chart = new Chart(ctx, {
-    type: "line",
-    data: { datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      events: chartEvents(),
-      // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
-      // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
-      // vergleichen lassen.
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: {
-          type: "linear",
-          min: 0,
-          max: 1440,
-          ticks: {
-            color: "#94a3b8",
-            stepSize: 120,
-            callback: (v) => minutesToLabel(v),
+    const ctx = el("daycompare-chart").getContext("2d");
+    state.dayCompare.chart = new Chart(ctx, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
+        // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
+        // vergleichen lassen.
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            max: 1440,
+            ticks: {
+              color: "#94a3b8",
+              stepSize: 120,
+              callback: (v) => minutesToLabel(v),
+            },
+            grid: { color: "#334155" },
+            title: { display: true, text: "Uhrzeit", color: "#94a3b8" },
           },
-          grid: { color: "#334155" },
-          title: { display: true, text: "Uhrzeit", color: "#94a3b8" },
-        },
-        y: {
-          ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
-          grid: { color: "#334155" },
-          title: { display: true, text: yLabel, color: "#94a3b8" },
-        },
-      },
-      plugins: {
-        legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
-        tooltip: {
-          itemSort: (a, b) => b.parsed.y - a.parsed.y,
-          callbacks: {
-            title: (items) => (items.length ? minutesToLabel(items[0].parsed.x) : ""),
-            label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+          y: {
+            ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
+            grid: { color: "#334155" },
+            title: { display: true, text: yLabel, color: "#94a3b8" },
           },
         },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
+          tooltip: {
+            itemSort: (a, b) => b.parsed.y - a.parsed.y,
+            callbacks: {
+              title: (items) => (items.length ? minutesToLabel(items[0].parsed.x) : ""),
+              label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+            },
+          },
+        },
       },
-    },
+    });
+
   });
 }
 
@@ -1177,84 +1201,87 @@ const DAILY_BREAKDOWN_COLORS = {
 };
 
 async function refreshDailyTotalsChart() {
-  const reqDays = state.dailyTotals.days;
-  const params = new URLSearchParams({ days: String(state.dailyTotals.days) });
-  const result = await fetchJson(`/api/readings/daily-home-breakdown?${params.toString()}`);
-  if (state.dailyTotals.days !== reqDays) return;
-  const labels = result.days.map((d) => shortDate(d.date));
+  return withLoading(["#dailytotals-chart-wrapper"], async () => {
+    const reqDays = state.dailyTotals.days;
+    const params = new URLSearchParams({ days: String(state.dailyTotals.days) });
+    const result = await fetchJson(`/api/readings/daily-home-breakdown?${params.toString()}`);
+    if (state.dailyTotals.days !== reqDays) return;
+    const labels = result.days.map((d) => shortDate(d.date));
 
-  const datasets = [
-    {
-      label: "Aus PV",
-      data: result.days.map((d) => d.pv_kwh),
-      backgroundColor: DAILY_BREAKDOWN_COLORS.pv + "99",
-      borderColor: DAILY_BREAKDOWN_COLORS.pv,
-      borderWidth: 1,
-      stack: "verbrauch",
-    },
-    {
-      label: "Aus Speicher",
-      data: result.days.map((d) => d.battery_kwh),
-      backgroundColor: DAILY_BREAKDOWN_COLORS.battery + "99",
-      borderColor: DAILY_BREAKDOWN_COLORS.battery,
-      borderWidth: 1,
-      stack: "verbrauch",
-    },
-    {
-      label: "Aus Netz",
-      data: result.days.map((d) => d.grid_kwh),
-      backgroundColor: DAILY_BREAKDOWN_COLORS.grid + "99",
-      borderColor: DAILY_BREAKDOWN_COLORS.grid,
-      borderWidth: 1,
-      stack: "verbrauch",
-    },
-  ];
-
-  if (state.dailyTotals.chart) {
-    state.dailyTotals.chart.data.labels = labels;
-    state.dailyTotals.chart.data.datasets = datasets;
-    state.dailyTotals.chart.update();
-    return;
-  }
-
-  const ctx = el("dailytotals-chart").getContext("2d");
-  state.dailyTotals.chart = new Chart(ctx, {
-    type: "bar",
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      events: chartEvents(),
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: {
-          stacked: true,
-          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 20 },
-          grid: { display: false },
-        },
-        y: {
-          stacked: true,
-          ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
-          grid: { color: "#334155" },
-          title: { display: true, text: "Hausverbrauch (kWh)", color: "#94a3b8" },
-        },
+    const datasets = [
+      {
+        label: "Aus PV",
+        data: result.days.map((d) => d.pv_kwh),
+        backgroundColor: DAILY_BREAKDOWN_COLORS.pv + "99",
+        borderColor: DAILY_BREAKDOWN_COLORS.pv,
+        borderWidth: 1,
+        stack: "verbrauch",
       },
-      plugins: {
-        legend: { labels: { color: "#e2e8f0" } },
-        tooltip: {
-          callbacks: {
-            label: (item) =>
-              item.parsed.y === null
-                ? `${item.dataset.label}: keine Daten`
-                : `${item.dataset.label}: ${item.parsed.y.toFixed(1)} kWh`,
-            footer: (items) => {
-              const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
-              return `Gesamt: ${total.toFixed(1)} kWh`;
+      {
+        label: "Aus Speicher",
+        data: result.days.map((d) => d.battery_kwh),
+        backgroundColor: DAILY_BREAKDOWN_COLORS.battery + "99",
+        borderColor: DAILY_BREAKDOWN_COLORS.battery,
+        borderWidth: 1,
+        stack: "verbrauch",
+      },
+      {
+        label: "Aus Netz",
+        data: result.days.map((d) => d.grid_kwh),
+        backgroundColor: DAILY_BREAKDOWN_COLORS.grid + "99",
+        borderColor: DAILY_BREAKDOWN_COLORS.grid,
+        borderWidth: 1,
+        stack: "verbrauch",
+      },
+    ];
+
+    if (state.dailyTotals.chart) {
+      state.dailyTotals.chart.data.labels = labels;
+      state.dailyTotals.chart.data.datasets = datasets;
+      state.dailyTotals.chart.update();
+      return;
+    }
+
+    const ctx = el("dailytotals-chart").getContext("2d");
+    state.dailyTotals.chart = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 20 },
+            grid: { display: false },
+          },
+          y: {
+            stacked: true,
+            ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+            grid: { color: "#334155" },
+            title: { display: true, text: "Hausverbrauch (kWh)", color: "#94a3b8" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0" } },
+          tooltip: {
+            callbacks: {
+              label: (item) =>
+                item.parsed.y === null
+                  ? `${item.dataset.label}: keine Daten`
+                  : `${item.dataset.label}: ${item.parsed.y.toFixed(1)} kWh`,
+              footer: (items) => {
+                const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
+                return `Gesamt: ${total.toFixed(1)} kWh`;
+              },
             },
           },
         },
       },
-    },
+    });
+
   });
 }
 
@@ -1301,80 +1328,83 @@ function updateHourlyCompareVisibility() {
 }
 
 async function refreshHourlyCompareChart() {
-  if (!updateHourlyCompareVisibility()) return;
+  return withLoading(["#hourly-chart-wrapper"], async () => {
+    if (!updateHourlyCompareVisibility()) return;
 
-  const days = state.hourlyCompare.days;
-  const params = new URLSearchParams({ metric: "pv", days: String(days) });
+    const days = state.hourlyCompare.days;
+    const params = new URLSearchParams({ metric: "pv", days: String(days) });
 
-  const result = await fetchJson(`/api/readings/hourly-per-device?${params.toString()}`);
-  // Waehrend des Ladens auf einen einzelnen WR gewechselt (Diagramm dann
-  // ausgeblendet) oder anderer Zeitraum gewaehlt? Ergebnis verwerfen.
-  if (state.selectedDeviceId !== "" || state.hourlyCompare.days !== days) return;
-  const multiDay = days > 1;
-  const labels = result.buckets.map((b) => hourLabel(b.bucket, multiDay));
+    const result = await fetchJson(`/api/readings/hourly-per-device?${params.toString()}`);
+    // Waehrend des Ladens auf einen einzelnen WR gewechselt (Diagramm dann
+    // ausgeblendet) oder anderer Zeitraum gewaehlt? Ergebnis verwerfen.
+    if (state.selectedDeviceId !== "" || state.hourlyCompare.days !== days) return;
+    const multiDay = days > 1;
+    const labels = result.buckets.map((b) => hourLabel(b.bucket, multiDay));
 
-  const datasets = result.devices.map((device, i) => ({
-    label: device.device_name,
-    data: result.buckets.map((b) => b.values[device.device_id]),
-    backgroundColor: dayColor(i),
-    borderColor: dayColor(i),
-    borderWidth: 1,
-    borderRadius: 2,
-    stack: "ertrag",
-  }));
+    const datasets = result.devices.map((device, i) => ({
+      label: device.device_name,
+      data: result.buckets.map((b) => b.values[device.device_id]),
+      backgroundColor: dayColor(i),
+      borderColor: dayColor(i),
+      borderWidth: 1,
+      borderRadius: 2,
+      stack: "ertrag",
+    }));
 
-  if (state.hourlyCompare.chart) {
-    state.hourlyCompare.chart.data.labels = labels;
-    state.hourlyCompare.chart.data.datasets = datasets;
-    state.hourlyCompare.chart.update();
-    return;
-  }
+    if (state.hourlyCompare.chart) {
+      state.hourlyCompare.chart.data.labels = labels;
+      state.hourlyCompare.chart.data.datasets = datasets;
+      state.hourlyCompare.chart.update();
+      return;
+    }
 
-  const ctx = el("hourly-chart").getContext("2d");
-  state.hourlyCompare.chart = new Chart(ctx, {
-    type: "bar",
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      events: chartEvents(),
-      // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
-      // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
-      // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
-      // nur der eine, direkt getroffene Balken.
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: {
-          stacked: true,
-          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
-          grid: { display: false },
+    const ctx = el("hourly-chart").getContext("2d");
+    state.hourlyCompare.chart = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
+        // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
+        // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
+        // nur der eine, direkt getroffene Balken.
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
+            grid: { display: false },
+          },
+          y: {
+            stacked: true,
+            ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+            grid: { color: "#334155" },
+            title: { display: true, text: "PV-Ertrag (kWh)", color: "#94a3b8" },
+          },
         },
-        y: {
-          stacked: true,
-          ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
-          grid: { color: "#334155" },
-          title: { display: true, text: "PV-Ertrag (kWh)", color: "#94a3b8" },
-        },
-      },
-      plugins: {
-        legend: { labels: { color: "#e2e8f0" } },
-        tooltip: {
-          callbacks: {
-            label: (item) =>
-              item.parsed.y === null
-                ? `${item.dataset.label}: keine Daten`
-                : `${item.dataset.label}: ${item.parsed.y.toFixed(2)} kWh`,
-            // Zeigt zusaetzlich die Summe aller Wechselrichter fuer diese
-            // Stunde an, damit man neben den Einzelwerten auch den
-            // Gesamtertrag auf einen Blick sieht.
-            footer: (items) => {
-              const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
-              return `Gesamt: ${total.toFixed(2)} kWh`;
+        plugins: {
+          legend: { labels: { color: "#e2e8f0" } },
+          tooltip: {
+            callbacks: {
+              label: (item) =>
+                item.parsed.y === null
+                  ? `${item.dataset.label}: keine Daten`
+                  : `${item.dataset.label}: ${item.parsed.y.toFixed(2)} kWh`,
+              // Zeigt zusaetzlich die Summe aller Wechselrichter fuer diese
+              // Stunde an, damit man neben den Einzelwerten auch den
+              // Gesamtertrag auf einen Blick sieht.
+              footer: (items) => {
+                const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
+                return `Gesamt: ${total.toFixed(2)} kWh`;
+              },
             },
           },
         },
       },
-    },
+    });
+
   });
 }
 
@@ -1453,24 +1483,43 @@ async function updateImportStatusUI() {
 }
 
 
-// Panels, ueber die beim (Neu-)Laden ein Ladeindikator gelegt wird - die
-// alten Werte werden dabei abgedimmt, bis die neuen Daten da sind.
-const LOADING_PANEL_SELECTORS = ["#live-cards", "#summary-cards", ".chart-canvas-wrapper"];
+// Ladeindikator pro Panel statt global: jede refresh*()-Funktion dimmt nur
+// ihr EIGENES Panel ab und zeigt dort den Spinner, bis ihre eigene Antwort
+// da ist - fertige Panels bleiben also sofort sichtbar, auch waehrend
+// andere (z.B. die Prognose mit Wetter-Abruf) noch laden. Ein Zaehler pro
+// Element statt einem einfachen An/Aus erlaubt ueberlappende Aufrufe
+// desselben Panels (z.B. schneller Wechselrichter-Wechsel), ohne dass ein
+// frueher fertiger Aufruf den Spinner fuer einen noch laufenden ausblendet.
+const loadingCounts = new WeakMap();
 
-function setDashboardLoading(on) {
-  for (const sel of LOADING_PANEL_SELECTORS) {
-    for (const node of document.querySelectorAll(sel)) {
-      node.classList.toggle("is-loading", on);
+function beginLoading(nodes) {
+  for (const node of nodes) {
+    loadingCounts.set(node, (loadingCounts.get(node) || 0) + 1);
+    node.classList.add("is-loading");
+  }
+}
+
+function endLoading(nodes) {
+  for (const node of nodes) {
+    const count = (loadingCounts.get(node) || 1) - 1;
+    if (count <= 0) {
+      loadingCounts.delete(node);
+      node.classList.remove("is-loading");
+    } else {
+      loadingCounts.set(node, count);
     }
   }
 }
 
-// Laufende Nummer des juengsten Lade-Vorgangs: nur der zuletzt ausgeloeste
-// (z.B. der zuletzt angeklickte Tab) darf den Ladeindikator wieder
-// ausblenden. So bleibt der Spinner bei schnellem Klicken sichtbar, bis die
-// tatsaechlich zuletzt gewaehlte Ansicht geladen ist, und bleibt umgekehrt
-// nicht faelschlich haengen, wenn eine aeltere Abfrage spaeter fertig wird.
-let loadingSeq = 0;
+async function withLoading(selectors, fn) {
+  const nodes = selectors.flatMap((sel) => [...document.querySelectorAll(sel)]);
+  beginLoading(nodes);
+  try {
+    return await fn();
+  } finally {
+    endLoading(nodes);
+  }
+}
 
 // PV-Ertrag (kWh) je Zeitraum in der Leiste oben. Hausweite Groesse (Summe
 // ueber alle Wechselrichter) und daher nur im Gesamt-Tab ("Alle (Summe)")
@@ -1487,37 +1536,118 @@ function updatePvYieldVisibility() {
 }
 
 async function refreshPvYieldSummary() {
-  if (!updatePvYieldVisibility()) return; // Einzel-WR: nichts anzeigen/laden
-  const data = await fetchJson("/api/readings/pv-yield-summary");
-  const byKey = {};
-  for (const period of data.periods) byKey[period.key] = period;
-  for (const cell of document.querySelectorAll("[data-pvyield]")) {
-    const period = byKey[cell.dataset.pvyield];
-    cell.textContent = period ? fmtKwh(period.kwh) : PV_PERIOD_UNKNOWN;
-    if (period) cell.title = `${period.from_date} – ${period.to_date}`;
-  }
+  return withLoading(["#pv-yield-summary"], async () => {
+    if (!updatePvYieldVisibility()) return; // Einzel-WR: nichts anzeigen/laden
+    const data = await fetchJson("/api/readings/pv-yield-summary");
+    const byKey = {};
+    for (const period of data.periods) byKey[period.key] = period;
+    for (const cell of document.querySelectorAll("[data-pvyield]")) {
+      const period = byKey[cell.dataset.pvyield];
+      cell.textContent = period ? fmtKwh(period.kwh) : PV_PERIOD_UNKNOWN;
+      if (period) cell.title = `${period.from_date} – ${period.to_date}`;
+    }
+
+  });
 }
 
-async function refreshAll({ showLoading = false } = {}) {
-  let myToken = 0;
-  if (showLoading) {
-    myToken = ++loadingSeq;
-    setDashboardLoading(true);
-  }
+// Ansichts-Tabs (siehe setupViewTabs): jeder Tab hat einen Loader, der die
+// zugehoerigen Panels laedt. "overview" wird beim Start immer sofort
+// geladen (siehe init()); die anderen erst beim ersten Oeffnen - deshalb
+// bekommt der Nutzer die schnellen, immer verfuegbaren Werte zuerst und
+// alles andere erst, wenn er es tatsaechlich ansieht.
+function refreshOverview() {
+  return Promise.allSettled([
+    refreshLiveCards(),
+    refreshSummaryCards(),
+    refreshPvYieldSummary(),
+  ]);
+}
+
+function refreshTrendTab() {
+  return Promise.allSettled([refreshChart(), refreshDayCompareChart()]);
+}
+
+function refreshConsumptionTab() {
+  return Promise.allSettled([refreshDailyTotalsChart(), refreshHourlyCompareChart()]);
+}
+
+function refreshForecastTab() {
+  return Promise.allSettled([refreshForecast(), refreshForecastAccuracy()]);
+}
+
+const TAB_LOADERS = {
+  overview: refreshOverview,
+  trend: refreshTrendTab,
+  consumption: refreshConsumptionTab,
+  forecast: refreshForecastTab,
+};
+
+// Periodisches Auto-Refresh je Tab, erst gestartet, sobald der Tab zum
+// ersten Mal geoeffnet wurde (siehe setupViewTabs). "overview" hat ein
+// eigenes, schnelleres Intervall (siehe init()) und steht daher nicht hier.
+const TAB_INTERVALS_MS = {
+  trend: 5 * 60 * 1000,
+  consumption: 5 * 60 * 1000,
+  forecast: 60 * 60 * 1000,
+};
+
+function startTabInterval(tabId) {
+  const ms = TAB_INTERVALS_MS[tabId];
+  if (!ms) return;
+  setInterval(() => TAB_LOADERS[tabId]().catch(console.error), ms);
+}
+
+// Bei Wechselrichter-Wechsel nur die Tabs neu laden, die schon mindestens
+// einmal besucht wurden - ein noch nie geoeffneter Tab laedt beim ersten
+// Oeffnen sowieso mit der aktuellen Auswahl.
+function refreshLoadedTabs() {
+  const tasks = Object.entries(TAB_LOADERS)
+    .filter(([id]) => state.tabsLoaded.has(id))
+    .map(([, loader]) => loader());
+  return Promise.allSettled(tasks);
+}
+
+function setupViewTabs() {
+  const nav = el("view-tabs");
+  if (!nav) return;
+  const STORAGE_KEY = "kpm-active-view-tab";
+  const validTabIds = Object.keys(TAB_LOADERS);
+
+  let stored = null;
   try {
-    await Promise.all([
-      refreshLiveCards(),
-      refreshSummaryCards(),
-      refreshChart(),
-      refreshDayCompareChart(),
-      refreshDailyTotalsChart(),
-      refreshHourlyCompareChart(),
-    ]);
+    stored = localStorage.getItem(STORAGE_KEY);
   } catch (err) {
-    console.error(err);
-  } finally {
-    if (showLoading && myToken === loadingSeq) setDashboardLoading(false);
+    // localStorage kann in seltenen Faellen blockiert sein (z.B. striktes
+    // Browser-Datenschutz-Profil) - dann einfach ohne Erinnerung starten.
   }
+  const initial = validTabIds.includes(stored) ? stored : "overview";
+
+  function activate(tabId) {
+    for (const btn of nav.querySelectorAll("button[data-tab]")) {
+      btn.classList.toggle("active", btn.dataset.tab === tabId);
+    }
+    for (const panel of document.querySelectorAll("[data-tab-panel]")) {
+      panel.classList.toggle("hidden", panel.dataset.tabPanel !== tabId);
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, tabId);
+    } catch (err) {
+      // s.o. - Erinnerung ist ein Komfortfeature, kein Muss.
+    }
+    if (!state.tabsLoaded.has(tabId)) {
+      state.tabsLoaded.add(tabId);
+      TAB_LOADERS[tabId]().catch(console.error);
+      startTabInterval(tabId);
+    }
+  }
+
+  nav.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-tab]");
+    if (!btn) return;
+    activate(btn.dataset.tab);
+  });
+
+  activate(initial);
 }
 
 function chartEvents() {
@@ -1617,10 +1747,12 @@ async function init() {
   setupDailyTotalsControls();
   setupHourlyCompareControls();
   setupChartInteractionToggle();
-  await refreshAll({ showLoading: true });
-  refreshForecast().catch(console.error);
-  refreshForecastAccuracy().catch(console.error);
-  refreshPvYieldSummary().catch(console.error);
+  // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
+  // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die
+  // anderen Tabs laden erst bei ihrem ersten Oeffnen (siehe setupViewTabs).
+  state.tabsLoaded.add("overview");
+  refreshOverview().catch(console.error);
+  setupViewTabs();
   setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
   const ringEl = document.querySelector(".refresh-ring-progress");
@@ -1630,13 +1762,7 @@ async function init() {
     refreshSummaryCards().catch(console.error);
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
-  setInterval(() => refreshChart().catch(console.error), 5 * 60 * 1000);
-  setInterval(() => refreshDayCompareChart().catch(console.error), 5 * 60 * 1000);
-  setInterval(() => refreshDailyTotalsChart().catch(console.error), 5 * 60 * 1000);
-  setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
-  setInterval(() => refreshForecast().catch(console.error), 60 * 60 * 1000);
-  setInterval(() => refreshForecastAccuracy().catch(console.error), 60 * 60 * 1000);
 }
 
 init();
