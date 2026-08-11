@@ -26,11 +26,41 @@ TRAINING_DAYS = 365
 MIN_TRAINING_SAMPLES = 48
 CACHE_TTL = timedelta(minutes=30)
 
+# Regularisierungsstaerke der Ridge-Regression in fit_distance_weights()
+# (auf standardisierten Merkmalen, siehe dort). Kein Gradientenabstieg
+# noetig - die Loesung ist geschlossen (siehe _solve_linear_system()).
+RIDGE_LAMBDA = 5.0
+
 
 @dataclass(frozen=True)
 class TrainingPoint:
     weather: WeatherPoint
     power_w: float
+
+
+@dataclass(frozen=True)
+class DistanceWeights:
+    """Relative Wichtigkeit jeder Merkmalsdimension in _sample_distance().
+
+    Ersetzt handgeschaetzte Konstanten durch pro Wechselrichter aus dessen
+    eigener Historie gelernte Werte, siehe fit_distance_weights().
+    """
+
+    hour: float
+    day: float
+    ghi: float
+    direct: float
+    diffuse: float
+    temperature: float
+
+
+# Bisherige, von Hand geschaetzte Gewichte - Fallback, wenn fit_distance_
+# weights() nicht genug/zu entartete Daten fuer eine stabile Schaetzung hat.
+# Die Vorhersage kann dadurch nie schlechter werden als vor der Umstellung
+# auf gelernte Gewichte, bestenfalls besser.
+DEFAULT_DISTANCE_WEIGHTS = DistanceWeights(
+    hour=1.8, day=1.0, ghi=2.5, direct=1.0, diffuse=1.0, temperature=0.25
+)
 
 
 def _hour_key(value: datetime) -> datetime:
@@ -114,7 +144,9 @@ def _cyclic_distance(a: int, b: int, period: int) -> float:
     return min(difference, period - difference)
 
 
-def _sample_distance(sample: TrainingPoint, target: WeatherPoint) -> float:
+def _sample_distance(
+    sample: TrainingPoint, target: WeatherPoint, weights: DistanceWeights
+) -> float:
     source = sample.weather
     hour_distance = _cyclic_distance(source.timestamp.hour, target.timestamp.hour, 24) / 3
     day_distance = _cyclic_distance(
@@ -127,42 +159,196 @@ def _sample_distance(sample: TrainingPoint, target: WeatherPoint) -> float:
     diffuse_distance = abs(source.diffuse_w_m2 - target.diffuse_w_m2) / 140
     temperature_distance = abs(source.temperature_c - target.temperature_c) / 20
     return (
-        1.8 * hour_distance
-        + day_distance
-        + 2.5 * ghi_distance
-        + direct_distance
-        + diffuse_distance
-        + 0.25 * temperature_distance
+        weights.hour * hour_distance
+        + weights.day * day_distance
+        + weights.ghi * ghi_distance
+        + weights.direct * direct_distance
+        + weights.diffuse * diffuse_distance
+        + weights.temperature * temperature_distance
+    )
+
+
+def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float] | None:
+    """Loest matrix @ x = vector per Gauss-Elimination mit Zeilenpivotisierung.
+
+    Reicht fuer die kleinen (hier: 9x9) Normalgleichungssysteme der
+    Ridge-Regression unten voellig aus - eine numpy/scipy-Abhaengigkeit nur
+    dafuer waere unverhaeltnismaessig. Gibt None zurueck, wenn die Matrix
+    (trotz Ridge-Regularisierung) numerisch singulaer ist; matrix/vector
+    werden nicht veraendert.
+    """
+    n = len(vector)
+    aug = [matrix[i][:] + [vector[i]] for i in range(n)]
+    for col in range(n):
+        pivot_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        if abs(aug[pivot_row][col]) < 1e-12:
+            return None
+        aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
+        pivot = aug[col][col]
+        aug[col] = [value / pivot for value in aug[col]]
+        for row in range(n):
+            if row == col:
+                continue
+            factor = aug[row][col]
+            if factor:
+                aug[row] = [a - factor * b for a, b in zip(aug[row], aug[col])]
+    return [aug[i][n] for i in range(n)]
+
+
+def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
+    """8 Merkmale je Messpunkt fuer fit_distance_weights(): Tageszeit und
+    Jahrestag als Sinus/Kosinus (damit der Jahres-/Tageswechsel fuer die
+    lineare Regression keinen kuenstlichen Sprung erzeugt), plus Strahlung
+    und Temperatur direkt.
+    """
+    hour_angle = 2 * math.pi * (point.timestamp.hour + point.timestamp.minute / 60) / 24
+    day_angle = 2 * math.pi * point.timestamp.timetuple().tm_yday / 366
+    return [
+        math.sin(hour_angle),
+        math.cos(hour_angle),
+        math.sin(day_angle),
+        math.cos(day_angle),
+        point.shortwave_w_m2,
+        point.direct_w_m2,
+        point.diffuse_w_m2,
+        point.temperature_c,
+    ]
+
+
+def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
+    """Lernt die relative Wichtigkeit jeder Merkmalsdimension in
+    _sample_distance() aus der Historie eines einzelnen Wechselrichters,
+    statt sie (wie bisher in DEFAULT_DISTANCE_WEIGHTS) von Hand zu schaetzen.
+
+    Vorgehen: Ridge-Regression (kleinste Quadrate + L2-Strafe, geschlossene
+    Loesung - kein Gradientenabstieg/Backpropagation) auf standardisierten
+    Merkmalen (siehe _forecast_feature_vector) sagt die beobachtete Leistung
+    voraus; die Betrags-Koeffizienten zeigen dann, wie stark jedes Merkmal
+    tatsaechlich mit der Leistung zusammenhaengt. Diese Wichtigkeiten werden
+    auf dieselbe Gesamtsumme wie DEFAULT_DISTANCE_WEIGHTS skaliert, damit die
+    uebrigen Konstanten der k-NN-Vorhersage (Nachbarnzahl, Distanz-Offset in
+    predict_power) ihre bisherige Bedeutung behalten - nur die *relative*
+    Gewichtung der Merkmale wird durch die Regression ersetzt.
+
+    Der eigentliche Vorhersage-Mechanismus (Analogie-Suche + physikalisch
+    begrenzte Strahlungs-Skalierung in predict_power) bleibt unveraendert.
+    Reicht die Historie nicht (weniger als MIN_TRAINING_SAMPLES) oder ist ein
+    Merkmal darin konstant (z.B. noch keine Temperaturstreuung) bzw. das
+    Gleichungssystem trotz Regularisierung singulaer, wird auf die
+    bisherigen Standardgewichte zurueckgefallen - die Vorhersage kann dadurch
+    nie schlechter werden als vor dieser Umstellung.
+    """
+    if len(training) < MIN_TRAINING_SAMPLES:
+        return DEFAULT_DISTANCE_WEIGHTS
+
+    rows = [_forecast_feature_vector(sample.weather) for sample in training]
+    targets = [sample.power_w for sample in training]
+    n_features = len(rows[0])
+    n_samples = len(rows)
+
+    means = [sum(row[j] for row in rows) / n_samples for j in range(n_features)]
+    stds = [
+        math.sqrt(sum((row[j] - means[j]) ** 2 for row in rows) / n_samples)
+        for j in range(n_features)
+    ]
+    if any(std < 1e-9 for std in stds):
+        return DEFAULT_DISTANCE_WEIGHTS
+
+    standardized = [
+        [(row[j] - means[j]) / stds[j] for j in range(n_features)] for row in rows
+    ]
+    design = [row + [1.0] for row in standardized]  # Bias-Spalte fuer den Achsenabschnitt.
+    n_params = n_features + 1
+
+    xtx = [
+        [sum(design[i][a] * design[i][b] for i in range(n_samples)) for b in range(n_params)]
+        for a in range(n_params)
+    ]
+    for i in range(n_features):  # Ridge-Strafe; Bias-Spalte bleibt unregularisiert.
+        xtx[i][i] += RIDGE_LAMBDA
+    xty = [sum(design[i][a] * targets[i] for i in range(n_samples)) for a in range(n_params)]
+
+    coefficients = _solve_linear_system(xtx, xty)
+    if coefficients is None:
+        return DEFAULT_DISTANCE_WEIGHTS
+
+    hour_importance = math.hypot(coefficients[0], coefficients[1])
+    day_importance = math.hypot(coefficients[2], coefficients[3])
+    ghi_importance = abs(coefficients[4])
+    direct_importance = abs(coefficients[5])
+    diffuse_importance = abs(coefficients[6])
+    temperature_importance = abs(coefficients[7])
+    total_importance = (
+        hour_importance
+        + day_importance
+        + ghi_importance
+        + direct_importance
+        + diffuse_importance
+        + temperature_importance
+    )
+    if total_importance < 1e-9:
+        return DEFAULT_DISTANCE_WEIGHTS
+
+    default_total = (
+        DEFAULT_DISTANCE_WEIGHTS.hour
+        + DEFAULT_DISTANCE_WEIGHTS.day
+        + DEFAULT_DISTANCE_WEIGHTS.ghi
+        + DEFAULT_DISTANCE_WEIGHTS.direct
+        + DEFAULT_DISTANCE_WEIGHTS.diffuse
+        + DEFAULT_DISTANCE_WEIGHTS.temperature
+    )
+    scale = default_total / total_importance
+    return DistanceWeights(
+        hour=hour_importance * scale,
+        day=day_importance * scale,
+        ghi=ghi_importance * scale,
+        direct=direct_importance * scale,
+        diffuse=diffuse_importance * scale,
+        temperature=temperature_importance * scale,
     )
 
 
 def predict_power(
-    training: list[TrainingPoint], target: WeatherPoint
+    training: list[TrainingPoint],
+    target: WeatherPoint,
+    weights: DistanceWeights | None = None,
 ) -> tuple[float, float, float]:
-    """KNN-Prognose mit Strahlungsskalierung und empirischem Streubereich."""
+    """KNN-Prognose mit Strahlungsskalierung und empirischem Streubereich.
+
+    weights bestimmt die relative Wichtigkeit der Merkmalsdimensionen in der
+    Distanzmetrik (siehe fit_distance_weights). Per Default (None) werden sie
+    aus training gelernt; wer wiederholt fuer denselben Trainingsdatensatz
+    vorhersagt (siehe _summarize(), eine Vorhersage je Prognosestunde),
+    sollte sie einmal vorab berechnen und explizit uebergeben, statt sie bei
+    jedem Aufruf neu zu lernen.
+    """
     if target.shortwave_w_m2 < 3 or not training:
         return 0.0, 0.0, 0.0
+    if weights is None:
+        weights = fit_distance_weights(training)
 
-    nearest = sorted(training, key=lambda point: _sample_distance(point, target))[:24]
+    nearest = sorted(training, key=lambda point: _sample_distance(point, target, weights))[:24]
     observed_max = max(point.power_w for point in training)
     estimates = []
-    weights = []
+    sample_weights = []
     for sample in nearest:
         source_ghi = sample.weather.shortwave_w_m2
         if source_ghi < 3:
             continue
         scale = max(0.35, min(2.75, target.shortwave_w_m2 / source_ghi))
         estimate = min(observed_max * 1.08, sample.power_w * scale)
-        distance = _sample_distance(sample, target)
+        distance = _sample_distance(sample, target, weights)
         estimates.append(estimate)
-        weights.append(1.0 / (0.15 + distance))
+        sample_weights.append(1.0 / (0.15 + distance))
 
     if not estimates:
         return 0.0, 0.0, 0.0
-    weight_sum = sum(weights)
-    expected = sum(value * weight for value, weight in zip(estimates, weights)) / weight_sum
+    weight_sum = sum(sample_weights)
+    expected = (
+        sum(value * weight for value, weight in zip(estimates, sample_weights)) / weight_sum
+    )
     variance = sum(
-        weight * (value - expected) ** 2 for value, weight in zip(estimates, weights)
+        weight * (value - expected) ** 2 for value, weight in zip(estimates, sample_weights)
     ) / weight_sum
     spread = math.sqrt(max(0.0, variance))
     return expected, max(0.0, expected - 1.28 * spread), expected + 1.28 * spread
@@ -197,8 +383,11 @@ def _summarize(
         if len(samples) < MIN_TRAINING_SAMPLES:
             continue
         used_samples[device_id] = samples
+        # Gewichte einmal je Geraet lernen (nicht je Prognosestunde) - sie
+        # haengen nur von der Trainingshistorie ab, siehe fit_distance_weights.
+        weights = fit_distance_weights(samples)
         per_device_hour[device_id] = {
-            point.timestamp - timedelta(hours=1): predict_power(samples, point)
+            point.timestamp - timedelta(hours=1): predict_power(samples, point, weights)
             for point in forecast_weather
         }
     if not per_device_hour:

@@ -1,14 +1,20 @@
 """Tests fuer das datengetriebene PV-Prognosemodell."""
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
+    DEFAULT_DISTANCE_WEIGHTS,
     MIN_TRAINING_SAMPLES,
     TrainingPoint,
+    _solve_linear_system,
     _summarize,
     build_training_data,
+    fit_distance_weights,
     load_hourly_pv_history,
     predict_power,
 )
@@ -201,3 +207,87 @@ def test_summary_excludes_immature_devices_from_training_metadata(monkeypatch):
     assert result["available"] is True
     assert [item["device_id"] for item in result["days"][0]["devices"]] == ["wr1"]
     assert result["training_samples"] == len(mature_samples)
+
+
+def test_solve_linear_system_matches_known_solution():
+    # 2x + y = 5 ; x + 3y = 10 -> x=1, y=3
+    result = _solve_linear_system([[2.0, 1.0], [1.0, 3.0]], [5.0, 10.0])
+    assert result == pytest.approx([1.0, 3.0])
+
+
+def test_solve_linear_system_detects_singular_matrix():
+    assert _solve_linear_system([[1.0, 2.0], [2.0, 4.0]], [1.0, 2.0]) is None
+
+
+def test_fit_distance_weights_falls_back_for_too_few_samples():
+    too_few = [TrainingPoint(_weather(12, 500), 3000.0) for _ in range(5)]
+    assert fit_distance_weights(too_few) == DEFAULT_DISTANCE_WEIGHTS
+
+
+def test_fit_distance_weights_falls_back_for_constant_feature():
+    # _weather() nutzt fuer alle Samples dieselbe Stunde (12) -> die
+    # Stunden-Merkmale (sin/cos) haben keine Streuung, Standardisierung waere
+    # instabil - erwarteter Fallback auf die Standardgewichte.
+    samples = [
+        TrainingPoint(_weather(12, 500, day=(i % 27) + 1), 3000.0)
+        for i in range(MIN_TRAINING_SAMPLES)
+    ]
+    assert fit_distance_weights(samples) == DEFAULT_DISTANCE_WEIGHTS
+
+
+def test_fit_distance_weights_prioritizes_the_feature_that_predicts_power():
+    """Leistung haengt in diesen synthetischen Daten NUR von der Strahlung
+    ab; Stunde, Jahrestag und Temperatur variieren unabhaengig davon. Die
+    gelernten Gewichte sollen das widerspiegeln: die drei Strahlungs-Merkmale
+    (GHI/Direkt/Diffus) sollen zusammen deutlich staerker gewichtet werden
+    als Stunde, Tag oder Temperatur einzeln.
+    """
+    rng = random.Random(42)
+    samples = []
+    for _ in range(80):
+        radiation = rng.uniform(50, 900)
+        hour = rng.uniform(5, 19)
+        day_offset = rng.randint(0, 300)
+        temperature = rng.uniform(-10, 35)
+        weather = WeatherPoint(
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc)
+            + timedelta(days=day_offset, hours=hour),
+            shortwave_w_m2=radiation,
+            direct_w_m2=radiation * 0.7 + rng.uniform(-5, 5),
+            diffuse_w_m2=radiation * 0.3 + rng.uniform(-5, 5),
+            temperature_c=temperature,
+        )
+        samples.append(TrainingPoint(weather, radiation * 5.0))
+
+    weights = fit_distance_weights(samples)
+    radiation_weight = weights.ghi + weights.direct + weights.diffuse
+    assert radiation_weight > weights.hour * 3
+    assert radiation_weight > weights.day * 3
+    assert radiation_weight > weights.temperature * 3
+
+
+def test_summarize_uses_learned_weights_without_crashing():
+    """End-to-End-Check: _summarize() mit realistisch variierenden Daten
+    (nicht die entarteten Konstanten aus den anderen Tests) laeuft ueber den
+    Ridge-Pfad, ohne abzustuerzen, und liefert weiterhin plausible Werte.
+    """
+    rng = random.Random(7)
+    samples = []
+    for _ in range(80):
+        radiation = rng.uniform(50, 900)
+        hour = rng.uniform(5, 19)
+        day_offset = rng.randint(0, 300)
+        weather = WeatherPoint(
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc)
+            + timedelta(days=day_offset, hours=hour),
+            shortwave_w_m2=radiation,
+            direct_w_m2=radiation * 0.7 + rng.uniform(-5, 5),
+            diffuse_w_m2=radiation * 0.3 + rng.uniform(-5, 5),
+            temperature_c=rng.uniform(-10, 35),
+        )
+        samples.append(TrainingPoint(weather, max(0.0, radiation * 5.0 + rng.uniform(-200, 200))))
+
+    forecast_point = _weather(12, 700)
+    result = _summarize({"wr1": samples}, [forecast_point])
+    assert result["available"] is True
+    assert result["days"][0]["expected_kwh"] > 0
