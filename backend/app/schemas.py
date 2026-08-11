@@ -245,3 +245,106 @@ class DailyReportConfigIn(BaseModel):
             if "@" not in addr:
                 raise ValueError(f"Keine gültige E-Mail-Adresse: {addr!r}")
         return cleaned
+
+
+class ForecastConfigIn(BaseModel):
+    enabled: bool = False
+    latitude: float | None = None
+    longitude: float | None = None
+
+    @field_validator("latitude")
+    @classmethod
+    def _valid_latitude(cls, value: float | None) -> float | None:
+        if value is not None and not -90 <= value <= 90:
+            raise ValueError("Breitengrad muss zwischen -90 und 90 liegen")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def _valid_longitude(cls, value: float | None) -> float | None:
+        if value is not None and not -180 <= value <= 180:
+            raise ValueError("Laengengrad muss zwischen -180 und 180 liegen")
+        return value
+
+class ForecastConfigOut(BaseModel):
+    enabled: bool
+    latitude: float | None = None
+    longitude: float | None = None
+    source: str
+
+
+class ForecastHourOut(BaseModel):
+    timestamp: datetime
+    expected_kw: float
+    low_kw: float
+    high_kw: float
+
+
+class ForecastDeviceDayOut(BaseModel):
+    device_id: str
+    device_name: str
+    expected_kwh: float
+    low_kwh: float
+    high_kwh: float
+
+
+class ForecastModelOut(BaseModel):
+    device_id: str
+    device_name: str
+    method: str
+    validation_samples: int
+    validation_error_percent: float | None = None
+
+
+class ForecastDayOut(BaseModel):
+    date: str
+    expected_kwh: float
+    low_kwh: float
+    high_kwh: float
+    production_start: datetime | None = None
+    production_end: datetime | None = None
+    peak_at: datetime | None = None
+    peak_kw: float
+    devices: list[ForecastDeviceDayOut]
+
+
+class EnergyForecastOut(BaseModel):
+    available: bool
+    message: str
+    generated_at: datetime
+    training_start: datetime | None = None
+    training_end: datetime | None = None
+    training_samples: int
+    weather_source: str
+    models: list[ForecastModelOut] = []
+    days: list[ForecastDayOut]
+    hours: list[ForecastHourOut]
+
+
+class ForecastAccuracyDeviceOut(BaseModel):
+    device_id: str
+    device_name: str
+    expected_kwh: float
+    actual_kwh: float
+    difference_kwh: float
+    difference_percent: float | None = None
+    accuracy_percent: float | None = None
+    matched_hours: int
+
+
+class ForecastAccuracyDayOut(BaseModel):
+    date: str
+    expected_kwh: float
+    actual_kwh: float
+    difference_kwh: float
+    difference_percent: float | None = None
+    accuracy_percent: float | None = None
+    matched_hours: int
+    devices: list[ForecastAccuracyDeviceOut]
+
+
+class ForecastAccuracyOut(BaseModel):
+    available: bool
+    message: str
+    overall_accuracy_percent: float | None = None
+    days: list[ForecastAccuracyDayOut]

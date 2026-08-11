@@ -546,6 +546,93 @@ canvas {
   margin: 8px 0 0;
 }
 
+.forecast-site-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+
+.forecast-site-grid label {
+  display: flex;
+  flex-direction: column;
+}
+
+.forecast-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.forecast-day {
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.forecast-day strong,
+.forecast-day span {
+  display: block;
+}
+
+.forecast-day-value {
+  margin: 5px 0;
+  color: var(--accent-blue);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.forecast-day-devices {
+  margin-top: 6px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.forecast-accuracy-header {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.forecast-accuracy-header h3 {
+  margin: 0 0 4px;
+}
+
+.forecast-accuracy-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.forecast-accuracy-day {
+  padding: 11px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.forecast-accuracy-values,
+.forecast-accuracy-devices {
+  display: block;
+  margin-top: 5px;
+}
+
+.forecast-accuracy-values {
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.forecast-accuracy-devices {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.forecast-accuracy-chart-wrapper.hidden {
+  display: none;
+}
+
 /* ---- Aktualisierungs-Ring in der Topbar: fuellt sich ueber das
    Auto-Refresh-Intervall und ist "voll", wenn die Werte aktualisiert
    werden. ---- */
@@ -636,6 +723,10 @@ canvas {
   /* Diagramme etwas hoeher fuer mehr Detail auf kleinen Bildschirmen. */
   .chart-canvas-wrapper {
     height: 340px;
+  }
+
+  .forecast-site-grid {
+    grid-template-columns: 1fr;
   }
 
   /* Topbar-Aktionen in ein aufklappbares Menue, damit nichts ueber den

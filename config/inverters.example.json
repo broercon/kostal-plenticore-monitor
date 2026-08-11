@@ -4,7 +4,9 @@
     "name": "Wechselrichter Dach Süd",
     "host": "192.168.1.50",
     "password": "DEIN_PLENTICORE_PASSWORT",
-    "has_grid_meter": true
+    "has_grid_meter": true,
+    "latitude": 50.000000,
+    "longitude": 8.000000
   },
   {
     "id": "wr2",

@@ -310,8 +310,9 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     return round(energy_wh / 1000, 3)
 
 
-def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
-    """Reine PV-Erzeugung (kWh) - PV-Leistung OHNE Batterie-Anteil.
+def pure_pv_power_w(pv_power_w: float, battery_power_w: float | None) -> float:
+    """Reine PV-Leistung (W) - PV-Leistung OHNE Batterie-Anteil, fuer einen
+    einzelnen Messpunkt.
 
     Bei Anlagen, deren Batterie am dritten PV-String (PV3) haengt, enthaelt
     pv_power_w (= pv1+pv2+pv3, siehe pykoplenti-Virtualwert pv_P) auch die
@@ -322,11 +323,24 @@ def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
     Batterie gerade laedt oder entlaedt. Auf >= 0 begrenzt (Messrauschen).
     Geraete ohne Batterie (battery_power_w = None) liefern schlicht
     pv_power_w. Nachts ist pv1+pv2 = 0, daher auch die reine PV = 0.
+
+    Einzige Quelle dieser Formel - wird sowohl von integrate_pure_pv_kwh()
+    hier als auch (als aequivalenter SQL-Ausdruck, siehe dortiger Kommentar)
+    von energy_forecast.load_hourly_pv_history() verwendet. Ein Cross-Check-
+    Test (test_energy_forecast.py) stellt sicher, dass beide Implementierungen
+    dieselben Werte liefern.
+    """
+    return max(0.0, pv_power_w - (battery_power_w or 0.0))
+
+
+def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
+    """Reine PV-Erzeugung (kWh) ueber mehrere Messpunkte - siehe
+    pure_pv_power_w() fuer die zugrunde liegende Formel je Messpunkt.
     """
     points = [
         SimpleNamespace(
             timestamp=r.timestamp,
-            value=max(0.0, r.pv_power_w - (r.battery_power_w or 0.0)),
+            value=pure_pv_power_w(r.pv_power_w, r.battery_power_w),
         )
         for r in rows
         if r.pv_power_w is not None

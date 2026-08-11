@@ -31,7 +31,18 @@ from .daily_report import (
     generate_and_send_daily_report,
     get_daily_report_status,
 )
-from .daily_report_config import InvalidReportTime, get_config as get_daily_report_config, update_config as update_daily_report_config
+from .daily_report_config import (
+    InvalidReportTime,
+    get_config as get_daily_report_config,
+    update_config as update_daily_report_config,
+)
+from .forecast_config import (
+    InvalidForecastConfig,
+    get_config as get_forecast_config,
+    update_config as update_forecast_config,
+)
+from .energy_forecast import forecast_service
+from .forecast_evaluation import get_forecast_accuracy
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
@@ -57,6 +68,10 @@ from .schemas import (
     DeviceOut,
     FeedInPeriod,
     FeedInSummaryOut,
+    ForecastConfigIn,
+    ForecastConfigOut,
+    ForecastAccuracyOut,
+    EnergyForecastOut,
     PvYieldSummaryOut,
     HistoryPoint,
     HourlyPerDeviceOut,
@@ -118,10 +133,25 @@ async def lifespan(app: FastAPI):
     poller.start()
     daily_report_scheduler.start()
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
+    forecast_task = asyncio.create_task(_refresh_forecast_periodically())
     yield
     auto_import_task.cancel()
+    forecast_task.cancel()
+    await asyncio.gather(auto_import_task, forecast_task, return_exceptions=True)
     await poller.stop()
     await daily_report_scheduler.stop()
+
+
+async def _refresh_forecast_periodically() -> None:
+    """Erzeugt auch ohne geoeffnetes Dashboard regelmaessig Prognosen."""
+    while True:
+        try:
+            await forecast_service.get()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Automatische PV-Prognose fehlgeschlagen")
+        await asyncio.sleep(30 * 60)
 
 
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
@@ -217,6 +247,54 @@ def post_admin_reset_password(
             "geaendert werden."
         ),
     )
+
+
+@app.get("/api/admin/forecast/config", response_model=ForecastConfigOut)
+def get_forecast_config_endpoint(
+    _admin: User = Depends(auth.require_admin),
+) -> ForecastConfigOut:
+    """Liefert Standort und PV-Felder je Wechselrichter fuer die Prognose.
+
+    Solange noch nichts im Admin-Bereich gespeichert wurde, stammen die
+    Startwerte optional aus inverters.json. Das Feld ``source`` macht diese
+    Herkunft fuer die Oberflaeche sichtbar.
+    """
+    return ForecastConfigOut.model_validate(get_forecast_config())
+
+
+@app.put("/api/admin/forecast/config", response_model=ForecastConfigOut)
+def put_forecast_config_endpoint(
+    payload: ForecastConfigIn, _admin: User = Depends(auth.require_admin)
+) -> ForecastConfigOut:
+    """Speichert die Prognose-Konfiguration in SQLite.
+
+    Die inverters.json wird nicht veraendert (sie ist im Container read-only);
+    nach dem ersten Speichern hat die Datenbank Vorrang vor Datei-Startwerten.
+    """
+    try:
+        result = update_forecast_config(payload.model_dump())
+    except InvalidForecastConfig as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    forecast_service.invalidate()
+    return ForecastConfigOut.model_validate(result)
+
+
+@app.get("/api/forecast", response_model=EnergyForecastOut)
+async def get_energy_forecast_endpoint(
+    _user: User = Depends(auth.get_current_user),
+) -> EnergyForecastOut:
+    """Sieben-Tage-Prognose aus historischen PV- und Wetterdaten."""
+    return EnergyForecastOut.model_validate(await forecast_service.get())
+
+
+@app.get("/api/forecast/accuracy", response_model=ForecastAccuracyOut)
+async def get_forecast_accuracy_endpoint(
+    days: int = Query(default=30, ge=1, le=365),
+    _user: User = Depends(auth.get_current_user),
+) -> ForecastAccuracyOut:
+    """Vergleicht gespeicherte Prognosen mit der spaeter gemessenen Erzeugung."""
+    result = await asyncio.to_thread(get_forecast_accuracy, days)
+    return ForecastAccuracyOut.model_validate(result)
 
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)

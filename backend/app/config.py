@@ -34,6 +34,10 @@ class InverterConfig:
     # falls das bei einem Geraet umgekehrt ist, hier auf True setzen (siehe
     # README).
     battery_power_inverted: bool = False
+    # Optionale Startwerte fuer den gemeinsamen Anlagenstandort. Fuer mehrere
+    # Wechselrichter genuegt die Angabe bei einem Eintrag.
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
@@ -50,6 +54,12 @@ def _load_inverters_from_file(path: Path) -> list[InverterConfig]:
                 port=int(entry.get("port", 80)),
                 has_grid_meter=bool(entry.get("has_grid_meter", True)),
                 battery_power_inverted=bool(entry.get("battery_power_inverted", False)),
+                latitude=(
+                    float(entry["latitude"]) if entry.get("latitude") is not None else None
+                ),
+                longitude=(
+                    float(entry["longitude"]) if entry.get("longitude") is not None else None
+                ),
             )
         )
     return inverters

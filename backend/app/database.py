@@ -47,8 +47,60 @@ def init_db() -> None:
     # Aufwand dafuer (noch) nicht, deshalb kleine manuelle Migrationen direkt
     # hier (siehe _ensure_ac_power_column).
     Base.metadata.create_all(bind=engine)
+    _simplify_forecast_settings()
     _ensure_ac_power_column()
     _ensure_readings_timestamp_index()
+
+
+def _simplify_forecast_settings() -> None:
+    """Entfernt die verworfenen technischen Prognosefelder aus alten DBs.
+
+    Fruehe Versionen des Feature-Branches speicherten Moduldaten, kWp,
+    Neigung und pauschale Verluste. Die datengetriebene Prognose braucht nur
+    Aktivierung und Koordinaten. SQLite kann Spalten nicht portabel einzeln
+    entfernen, deshalb wird nur bei erkanntem Altschema die kleine Tabelle
+    unter Erhalt dieser drei Werte neu aufgebaut.
+    """
+    with engine.connect() as conn:
+        columns = {
+            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(forecast_settings)")
+        }
+        legacy = {"location_name", "forecast_days", "system_loss_percent"}
+        if columns & legacy:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS forecast_settings_v2")
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE forecast_settings_v2 (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    enabled BOOLEAN NOT NULL,
+                    latitude FLOAT,
+                    longitude FLOAT,
+                    updated_at DATETIME NOT NULL
+                )
+                """
+            )
+            conn.exec_driver_sql(
+                """
+                INSERT INTO forecast_settings_v2
+                    (id, enabled, latitude, longitude, updated_at)
+                SELECT id, enabled, latitude, longitude, updated_at
+                FROM forecast_settings
+                """
+            )
+            conn.exec_driver_sql("DROP TABLE forecast_settings")
+            conn.exec_driver_sql(
+                "ALTER TABLE forecast_settings_v2 RENAME TO forecast_settings"
+            )
+
+        tables = {
+            row[0]
+            for row in conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "pv_array_settings" in tables:
+            conn.exec_driver_sql("DROP TABLE pv_array_settings")
+        conn.commit()
 
 
 def _ensure_ac_power_column() -> None:

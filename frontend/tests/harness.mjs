@@ -67,6 +67,73 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
         return { periods: [] };
+      case "/api/forecast":
+        return {
+          available: true,
+          message: "Prognose aus historischen PV- und Wetterdaten.",
+          generated_at: "2026-07-13T06:00:00Z",
+          training_start: "2026-05-01T00:00:00Z",
+          training_end: "2026-07-12T23:00:00Z",
+          training_samples: 1200,
+          weather_source: "Open-Meteo",
+          models: [
+            {
+              device_id: "wr1",
+              device_name: "WR1",
+              method: "learned",
+              validation_samples: 120,
+              validation_error_percent: 8.5,
+            },
+          ],
+          days: [
+            {
+              date: "2026-07-13",
+              expected_kwh: 12.4,
+              low_kwh: 10.1,
+              high_kwh: 14.8,
+              production_start: "2026-07-13T05:00:00Z",
+              production_end: "2026-07-13T19:00:00Z",
+              peak_at: "2026-07-13T12:00:00Z",
+              peak_kw: 4.2,
+              devices: [
+                { device_id: "wr1", device_name: "WR1", expected_kwh: 8.0, low_kwh: 6.5, high_kwh: 9.4 },
+                { device_id: "wr2", device_name: "WR2", expected_kwh: 4.4, low_kwh: 3.6, high_kwh: 5.4 },
+              ],
+            },
+          ],
+          hours: [
+            { timestamp: "2026-07-13T12:00:00Z", expected_kw: 4.2, low_kw: 3.4, high_kw: 5.0 },
+          ],
+        };
+      case "/api/forecast/accuracy":
+        return {
+          available: true,
+          message: "Vergleich der gespeicherten Prognosen mit echten Messwerten.",
+          overall_accuracy_percent: 92.4,
+          days: [
+            {
+              date: "2026-07-12",
+              expected_kwh: 11.5,
+              actual_kwh: 12.0,
+              difference_kwh: 0.5,
+              difference_percent: 4.3,
+              accuracy_percent: 95.8,
+              matched_hours: 24,
+              devices: [
+                {
+                  device_id: "wr1",
+                  device_name: "WR1",
+                  expected_kwh: 7.5,
+                  actual_kwh: 8.0,
+                  difference_kwh: 0.5,
+                  difference_percent: 6.7,
+                  accuracy_percent: 93.8,
+                  matched_hours: 24,
+                },
+              ],
+            },
+          ],
+        };
       default:
         return {};
     }
@@ -85,6 +152,7 @@ export async function bootApp({ fetchHandler }) {
   window.Chart = class {
     constructor(_ctx, config) {
       this.data = config.data;
+      this.options = config.options;
     }
     update() {}
     destroy() {}
@@ -104,9 +172,9 @@ export async function bootApp({ fetchHandler }) {
   // setInterval den Prozess offen und die Timer stoeren die Assertions.
   window.setInterval = () => 0;
 
-  window.fetch = async (input) => {
+  window.fetch = async (input, options = {}) => {
     const url = new URL(input, "http://localhost");
-    const body = await fetchHandler(url);
+    const body = await fetchHandler(url, options);
     return { ok: true, status: 200, json: async () => body };
   };
 

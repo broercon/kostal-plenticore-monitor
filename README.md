@@ -15,6 +15,8 @@ Docker-Container.
 - Vergleich mehrerer Wechselrichter und Kalendertage
 - Automatischer Import vorhandener Wechselrichter-Logdaten
 - Benutzerverwaltung mit Admin- und Betreiberrolle
+- Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten, mit
+  automatischem Rückvergleich sowie Erwartet-/Ist-Auswertung im Dashboard
 - Optionaler täglicher E-Mail-Bericht
 - Persistente Speicherung in SQLite
 
@@ -47,6 +49,11 @@ cp config/inverters.example.json config/inverters.json
   }
 ]
 ```
+
+Die Standortkoordinaten für die PV-Prognose können optional in derselben
+Datei vorbelegt oder später unter **Admin → PV-Prognose** gepflegt werden.
+Technische Modul- oder Dachangaben sind nicht erforderlich. Details stehen in der
+[Installationsdokumentation](docs/INSTALLATION.md#pv-prognose-konfigurieren).
 
 4. Anwendung starten:
 
