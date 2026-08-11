@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import numpy as np
 from sqlalchemy import case, func, select
 
 from .config import settings
@@ -168,33 +169,6 @@ def _sample_distance(
     )
 
 
-def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float] | None:
-    """Loest matrix @ x = vector per Gauss-Elimination mit Zeilenpivotisierung.
-
-    Reicht fuer die kleinen (hier: 9x9) Normalgleichungssysteme der
-    Ridge-Regression unten voellig aus - eine numpy/scipy-Abhaengigkeit nur
-    dafuer waere unverhaeltnismaessig. Gibt None zurueck, wenn die Matrix
-    (trotz Ridge-Regularisierung) numerisch singulaer ist; matrix/vector
-    werden nicht veraendert.
-    """
-    n = len(vector)
-    aug = [matrix[i][:] + [vector[i]] for i in range(n)]
-    for col in range(n):
-        pivot_row = max(range(col, n), key=lambda r: abs(aug[r][col]))
-        if abs(aug[pivot_row][col]) < 1e-12:
-            return None
-        aug[col], aug[pivot_row] = aug[pivot_row], aug[col]
-        pivot = aug[col][col]
-        aug[col] = [value / pivot for value in aug[col]]
-        for row in range(n):
-            if row == col:
-                continue
-            factor = aug[row][col]
-            if factor:
-                aug[row] = [a - factor * b for a, b in zip(aug[row], aug[col])]
-    return [aug[i][n] for i in range(n)]
-
-
 def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
     """8 Merkmale je Messpunkt fuer fit_distance_weights(): Tageszeit und
     Jahrestag als Sinus/Kosinus (damit der Jahres-/Tageswechsel fuer die
@@ -221,14 +195,14 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
     statt sie (wie bisher in DEFAULT_DISTANCE_WEIGHTS) von Hand zu schaetzen.
 
     Vorgehen: Ridge-Regression (kleinste Quadrate + L2-Strafe, geschlossene
-    Loesung - kein Gradientenabstieg/Backpropagation) auf standardisierten
-    Merkmalen (siehe _forecast_feature_vector) sagt die beobachtete Leistung
-    voraus; die Betrags-Koeffizienten zeigen dann, wie stark jedes Merkmal
-    tatsaechlich mit der Leistung zusammenhaengt. Diese Wichtigkeiten werden
-    auf dieselbe Gesamtsumme wie DEFAULT_DISTANCE_WEIGHTS skaliert, damit die
-    uebrigen Konstanten der k-NN-Vorhersage (Nachbarnzahl, Distanz-Offset in
-    predict_power) ihre bisherige Bedeutung behalten - nur die *relative*
-    Gewichtung der Merkmale wird durch die Regression ersetzt.
+    Loesung ueber numpy - kein Gradientenabstieg/Backpropagation) auf
+    standardisierten Merkmalen (siehe _forecast_feature_vector) sagt die
+    beobachtete Leistung voraus; die Betrags-Koeffizienten zeigen dann, wie
+    stark jedes Merkmal tatsaechlich mit der Leistung zusammenhaengt. Diese
+    Wichtigkeiten werden auf dieselbe Gesamtsumme wie DEFAULT_DISTANCE_WEIGHTS
+    skaliert, damit die uebrigen Konstanten der k-NN-Vorhersage (Nachbarnzahl,
+    Distanz-Offset in predict_power) ihre bisherige Bedeutung behalten - nur
+    die *relative* Gewichtung der Merkmale wird durch die Regression ersetzt.
 
     Der eigentliche Vorhersage-Mechanismus (Analogie-Suche + physikalisch
     begrenzte Strahlungs-Skalierung in predict_power) bleibt unveraendert.
@@ -241,43 +215,31 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
     if len(training) < MIN_TRAINING_SAMPLES:
         return DEFAULT_DISTANCE_WEIGHTS
 
-    rows = [_forecast_feature_vector(sample.weather) for sample in training]
-    targets = [sample.power_w for sample in training]
-    n_features = len(rows[0])
-    n_samples = len(rows)
+    rows = np.array([_forecast_feature_vector(sample.weather) for sample in training])
+    targets = np.array([sample.power_w for sample in training])
+    n_features = rows.shape[1]
 
-    means = [sum(row[j] for row in rows) / n_samples for j in range(n_features)]
-    stds = [
-        math.sqrt(sum((row[j] - means[j]) ** 2 for row in rows) / n_samples)
-        for j in range(n_features)
-    ]
-    if any(std < 1e-9 for std in stds):
+    stds = rows.std(axis=0)
+    if np.any(stds < 1e-9):
+        return DEFAULT_DISTANCE_WEIGHTS
+    standardized = (rows - rows.mean(axis=0)) / stds
+
+    # Bias-Spalte fuer den Achsenabschnitt; bleibt unten unregularisiert.
+    design = np.hstack([standardized, np.ones((len(training), 1))])
+    penalty = np.eye(n_features + 1) * RIDGE_LAMBDA
+    penalty[-1, -1] = 0.0
+
+    try:
+        coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
+    except np.linalg.LinAlgError:
         return DEFAULT_DISTANCE_WEIGHTS
 
-    standardized = [
-        [(row[j] - means[j]) / stds[j] for j in range(n_features)] for row in rows
-    ]
-    design = [row + [1.0] for row in standardized]  # Bias-Spalte fuer den Achsenabschnitt.
-    n_params = n_features + 1
-
-    xtx = [
-        [sum(design[i][a] * design[i][b] for i in range(n_samples)) for b in range(n_params)]
-        for a in range(n_params)
-    ]
-    for i in range(n_features):  # Ridge-Strafe; Bias-Spalte bleibt unregularisiert.
-        xtx[i][i] += RIDGE_LAMBDA
-    xty = [sum(design[i][a] * targets[i] for i in range(n_samples)) for a in range(n_params)]
-
-    coefficients = _solve_linear_system(xtx, xty)
-    if coefficients is None:
-        return DEFAULT_DISTANCE_WEIGHTS
-
-    hour_importance = math.hypot(coefficients[0], coefficients[1])
-    day_importance = math.hypot(coefficients[2], coefficients[3])
-    ghi_importance = abs(coefficients[4])
-    direct_importance = abs(coefficients[5])
-    diffuse_importance = abs(coefficients[6])
-    temperature_importance = abs(coefficients[7])
+    hour_importance = float(np.hypot(coefficients[0], coefficients[1]))
+    day_importance = float(np.hypot(coefficients[2], coefficients[3]))
+    ghi_importance = float(abs(coefficients[4]))
+    direct_importance = float(abs(coefficients[5]))
+    diffuse_importance = float(abs(coefficients[6]))
+    temperature_importance = float(abs(coefficients[7]))
     total_importance = (
         hour_importance
         + day_importance

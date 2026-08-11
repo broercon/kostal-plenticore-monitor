@@ -4,14 +4,11 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
     DEFAULT_DISTANCE_WEIGHTS,
     MIN_TRAINING_SAMPLES,
     TrainingPoint,
-    _solve_linear_system,
     _summarize,
     build_training_data,
     fit_distance_weights,
@@ -207,16 +204,6 @@ def test_summary_excludes_immature_devices_from_training_metadata(monkeypatch):
     assert result["available"] is True
     assert [item["device_id"] for item in result["days"][0]["devices"]] == ["wr1"]
     assert result["training_samples"] == len(mature_samples)
-
-
-def test_solve_linear_system_matches_known_solution():
-    # 2x + y = 5 ; x + 3y = 10 -> x=1, y=3
-    result = _solve_linear_system([[2.0, 1.0], [1.0, 3.0]], [5.0, 10.0])
-    assert result == pytest.approx([1.0, 3.0])
-
-
-def test_solve_linear_system_detects_singular_matrix():
-    assert _solve_linear_system([[1.0, 2.0], [2.0, 4.0]], [1.0, 2.0]) is None
 
 
 def test_fit_distance_weights_falls_back_for_too_few_samples():

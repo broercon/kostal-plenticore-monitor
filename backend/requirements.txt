@@ -5,3 +5,4 @@ pykoplenti>=0.4
 aiohttp>=3.9
 pydantic>=2.0,<3.0
 tzdata>=2024.1
+numpy>=1.26,<3.0
