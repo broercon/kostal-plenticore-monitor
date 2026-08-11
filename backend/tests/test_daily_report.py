@@ -32,6 +32,8 @@ from .conftest import make_user
 
 TZ = ZoneInfo("Europe/Berlin")
 
+_NO_FORECAST = {"available": False, "message": "PV-Prognose deaktiviert.", "days": []}
+
 
 # --- next_run_at ---------------------------------------------------------
 
@@ -173,9 +175,39 @@ def test_build_report_html_includes_all_sections():
         {"device_id": "wr1", "device_name": "Dach Sued", "battery_soc_percent": 73.4}
     ]
 
+    forecast = {
+        "available": True,
+        "message": "",
+        "days": [
+            {
+                "date": "2026-07-14",  # heute - darf NICHT als Prognose-Tag auftauchen
+                "expected_kwh": 99.0,
+                "low_kwh": 90.0,
+                "high_kwh": 100.0,
+                "devices": [],
+            },
+            {
+                "date": "2026-07-15",  # morgen
+                "expected_kwh": 12.5,
+                "low_kwh": 10.0,
+                "high_kwh": 14.0,
+                "devices": [
+                    {"device_id": "wr1", "device_name": "Dach Sued", "expected_kwh": 7.5},
+                    {"device_id": "wr2", "device_name": "Garage", "expected_kwh": 5.0},
+                ],
+            },
+            {
+                "date": "2026-07-16",  # uebermorgen
+                "expected_kwh": 9.0,
+                "low_kwh": 8.0,
+                "high_kwh": 10.0,
+                "devices": [],
+            },
+        ],
+    }
     subject, body = daily_report.build_report_html(
         summaries, online_map, feed_in_periods, home_breakdown, battery_snapshot,
-        now, "Europe/Berlin",
+        forecast, now, "Europe/Berlin",
     )
 
     assert "14.07.2026" in subject
@@ -201,17 +233,28 @@ def test_build_report_html_includes_all_sections():
     assert "keine Daten" in body
     # Batterie-Ladestand
     assert "73 %" in body
+    # PV-Prognose: "heute" wird ausgeblendet (steht schon oben als Ist-Wert),
+    # "morgen"/"uebermorgen" werden hervorgehoben, Geraete-Aufschluesselung
+    # nur bei mehr als einem Geraet.
+    assert "99.0" not in body
+    assert "Morgen" in body
+    assert "12.50 kWh" in body
+    assert "Übermorgen" in body
+    assert "9.00 kWh" in body
+    assert "Dach Sued: 7.50 kWh" in body
+    assert "Garage: 5.00 kWh" in body
 
 
 def test_build_report_html_handles_missing_optional_data_gracefully():
     now = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
     summaries = [SummaryOut(device_id="wr1", device_name="Einziger WR", yield_day_kwh=7.0)]
     subject, body = daily_report.build_report_html(
-        summaries, {"wr1": True}, [], None, [], now, "Europe/Berlin"
+        summaries, {"wr1": True}, [], None, [], _NO_FORECAST, now, "Europe/Berlin"
     )
     assert "7.00 kWh" in body
     assert "Keine Batterie konfiguriert/erkannt." in body
     assert "Noch keine Daten für heute." in body
+    assert "PV-Prognose deaktiviert." in body
 
 
 def test_build_report_html_escapes_device_names():
@@ -220,10 +263,130 @@ def test_build_report_html_escapes_device_names():
         SummaryOut(device_id="wr1", device_name="<script>alert(1)</script>", yield_day_kwh=1.0)
     ]
     _subject, body = daily_report.build_report_html(
-        summaries, {"wr1": True}, [], None, [], now, "Europe/Berlin"
+        summaries, {"wr1": True}, [], None, [], _NO_FORECAST, now, "Europe/Berlin"
     )
     assert "<script>alert(1)</script>" not in body
     assert "&lt;script&gt;" in body
+
+
+# --- _relative_day_label / _forecast_section_html ------------------------
+
+
+def test_relative_day_label_uses_morgen_and_uebermorgen():
+    from datetime import date
+
+    assert daily_report._relative_day_label(1, date(2026, 7, 15)) == "Morgen"
+    assert daily_report._relative_day_label(2, date(2026, 7, 16)) == "Übermorgen"
+
+
+def test_relative_day_label_uses_weekday_and_date_beyond_uebermorgen():
+    from datetime import date
+
+    # 2026-07-17 ist ein Freitag.
+    assert daily_report._relative_day_label(3, date(2026, 7, 17)) == "Fr., 17.07."
+
+
+def test_forecast_section_excludes_today_and_highlights_tomorrow():
+    from datetime import date
+
+    forecast = {
+        "available": True,
+        "message": "",
+        "days": [
+            {"date": "2026-07-14", "expected_kwh": 42.0, "low_kwh": 40.0, "high_kwh": 44.0, "devices": []},
+            {"date": "2026-07-15", "expected_kwh": 12.5, "low_kwh": 10.0, "high_kwh": 14.0, "devices": []},
+        ],
+    }
+    html = daily_report._forecast_section_html(forecast, date(2026, 7, 14))
+    assert "42.00 kWh" not in html
+    assert "Morgen" in html
+    assert "12.50 kWh" in html
+    assert "10.00 kWh" in html and "14.00 kWh" in html
+
+
+def test_forecast_section_shows_device_breakdown_only_with_multiple_devices():
+    from datetime import date
+
+    single_device_forecast = {
+        "available": True,
+        "message": "",
+        "days": [
+            {
+                "date": "2026-07-15",
+                "expected_kwh": 12.5,
+                "low_kwh": 10.0,
+                "high_kwh": 14.0,
+                "devices": [{"device_id": "wr1", "device_name": "Dach Sued", "expected_kwh": 12.5}],
+            },
+        ],
+    }
+    html = daily_report._forecast_section_html(single_device_forecast, date(2026, 7, 14))
+    assert "Dach Sued" not in html  # nur ein Geraet -> keine separate Aufschluesselung
+
+    multi_device_forecast = {
+        "available": True,
+        "message": "",
+        "days": [
+            {
+                "date": "2026-07-15",
+                "expected_kwh": 12.5,
+                "low_kwh": 10.0,
+                "high_kwh": 14.0,
+                "devices": [
+                    {"device_id": "wr1", "device_name": "Dach Sued", "expected_kwh": 7.5},
+                    {"device_id": "wr2", "device_name": "Garage", "expected_kwh": 5.0},
+                ],
+            },
+        ],
+    }
+    html = daily_report._forecast_section_html(multi_device_forecast, date(2026, 7, 14))
+    assert "Dach Sued: 7.50 kWh" in html
+    assert "Garage: 5.00 kWh" in html
+
+
+def test_forecast_section_escapes_device_names():
+    from datetime import date
+
+    forecast = {
+        "available": True,
+        "message": "",
+        "days": [
+            {
+                "date": "2026-07-15",
+                "expected_kwh": 12.5,
+                "low_kwh": 10.0,
+                "high_kwh": 14.0,
+                "devices": [
+                    {"device_id": "wr1", "device_name": "<script>alert(1)</script>", "expected_kwh": 7.5},
+                    {"device_id": "wr2", "device_name": "Garage", "expected_kwh": 5.0},
+                ],
+            },
+        ],
+    }
+    html = daily_report._forecast_section_html(forecast, date(2026, 7, 14))
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_forecast_section_shows_fallback_message_when_unavailable():
+    from datetime import date
+
+    forecast = {"available": False, "message": "Keine Standortdaten konfiguriert.", "days": []}
+    html = daily_report._forecast_section_html(forecast, date(2026, 7, 14))
+    assert "Keine Standortdaten konfiguriert." in html
+
+
+def test_forecast_section_shows_fallback_when_no_upcoming_days_left():
+    from datetime import date
+
+    # Nur "heute" vorhanden (z.B. kurz vor Mitternacht) - keine kommenden Tage.
+    forecast = {
+        "available": True,
+        "message": "",
+        "days": [{"date": "2026-07-14", "expected_kwh": 5.0, "low_kwh": 4.0, "high_kwh": 6.0, "devices": []}],
+    }
+    html = daily_report._forecast_section_html(forecast, date(2026, 7, 14))
+    assert "Für die kommenden Tage liegt noch keine Prognose vor." in html
 
 
 # --- build_feed_in_summary / build_daily_home_breakdown / device_battery_snapshot -
@@ -285,7 +448,7 @@ def test_build_daily_home_breakdown_returns_objects_and_renders(client):
     from datetime import datetime as _dt
 
     subject, body = daily_report.build_report_html(
-        [], {}, [], today, [], _dt.now(timezone.utc), "Europe/Berlin",
+        [], {}, [], today, [], _NO_FORECAST, _dt.now(timezone.utc), "Europe/Berlin",
     )
     assert "PV" in body
 
@@ -407,6 +570,11 @@ def test_generate_and_send_daily_report_records_success(client, monkeypatch):
         SummaryOut(device_id="wr1", device_name="WR 1", yield_day_kwh=1.0)
     ])
     monkeypatch.setattr(daily_report, "device_online_map", lambda now=None: {"wr1": True})
+
+    async def fake_forecast_get():
+        return dict(_NO_FORECAST)
+
+    monkeypatch.setattr(daily_report.forecast_service, "get", fake_forecast_get)
     monkeypatch.setattr(daily_report, "send_report_mail", fake_send)
 
     result = asyncio.run(daily_report.generate_and_send_daily_report())
@@ -424,6 +592,11 @@ def test_generate_and_send_daily_report_records_failure_without_raising(client, 
 
     monkeypatch.setattr(daily_report, "build_daily_summaries", lambda: [])
     monkeypatch.setattr(daily_report, "device_online_map", lambda now=None: {})
+
+    async def fake_forecast_get():
+        return dict(_NO_FORECAST)
+
+    monkeypatch.setattr(daily_report.forecast_service, "get", fake_forecast_get)
     monkeypatch.setattr(daily_report, "send_report_mail", failing_send)
 
     result = asyncio.run(daily_report.generate_and_send_daily_report())
@@ -453,6 +626,11 @@ def test_generate_and_send_daily_report_ignores_enabled_flag(client, monkeypatch
     )
     monkeypatch.setattr(daily_report, "build_daily_summaries", lambda: [])
     monkeypatch.setattr(daily_report, "device_online_map", lambda now=None: {})
+
+    async def fake_forecast_get():
+        return dict(_NO_FORECAST)
+
+    monkeypatch.setattr(daily_report.forecast_service, "get", fake_forecast_get)
     monkeypatch.setattr(daily_report, "send_report_mail", fake_send)
 
     result = asyncio.run(daily_report.generate_and_send_daily_report())
