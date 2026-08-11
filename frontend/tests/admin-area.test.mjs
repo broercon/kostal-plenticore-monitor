@@ -61,6 +61,9 @@ test("Prognosekonfiguration enthaelt nur Aktivierung und Koordinaten", async () 
 
 test("Dashboard zeigt Energie, Zeitraum und Wechselrichter der Prognose", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
+  // Der Prognose-Tab laedt (wie alle Tabs ausser "Uebersicht") erst beim
+  // ersten Oeffnen, siehe setupViewTabs()/TAB_LOADERS in app.js.
+  app.clickViewTab("forecast");
   await waitFor(() => app.document.querySelectorAll(".forecast-day").length === 1);
   const text = app.document.getElementById("forecast-days").textContent;
   assert.match(text, /12\.4 kWh/);
@@ -72,6 +75,7 @@ test("Dashboard zeigt Energie, Zeitraum und Wechselrichter der Prognose", async 
 
 test("Dashboard vergleicht gespeicherte Prognose mit echten Werten", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
   await waitFor(() => app.document.querySelectorAll(".forecast-accuracy-day").length === 1);
   const text = app.document.getElementById("forecast-accuracy-days").textContent;
   assert.match(text, /Erwartet 11\.5/);

@@ -11,6 +11,13 @@ test("Tab-Wechsel laedt die Daten des gewaehlten Wechselrichters", async () => {
     }),
   });
 
+  // Der Leistungsverlauf-Chart gehoert zum "trend"-Tab und laedt erst bei
+  // dessen erstem Oeffnen (siehe setupViewTabs()/TAB_LOADERS in app.js) -
+  // erst danach loest ein Wechselrichter-Wechsel ueberhaupt ein Neuladen
+  // dieses Charts aus (siehe refreshLoadedTabs()).
+  app.clickViewTab("trend");
+  await waitFor(() => app.chartMetricLast("PV-Leistung") !== null);
+
   app.clickTab("WR1");
   await waitFor(() => app.chartMetricLast("PV-Leistung") === 600);
 
@@ -27,6 +34,9 @@ test("schneller Tab-Wechsel: verspaetete Antwort des vorherigen WR ueberschreibt
       historyPv: (dev) => (dev === "wr1" ? 600 : dev === "wr2" ? 400 : 1000),
     }),
   });
+
+  app.clickViewTab("trend");
+  await waitFor(() => app.chartMetricLast("PV-Leistung") !== null);
 
   // WR1 (langsam) direkt gefolgt von WR2 (schnell): ohne Schutz wuerde die
   // spaeter eintreffende WR1-Antwort das Diagramm ueberschreiben, obwohl
