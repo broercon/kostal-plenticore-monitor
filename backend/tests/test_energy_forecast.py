@@ -6,14 +6,20 @@ from datetime import datetime, timedelta, timezone
 
 from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
+    BACKTEST_MIN_SAMPLES,
     DEFAULT_DISTANCE_WEIGHTS,
+    DistanceWeights,
     MIN_TRAINING_SAMPLES,
+    ModelProfile,
     TrainingPoint,
+    _predict_with_profile,
+    _prepare_training_arrays,
     _summarize,
     build_training_data,
     fit_distance_weights,
     load_hourly_pv_history,
     predict_power,
+    select_model,
 )
 from app.database import SessionLocal
 from app.forecast_weather import WeatherPoint
@@ -278,3 +284,94 @@ def test_summarize_uses_learned_weights_without_crashing():
     result = _summarize({"wr1": samples}, [forecast_point])
     assert result["available"] is True
     assert result["days"][0]["expected_kwh"] > 0
+
+
+def test_model_selection_uses_learned_weights_only_when_backtest_is_better(
+    monkeypatch,
+):
+    import app.energy_forecast as module
+
+    learned = DistanceWeights(2.0, 1.0, 3.0, 1.0, 1.0, 0.2)
+    monkeypatch.setattr(module, "fit_distance_weights", lambda _samples: learned)
+
+    def fake_predict(_training, target, weights=None, arrays=None):
+        factor = 5.0 if weights == learned else 3.0
+        value = target.shortwave_w_m2 * factor
+        return value, value, value
+
+    monkeypatch.setattr(module, "predict_power", fake_predict)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    training = []
+    for index in range(BACKTEST_MIN_SAMPLES):
+        weather = WeatherPoint(
+            timestamp=start + timedelta(hours=index),
+            shortwave_w_m2=500.0,
+            direct_w_m2=350.0,
+            diffuse_w_m2=150.0,
+            temperature_c=10.0,
+        )
+        training.append(TrainingPoint(weather, 2500.0))
+
+    profile = select_model(training)
+    assert profile.method == "learned"
+    assert profile.weights == learned
+    assert profile.validation_samples >= 24
+    assert profile.validation_error_percent == 0.0
+
+
+def test_model_selection_keeps_standard_weights_when_learning_is_worse(monkeypatch):
+    import app.energy_forecast as module
+
+    learned = DistanceWeights(2.0, 1.0, 3.0, 1.0, 1.0, 0.2)
+    monkeypatch.setattr(module, "fit_distance_weights", lambda _samples: learned)
+
+    def fake_predict(_training, target, weights=None, arrays=None):
+        factor = 7.0 if weights == learned else 5.0
+        value = target.shortwave_w_m2 * factor
+        return value, value, value
+
+    monkeypatch.setattr(module, "predict_power", fake_predict)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    training = [
+        TrainingPoint(
+            WeatherPoint(
+                timestamp=start + timedelta(hours=index),
+                shortwave_w_m2=500.0,
+                direct_w_m2=350.0,
+                diffuse_w_m2=150.0,
+                temperature_c=10.0,
+            ),
+            2500.0,
+        )
+        for index in range(BACKTEST_MIN_SAMPLES)
+    ]
+
+    profile = select_model(training)
+    assert profile.method == "standard"
+    assert profile.weights == DEFAULT_DISTANCE_WEIGHTS
+
+
+def test_historical_error_calibrates_forecast_range(monkeypatch):
+    import app.energy_forecast as module
+
+    training = [TrainingPoint(_weather(12, 700), 1000.0)]
+    arrays = _prepare_training_arrays(training)
+    profile = ModelProfile(
+        weights=DEFAULT_DISTANCE_WEIGHTS,
+        method="standard",
+        validation_samples=30,
+        validation_error_percent=20.0,
+        interval_error_fraction=0.2,
+    )
+    monkeypatch.setattr(
+        module,
+        "predict_power",
+        lambda *_args, **_kwargs: (1000.0, 950.0, 1050.0),
+    )
+
+    expected, low, high = _predict_with_profile(
+        training, _weather(12, 700), profile, arrays
+    )
+    assert expected == 1000.0
+    assert low == 800.0
+    assert high == 1200.0

@@ -76,6 +76,15 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           training_end: "2026-07-12T23:00:00Z",
           training_samples: 1200,
           weather_source: "Open-Meteo",
+          models: [
+            {
+              device_id: "wr1",
+              device_name: "WR1",
+              method: "learned",
+              validation_samples: 120,
+              validation_error_percent: 8.5,
+            },
+          ],
           days: [
             {
               date: "2026-07-13",
@@ -94,6 +103,35 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           ],
           hours: [
             { timestamp: "2026-07-13T12:00:00Z", expected_kw: 4.2, low_kw: 3.4, high_kw: 5.0 },
+          ],
+        };
+      case "/api/forecast/accuracy":
+        return {
+          available: true,
+          message: "Vergleich der gespeicherten Prognosen mit echten Messwerten.",
+          overall_accuracy_percent: 92.4,
+          days: [
+            {
+              date: "2026-07-12",
+              expected_kwh: 11.5,
+              actual_kwh: 12.0,
+              difference_kwh: 0.5,
+              difference_percent: 4.3,
+              accuracy_percent: 95.8,
+              matched_hours: 24,
+              devices: [
+                {
+                  device_id: "wr1",
+                  device_name: "WR1",
+                  expected_kwh: 7.5,
+                  actual_kwh: 8.0,
+                  difference_kwh: 0.5,
+                  difference_percent: 6.7,
+                  accuracy_percent: 93.8,
+                  matched_hours: 24,
+                },
+              ],
+            },
           ],
         };
       default:

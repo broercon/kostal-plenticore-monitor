@@ -288,6 +288,14 @@ class ForecastDeviceDayOut(BaseModel):
     high_kwh: float
 
 
+class ForecastModelOut(BaseModel):
+    device_id: str
+    device_name: str
+    method: str
+    validation_samples: int
+    validation_error_percent: float | None = None
+
+
 class ForecastDayOut(BaseModel):
     date: str
     expected_kwh: float
@@ -308,5 +316,35 @@ class EnergyForecastOut(BaseModel):
     training_end: datetime | None = None
     training_samples: int
     weather_source: str
+    models: list[ForecastModelOut] = []
     days: list[ForecastDayOut]
     hours: list[ForecastHourOut]
+
+
+class ForecastAccuracyDeviceOut(BaseModel):
+    device_id: str
+    device_name: str
+    expected_kwh: float
+    actual_kwh: float
+    difference_kwh: float
+    difference_percent: float | None = None
+    accuracy_percent: float | None = None
+    matched_hours: int
+
+
+class ForecastAccuracyDayOut(BaseModel):
+    date: str
+    expected_kwh: float
+    actual_kwh: float
+    difference_kwh: float
+    difference_percent: float | None = None
+    accuracy_percent: float | None = None
+    matched_hours: int
+    devices: list[ForecastAccuracyDeviceOut]
+
+
+class ForecastAccuracyOut(BaseModel):
+    available: bool
+    message: str
+    overall_accuracy_percent: float | None = None
+    days: list[ForecastAccuracyDayOut]

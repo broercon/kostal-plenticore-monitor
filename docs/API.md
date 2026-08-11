@@ -102,4 +102,10 @@ Alle folgenden Endpunkte benötigen die Rolle `admin`:
 - `GET /api/forecast` – sieben Tage erwartete PV-Leistung und Energie aus
   den historischen Messwerten jedes Wechselrichters und Open-Meteo-
   Strahlungsdaten. Liefert Stundenwerte, Tagesenergie, Prognosebereich,
-  Produktionszeitraum und getrennte Tageswerte je Wechselrichter.
+  Produktionszeitraum, Modell-Rückvergleich und getrennte Tageswerte je
+  Wechselrichter. Noch nicht begonnene Zielstunden werden automatisch für
+  den späteren Ist-Vergleich gespeichert.
+- `GET /api/forecast/accuracy?days=30` – vergleicht die gespeicherten
+  Stundenprognosen mit der später gemessenen PV-Erzeugung. Liefert erwartete
+  und tatsächliche Energie, Abweichung und Genauigkeit insgesamt, je Tag und
+  je Wechselrichter.

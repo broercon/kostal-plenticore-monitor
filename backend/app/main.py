@@ -42,6 +42,7 @@ from .forecast_config import (
     update_config as update_forecast_config,
 )
 from .energy_forecast import forecast_service
+from .forecast_evaluation import get_forecast_accuracy
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
@@ -69,6 +70,7 @@ from .schemas import (
     FeedInSummaryOut,
     ForecastConfigIn,
     ForecastConfigOut,
+    ForecastAccuracyOut,
     EnergyForecastOut,
     PvYieldSummaryOut,
     HistoryPoint,
@@ -131,10 +133,25 @@ async def lifespan(app: FastAPI):
     poller.start()
     daily_report_scheduler.start()
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
+    forecast_task = asyncio.create_task(_refresh_forecast_periodically())
     yield
     auto_import_task.cancel()
+    forecast_task.cancel()
+    await asyncio.gather(auto_import_task, forecast_task, return_exceptions=True)
     await poller.stop()
     await daily_report_scheduler.stop()
+
+
+async def _refresh_forecast_periodically() -> None:
+    """Erzeugt auch ohne geoeffnetes Dashboard regelmaessig Prognosen."""
+    while True:
+        try:
+            await forecast_service.get()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Automatische PV-Prognose fehlgeschlagen")
+        await asyncio.sleep(30 * 60)
 
 
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
@@ -268,6 +285,16 @@ async def get_energy_forecast_endpoint(
 ) -> EnergyForecastOut:
     """Sieben-Tage-Prognose aus historischen PV- und Wetterdaten."""
     return EnergyForecastOut.model_validate(await forecast_service.get())
+
+
+@app.get("/api/forecast/accuracy", response_model=ForecastAccuracyOut)
+async def get_forecast_accuracy_endpoint(
+    days: int = Query(default=30, ge=1, le=365),
+    _user: User = Depends(auth.get_current_user),
+) -> ForecastAccuracyOut:
+    """Vergleicht gespeicherte Prognosen mit der spaeter gemessenen Erzeugung."""
+    result = await asyncio.to_thread(get_forecast_accuracy, days)
+    return ForecastAccuracyOut.model_validate(result)
 
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)

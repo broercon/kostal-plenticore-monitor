@@ -54,6 +54,13 @@ PV-Prognose** pflegen. Weitere technische Anlagendaten sind nicht nötig: Die
 App lernt die Leistung und den zeitlichen Verlauf jedes Wechselrichters aus
 seinen historischen PV-Messwerten und den historischen Wetterdaten.
 
+Die Anwendung erzeugt die Prognose auch ohne geöffnetes Dashboard regelmäßig
+im Hintergrund. Sobald die jeweiligen Stunden vorbei sind, werden Prognose
+und echte Erzeugung automatisch verglichen. Der Abschnitt
+**Prognosekontrolle** zeigt Erwartung, Ist-Wert und Abweichung getrennt je
+Wechselrichter. Nach der ersten Installation benötigt diese Auswertung daher
+mindestens einen abgeschlossenen Prognosetag.
+
 Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 `inverters.json` als Startkonfiguration stehen:
 

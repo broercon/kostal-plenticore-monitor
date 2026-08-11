@@ -100,6 +100,40 @@ class ForecastSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ForecastPrediction(Base):
+    """Zuletzt bekannte Prognose je Wechselrichter und Zielstunde.
+
+    Solange die Zielstunde noch nicht begonnen hat, darf ein neuer Wetterlauf
+    den Eintrag aktualisieren. Danach bleibt er unveraendert und kann
+    dauerhaft mit den echten Messwerten verglichen werden.
+    """
+
+    __tablename__ = "forecast_predictions"
+    __table_args__ = (
+        Index(
+            "ux_forecast_prediction_device_target",
+            "device_id",
+            "target_timestamp",
+            unique=True,
+        ),
+        Index("ix_forecast_predictions_target", "target_timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expected_w: Mapped[float] = mapped_column(Float, nullable=False)
+    low_w: Mapped[float] = mapped_column(Float, nullable=False)
+    high_w: Mapped[float] = mapped_column(Float, nullable=False)
+    model_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    first_generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class DailyEnergyCache(Base):
     """Cache für abgeschlossene (vergangene) Kalendertage der Energie-
     Zeitraum-Übersichten (PV-Ertrag/Einspeisung je Zeitraum, siehe

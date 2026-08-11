@@ -25,6 +25,8 @@ from .models import Reading
 FORECAST_DAYS = 7
 TRAINING_DAYS = 365
 MIN_TRAINING_SAMPLES = 48
+BACKTEST_MIN_SAMPLES = 14 * 24
+BACKTEST_MIN_DAYLIGHT_SAMPLES = 24
 CACHE_TTL = timedelta(minutes=30)
 
 # Regularisierungsstaerke der Ridge-Regression in fit_distance_weights()
@@ -55,10 +57,21 @@ class DistanceWeights:
     temperature: float
 
 
+@dataclass(frozen=True)
+class ModelProfile:
+    """Ergebnis des zeitlich getrennten Modell-Rueckvergleichs."""
+
+    weights: DistanceWeights
+    method: str
+    validation_samples: int
+    validation_error_percent: float | None
+    interval_error_fraction: float | None
+
+
 # Bisherige, von Hand geschaetzte Gewichte - Fallback, wenn fit_distance_
 # weights() nicht genug/zu entartete Daten fuer eine stabile Schaetzung hat.
-# Die Vorhersage kann dadurch nie schlechter werden als vor der Umstellung
-# auf gelernte Gewichte, bestenfalls besser.
+# Ob gelernte Gewichte tatsaechlich genutzt werden, entscheidet zusaetzlich
+# der zeitlich getrennte Rueckvergleich in select_model().
 DEFAULT_DISTANCE_WEIGHTS = DistanceWeights(
     hour=1.8, day=1.0, ghi=2.5, direct=1.0, diffuse=1.0, temperature=0.25
 )
@@ -180,8 +193,7 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
     Reicht die Historie nicht (weniger als MIN_TRAINING_SAMPLES) oder ist ein
     Merkmal darin konstant (z.B. noch keine Temperaturstreuung) bzw. das
     Gleichungssystem trotz Regularisierung singulaer, wird auf die
-    bisherigen Standardgewichte zurueckgefallen - die Vorhersage kann dadurch
-    nie schlechter werden als vor dieser Umstellung.
+    bisherigen Standardgewichte zurueckgefallen.
     """
     if len(training) < MIN_TRAINING_SAMPLES:
         return DEFAULT_DISTANCE_WEIGHTS
@@ -354,6 +366,94 @@ def predict_power(
     return expected, max(0.0, expected - 1.28 * spread), expected + 1.28 * spread
 
 
+def select_model(training: list[TrainingPoint]) -> ModelProfile:
+    """Waehlt Standard- oder gelernte Gewichte anhand spaeterer Messwerte.
+
+    Die letzten 20 Prozent der Historie bleiben beim Lernen unangetastet.
+    Nur wenn die gelernten Gewichte dort einen kleineren absoluten Fehler
+    erzielen, werden sie fuer die echte Zukunftsprognose verwendet.
+    """
+    fallback = ModelProfile(
+        weights=DEFAULT_DISTANCE_WEIGHTS,
+        method="standard",
+        validation_samples=0,
+        validation_error_percent=None,
+        interval_error_fraction=None,
+    )
+    if len(training) < BACKTEST_MIN_SAMPLES:
+        return fallback
+
+    ordered = sorted(training, key=lambda sample: sample.weather.timestamp)
+    split_at = max(MIN_TRAINING_SAMPLES, int(len(ordered) * 0.8))
+    fit_samples = ordered[:split_at]
+    validation = [
+        sample
+        for sample in ordered[split_at:]
+        if sample.weather.shortwave_w_m2 >= 20 and sample.power_w >= 0
+    ]
+    if len(validation) < BACKTEST_MIN_DAYLIGHT_SAMPLES:
+        return fallback
+
+    arrays = _prepare_training_arrays(fit_samples)
+    learned_weights = fit_distance_weights(fit_samples)
+
+    def evaluate(weights: DistanceWeights) -> tuple[float, list[float], list[float]]:
+        predictions = [
+            predict_power(fit_samples, sample.weather, weights, arrays)[0]
+            for sample in validation
+        ]
+        errors = [
+            abs(predicted - sample.power_w)
+            for predicted, sample in zip(predictions, validation)
+        ]
+        return sum(errors), predictions, errors
+
+    default_error, default_predictions, default_errors = evaluate(
+        DEFAULT_DISTANCE_WEIGHTS
+    )
+    learned_error, learned_predictions, learned_errors = evaluate(learned_weights)
+    learned_wins = (
+        learned_weights != DEFAULT_DISTANCE_WEIGHTS
+        and learned_error < default_error * 0.99
+    )
+    method = "learned" if learned_wins else "standard"
+    predictions = learned_predictions if learned_wins else default_predictions
+    errors = learned_errors if learned_wins else default_errors
+    actual_total = sum(sample.power_w for sample in validation)
+    error_percent = 100 * sum(errors) / actual_total if actual_total > 0 else None
+    relative_errors = [
+        abs(predicted - sample.power_w) / max(sample.power_w, 100.0)
+        for predicted, sample in zip(predictions, validation)
+    ]
+    interval_fraction = min(1.5, float(np.quantile(relative_errors, 0.8)))
+    final_weights = (
+        fit_distance_weights(ordered) if learned_wins else DEFAULT_DISTANCE_WEIGHTS
+    )
+    return ModelProfile(
+        weights=final_weights,
+        method=method,
+        validation_samples=len(validation),
+        validation_error_percent=error_percent,
+        interval_error_fraction=interval_fraction,
+    )
+
+
+def _predict_with_profile(
+    training: list[TrainingPoint],
+    target: WeatherPoint,
+    profile: ModelProfile,
+    arrays: _TrainingArrays,
+) -> tuple[float, float, float]:
+    expected, local_low, local_high = predict_power(
+        training, target, profile.weights, arrays
+    )
+    if expected <= 0 or profile.interval_error_fraction is None:
+        return expected, local_low, local_high
+    calibrated_spread = expected * profile.interval_error_fraction
+    spread = max(expected - local_low, local_high - expected, calibrated_spread)
+    return expected, max(0.0, expected - spread), expected + spread
+
+
 def _empty_result(message: str) -> dict:
     return {
         "available": False,
@@ -363,13 +463,18 @@ def _empty_result(message: str) -> dict:
         "training_end": None,
         "training_samples": 0,
         "weather_source": "Open-Meteo",
+        "models": [],
         "days": [],
         "hours": [],
     }
 
 
 def _summarize(
-    training: dict[str, list[TrainingPoint]], forecast_weather: list[WeatherPoint]
+    training: dict[str, list[TrainingPoint]],
+    forecast_weather: list[WeatherPoint],
+    *,
+    persist: bool = False,
+    generated_at: datetime | None = None,
 ) -> dict:
     device_names = {device.id: device.name for device in settings.inverters}
     local_tz = ZoneInfo(settings.timezone_name)
@@ -379,16 +484,18 @@ def _summarize(
     # ein - ein zu junges Geraet soll die gemeldete Datengrundlage nicht
     # verzerren.
     used_samples: dict[str, list[TrainingPoint]] = {}
+    profiles: dict[str, ModelProfile] = {}
     for device_id, samples in training.items():
         if len(samples) < MIN_TRAINING_SAMPLES:
             continue
         used_samples[device_id] = samples
-        # Gewichte einmal je Geraet lernen (nicht je Prognosestunde) - sie
-        # haengen nur von der Trainingshistorie ab, siehe fit_distance_weights.
-        weights = fit_distance_weights(samples)
+        profile = select_model(samples)
+        profiles[device_id] = profile
         arrays = _prepare_training_arrays(samples)
         per_device_hour[device_id] = {
-            point.timestamp - timedelta(hours=1): predict_power(samples, point, weights, arrays)
+            (point.timestamp - timedelta(hours=1)): _predict_with_profile(
+                samples, point, profile, arrays
+            )
             for point in forecast_weather
         }
     if not per_device_hour:
@@ -449,15 +556,41 @@ def _summarize(
             }
         )
 
-    all_samples = [sample for samples in used_samples.values() for sample in samples]
+    generated_at = generated_at or datetime.now(timezone.utc)
+    if persist:
+        from .forecast_evaluation import save_forecast_predictions
+
+        save_forecast_predictions(
+            per_device_hour,
+            {device_id: profile.method for device_id, profile in profiles.items()},
+            generated_at,
+        )
+
+    all_samples = [
+        sample for samples in used_samples.values() for sample in samples
+    ]
     return {
         "available": True,
         "message": "Prognose aus historischen PV- und Wetterdaten.",
-        "generated_at": datetime.now(timezone.utc),
+        "generated_at": generated_at,
         "training_start": min(sample.weather.timestamp for sample in all_samples),
         "training_end": max(sample.weather.timestamp for sample in all_samples),
         "training_samples": len(all_samples),
         "weather_source": "Open-Meteo",
+        "models": [
+            {
+                "device_id": device_id,
+                "device_name": device_names.get(device_id, device_id),
+                "method": profile.method,
+                "validation_samples": profile.validation_samples,
+                "validation_error_percent": (
+                    round(profile.validation_error_percent, 1)
+                    if profile.validation_error_percent is not None
+                    else None
+                ),
+            }
+            for device_id, profile in profiles.items()
+        ],
         "days": days,
         "hours": combined_hours,
     }
@@ -488,7 +621,12 @@ async def build_forecast() -> dict:
         fetch_forecast_weather(latitude, longitude, FORECAST_DAYS),
     )
     training = build_training_data(history, historical_weather)
-    return _summarize(training, forecast_weather)
+    return _summarize(
+        training,
+        forecast_weather,
+        persist=True,
+        generated_at=datetime.now(timezone.utc),
+    )
 
 
 class ForecastService:

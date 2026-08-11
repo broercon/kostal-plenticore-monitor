@@ -22,6 +22,7 @@ const state = {
   // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
   chartsInteractive: true,
   forecastChart: null,
+  forecastAccuracyChart: null,
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -313,6 +314,16 @@ async function refreshForecast() {
   status.textContent =
     `${data.message} Grundlage: ${data.training_samples} historische Stunden, ` +
     `aktualisiert ${fmtDateTime(data.generated_at)}.`;
+  if (data.models?.length) {
+    const modelText = data.models.map((model) => {
+      const method = model.method === "learned" ? "gelernt" : "Standard";
+      const error = model.validation_error_percent === null
+        ? "noch ohne Rückvergleich"
+        : `${model.validation_error_percent.toFixed(1)} % historischer Fehler`;
+      return `${model.device_name}: ${method}, ${error}`;
+    }).join(" · ");
+    status.textContent += ` Modelle: ${modelText}.`;
+  }
   for (const day of data.days) {
     const card = document.createElement("div");
     card.className = "forecast-day";
@@ -390,6 +401,92 @@ async function refreshForecast() {
       },
     },
   });
+}
+
+async function refreshForecastAccuracy() {
+  const data = await fetchJson("/api/forecast/accuracy?days=30");
+  const status = el("forecast-accuracy-status");
+  const container = el("forecast-accuracy-days");
+  const chartWrapper = el("forecast-accuracy-chart").parentElement;
+  container.innerHTML = "";
+  if (!data.available) {
+    status.textContent = data.message;
+    chartWrapper.classList.add("hidden");
+    if (state.forecastAccuracyChart) {
+      state.forecastAccuracyChart.destroy();
+      state.forecastAccuracyChart = null;
+    }
+    return;
+  }
+
+  status.textContent = data.overall_accuracy_percent === null
+    ? data.message
+    : `${data.message} Gesamtgenauigkeit: ${data.overall_accuracy_percent.toFixed(1)} %.`;
+  for (const day of data.days.slice(0, 7)) {
+    const card = document.createElement("div");
+    card.className = "forecast-accuracy-day";
+    const date = document.createElement("strong");
+    date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+    });
+    const values = document.createElement("span");
+    values.className = "forecast-accuracy-values";
+    values.textContent = `Erwartet ${day.expected_kwh.toFixed(1)} · tatsächlich ${day.actual_kwh.toFixed(1)} kWh`;
+    const difference = document.createElement("span");
+    difference.className = "muted";
+    const sign = day.difference_kwh > 0 ? "+" : "";
+    const accuracy = day.accuracy_percent === null
+      ? "Genauigkeit –"
+      : `Genauigkeit ${day.accuracy_percent.toFixed(1)} %`;
+    difference.textContent = `Abweichung ${sign}${day.difference_kwh.toFixed(1)} kWh · ${accuracy}`;
+    difference.textContent += ` · ${day.matched_hours} Stundenwerte verglichen`;
+    const devices = document.createElement("span");
+    devices.className = "forecast-accuracy-devices";
+    devices.textContent = day.devices.map((device) => {
+      const deviceSign = device.difference_kwh > 0 ? "+" : "";
+      return `${device.device_name}: ${device.expected_kwh.toFixed(1)} → ${device.actual_kwh.toFixed(1)} kWh (${deviceSign}${device.difference_kwh.toFixed(1)})`;
+    }).join(" · ");
+    card.append(date, values, difference, devices);
+    container.appendChild(card);
+  }
+
+  const chronological = [...data.days].reverse();
+  chartWrapper.classList.remove("hidden");
+  if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
+  state.forecastAccuracyChart = new Chart(
+    el("forecast-accuracy-chart").getContext("2d"),
+    {
+      type: "bar",
+      data: {
+        labels: chronological.map((day) =>
+          new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+          })
+        ),
+        datasets: [
+          {
+            label: "Erwartet",
+            data: chronological.map((day) => day.expected_kwh),
+            backgroundColor: "rgba(56, 189, 248, 0.55)",
+          },
+          {
+            label: "Tatsächlich",
+            data: chronological.map((day) => day.actual_kwh),
+            backgroundColor: "rgba(34, 197, 94, 0.65)",
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        scales: { y: { beginAtZero: true, title: { display: true, text: "kWh" } } },
+      },
+    }
+  );
 }
 
 function setupAdminArea() {
@@ -1452,6 +1549,7 @@ function setChartsInteractive(on) {
     state.dailyTotals.chart,
     state.hourlyCompare.chart,
     state.forecastChart,
+    state.forecastAccuracyChart,
   ];
   for (const c of charts) {
     if (!c || !c.options) continue;
@@ -1521,6 +1619,7 @@ async function init() {
   setupChartInteractionToggle();
   await refreshAll({ showLoading: true });
   refreshForecast().catch(console.error);
+  refreshForecastAccuracy().catch(console.error);
   refreshPvYieldSummary().catch(console.error);
   setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
@@ -1537,6 +1636,7 @@ async function init() {
   setInterval(() => refreshHourlyCompareChart().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
   setInterval(() => refreshForecast().catch(console.error), 60 * 60 * 1000);
+  setInterval(() => refreshForecastAccuracy().catch(console.error), 60 * 60 * 1000);
 }
 
 init();

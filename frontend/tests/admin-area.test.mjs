@@ -66,5 +66,17 @@ test("Dashboard zeigt Energie, Zeitraum und Wechselrichter der Prognose", async 
   assert.match(text, /12\.4 kWh/);
   assert.match(text, /WR1: 8\.0 kWh/);
   assert.match(text, /WR2: 4\.4 kWh/);
+  assert.match(app.document.getElementById("forecast-status").textContent, /gelernt/);
   assert.ok(app.state.forecastChart);
+});
+
+test("Dashboard vergleicht gespeicherte Prognose mit echten Werten", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  await waitFor(() => app.document.querySelectorAll(".forecast-accuracy-day").length === 1);
+  const text = app.document.getElementById("forecast-accuracy-days").textContent;
+  assert.match(text, /Erwartet 11\.5/);
+  assert.match(text, /tatsächlich 12\.0 kWh/);
+  assert.match(text, /Abweichung \+0\.5 kWh/);
+  assert.match(text, /WR1: 7\.5 → 8\.0 kWh/);
+  assert.ok(app.state.forecastAccuracyChart);
 });

@@ -15,7 +15,8 @@ Docker-Container.
 - Vergleich mehrerer Wechselrichter und Kalendertage
 - Automatischer Import vorhandener Wechselrichter-Logdaten
 - Benutzerverwaltung mit Admin- und Betreiberrolle
-- Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten
+- Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten, mit
+  automatischem Rückvergleich sowie Erwartet-/Ist-Auswertung im Dashboard
 - Optionaler täglicher E-Mail-Bericht
 - Persistente Speicherung in SQLite
 
