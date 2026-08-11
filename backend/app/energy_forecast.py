@@ -479,6 +479,32 @@ def _predict_with_profile(
     return expected, max(0.0, expected - spread), expected + spread
 
 
+def _aggregate_bounds(
+    hourly_values: list[tuple[float, float, float]]
+) -> tuple[float, float, float]:
+    """Aggregiert stuendliche (expected, low, high)-Tripel (gleiche Einheit,
+    z.B. W oder kW) ueber mehrere Stunden zu einem Gesamtwert (z.B. Tagessumme).
+
+    expected wird schlicht aufsummiert. Fuer low/high wird NICHT die Summe
+    der stuendlichen Extremwerte gebildet - das wuerde unterstellen, dass die
+    Prognose in JEDER Stunde gleichzeitig maximal daneben liegt (voll
+    korrelierter Fehler), was die Unsicherheit ueber laengere Zeitraeume stark
+    ueberschaetzt und den Bereich unnoetig aufblaeht. Stattdessen werden die
+    stuendlichen Halbbreiten (high - expected) quadratisch addiert - die
+    ueblichen Fehlerfortpflanzung fuer die Summe naeherungsweise unabhaengiger
+    Fehler (vgl. Zentraler Grenzwertsatz) - sodass sich Ausreisser einzelner
+    Stunden im Tagesverlauf teilweise ausgleichen koennen, statt sich
+    aufzusummieren."""
+    total_expected = 0.0
+    variance = 0.0
+    for expected, _low, high in hourly_values:
+        total_expected += expected
+        half_width = high - expected
+        variance += half_width * half_width
+    spread = math.sqrt(variance)
+    return total_expected, max(0.0, total_expected - spread), total_expected + spread
+
+
 def _empty_result(message: str) -> dict:
     return {
         "available": False,
@@ -556,23 +582,27 @@ def _summarize(
                 for hour in day_hours
                 if hour["timestamp"] in predictions
             ]
+            device_expected, device_low, device_high = _aggregate_bounds(device_values)
             devices.append(
                 {
                     "device_id": device_id,
                     "device_name": device_names.get(device_id, device_id),
-                    "expected_kwh": round(sum(value[0] for value in device_values) / 1000, 2),
-                    "low_kwh": round(sum(value[1] for value in device_values) / 1000, 2),
-                    "high_kwh": round(sum(value[2] for value in device_values) / 1000, 2),
+                    "expected_kwh": round(device_expected / 1000, 2),
+                    "low_kwh": round(device_low / 1000, 2),
+                    "high_kwh": round(device_high / 1000, 2),
                 }
             )
+        day_expected, day_low, day_high = _aggregate_bounds(
+            [(hour["expected_kw"], hour["low_kw"], hour["high_kw"]) for hour in day_hours]
+        )
         active = [hour for hour in day_hours if hour["expected_kw"] >= 0.1]
         peak = max(day_hours, key=lambda hour: hour["expected_kw"])
         days.append(
             {
                 "date": date_key,
-                "expected_kwh": round(sum(hour["expected_kw"] for hour in day_hours), 2),
-                "low_kwh": round(sum(hour["low_kw"] for hour in day_hours), 2),
-                "high_kwh": round(sum(hour["high_kw"] for hour in day_hours), 2),
+                "expected_kwh": round(day_expected, 2),
+                "low_kwh": round(day_low, 2),
+                "high_kwh": round(day_high, 2),
                 "production_start": active[0]["timestamp"] if active else None,
                 "production_end": active[-1]["timestamp"] + timedelta(hours=1) if active else None,
                 "peak_at": peak["timestamp"] if peak["expected_kw"] > 0 else None,
