@@ -273,11 +273,20 @@ class ForecastConfigOut(BaseModel):
     source: str
 
 
+class ForecastHourDeviceOut(BaseModel):
+    device_id: str
+    device_name: str
+    expected_kw: float
+    low_kw: float
+    high_kw: float
+
+
 class ForecastHourOut(BaseModel):
     timestamp: datetime
     expected_kw: float
     low_kw: float
     high_kw: float
+    devices: list[ForecastHourDeviceOut] = []
 
 
 class ForecastDeviceDayOut(BaseModel):
@@ -286,6 +295,10 @@ class ForecastDeviceDayOut(BaseModel):
     expected_kwh: float
     low_kwh: float
     high_kwh: float
+    production_start: datetime | None = None
+    production_end: datetime | None = None
+    peak_at: datetime | None = None
+    peak_kw: float = 0.0
 
 
 class ForecastModelOut(BaseModel):

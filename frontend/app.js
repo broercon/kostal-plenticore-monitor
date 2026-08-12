@@ -317,11 +317,38 @@ async function refreshForecast() {
       return;
     }
 
+    // Bei Auswahl eines einzelnen Wechselrichters (siehe device-tabs, wie
+    // bei den anderen Ansichts-Tabs) zeigt die Prognose ausschliesslich
+    // dessen Anteil statt der ueber alle Geraete summierten Werte - Kacheln,
+    // Diagramm und Status-Zeile filtern dafuer konsistent auf dieselbe
+    // device_id, die Backend-Antwort liefert die Aufschluesselung dafuer
+    // bereits je Tag UND je Stunde (siehe energy_forecast._summarize).
+    const deviceId = state.selectedDeviceId;
+    const deviceName = deviceId
+      ? state.devices.find((d) => d.id === deviceId)?.name || deviceId
+      : null;
+    const deviceHasForecast =
+      !deviceId ||
+      data.days.some((day) => day.devices.some((d) => d.device_id === deviceId));
+
+    if (deviceId && !deviceHasForecast) {
+      status.textContent =
+        `Für ${deviceName} liegt noch keine eigene Prognose vor (zu wenig Historie).`;
+      if (state.forecastChart) {
+        state.forecastChart.destroy();
+        state.forecastChart = null;
+      }
+      return;
+    }
+
     status.textContent =
       `${data.message} Grundlage: ${data.training_samples} historische Stunden, ` +
       `aktualisiert ${fmtDateTime(data.generated_at)}.`;
-    if (data.models?.length) {
-      const modelText = data.models.map((model) => {
+    const relevantModels = deviceId
+      ? (data.models || []).filter((model) => model.device_id === deviceId)
+      : data.models;
+    if (relevantModels?.length) {
+      const modelText = relevantModels.map((model) => {
         const method = model.method === "learned" ? "gelernt" : "Standard";
         const error = model.validation_error_percent === null
           ? "noch ohne Rückvergleich"
@@ -331,6 +358,8 @@ async function refreshForecast() {
       status.textContent += ` Modelle: ${modelText}.`;
     }
     for (const day of data.days) {
+      const dayValues = deviceId ? day.devices.find((d) => d.device_id === deviceId) : day;
+      if (!dayValues) continue;
       const card = document.createElement("div");
       card.className = "forecast-day";
       const date = document.createElement("strong");
@@ -341,20 +370,24 @@ async function refreshForecast() {
       });
       const value = document.createElement("span");
       value.className = "forecast-day-value";
-      value.textContent = `${day.expected_kwh.toFixed(1)} kWh`;
+      value.textContent = `${dayValues.expected_kwh.toFixed(1)} kWh`;
       const range = document.createElement("span");
       range.className = "muted";
-      range.textContent = `Bereich ${day.low_kwh.toFixed(1)}–${day.high_kwh.toFixed(1)} kWh`;
+      range.textContent = `Bereich ${dayValues.low_kwh.toFixed(1)}–${dayValues.high_kwh.toFixed(1)} kWh`;
       const windowText = document.createElement("span");
       windowText.className = "muted";
-      windowText.textContent = day.production_start
-        ? `${fmtForecastTime(day.production_start)}–${fmtForecastTime(day.production_end)}, Spitze ${day.peak_kw.toFixed(1)} kW`
+      windowText.textContent = dayValues.production_start
+        ? `${fmtForecastTime(dayValues.production_start)}–${fmtForecastTime(dayValues.production_end)}, Spitze ${dayValues.peak_kw.toFixed(1)} kW`
         : "Keine nennenswerte Erzeugung erwartet";
       const devices = document.createElement("span");
       devices.className = "forecast-day-devices";
-      devices.textContent = day.devices
-        .map((device) => `${device.device_name}: ${device.expected_kwh.toFixed(1)} kWh`)
-        .join(" · ");
+      // Die Pro-Geraet-Aufschluesselung nur zeigen, wenn NICHT schon auf ein
+      // einzelnes Geraet gefiltert ist (sonst waere sie redundant).
+      devices.textContent = deviceId
+        ? ""
+        : day.devices
+            .map((device) => `${device.device_name}: ${device.expected_kwh.toFixed(1)} kWh`)
+            .join(" · ");
       card.append(date, value, range, windowText, devices);
       dayContainer.appendChild(card);
     }
@@ -366,17 +399,22 @@ async function refreshForecast() {
         minute: "2-digit",
       })
     );
+    function hourValue(hour, field) {
+      if (!deviceId) return hour[field];
+      const deviceHour = hour.devices.find((d) => d.device_id === deviceId);
+      return deviceHour ? deviceHour[field] : 0;
+    }
     const datasets = [
       {
         label: "Unterer Bereich",
-        data: data.hours.map((hour) => hour.low_kw),
+        data: data.hours.map((hour) => hourValue(hour, "low_kw")),
         borderColor: "rgba(59, 130, 246, 0)",
         pointRadius: 0,
         fill: false,
       },
       {
         label: "Prognosebereich",
-        data: data.hours.map((hour) => hour.high_kw),
+        data: data.hours.map((hour) => hourValue(hour, "high_kw")),
         borderColor: "rgba(59, 130, 246, 0)",
         backgroundColor: "rgba(59, 130, 246, 0.16)",
         pointRadius: 0,
@@ -384,7 +422,7 @@ async function refreshForecast() {
       },
       {
         label: "Erwartete PV-Leistung",
-        data: data.hours.map((hour) => hour.expected_kw),
+        data: data.hours.map((hour) => hourValue(hour, "expected_kw")),
         borderColor: "#38bdf8",
         backgroundColor: "#38bdf8",
         pointRadius: 0,
@@ -428,14 +466,43 @@ async function refreshForecastAccuracy() {
       return;
     }
 
-    status.textContent = data.overall_accuracy_percent === null
+    // Wie bei refreshForecast(): bei Auswahl eines einzelnen
+    // Wechselrichters nur dessen Vergleichswerte zeigen. Die
+    // Gesamtgenauigkeit (data.overall_accuracy_percent) ist eine
+    // hausweite Kennzahl ueber alle Geraete und wird deshalb nur in der
+    // "Alle"-Ansicht angezeigt, nicht umgerechnet.
+    const deviceId = state.selectedDeviceId;
+    const deviceName = deviceId
+      ? state.devices.find((d) => d.id === deviceId)?.name || deviceId
+      : null;
+    const cardEntries = [];
+    for (const day of data.days) {
+      const values = deviceId ? day.devices.find((d) => d.device_id === deviceId) : day;
+      if (!values) continue;
+      cardEntries.push({ date: day.date, values, originalDay: day });
+      if (cardEntries.length >= 7) break;
+    }
+
+    if (deviceId && cardEntries.length === 0) {
+      status.textContent =
+        `Für ${deviceName} liegen noch keine abgeschlossenen Prognosevergleiche vor.`;
+      chartWrapper.classList.add("hidden");
+      if (state.forecastAccuracyChart) {
+        state.forecastAccuracyChart.destroy();
+        state.forecastAccuracyChart = null;
+      }
+      return;
+    }
+
+    status.textContent = deviceId || data.overall_accuracy_percent === null
       ? data.message
       : `${data.message} Gesamtgenauigkeit: ${data.overall_accuracy_percent.toFixed(1)} %.`;
-    for (const day of data.days.slice(0, 7)) {
+    for (const entry of cardEntries) {
+      const day = entry.values;
       const card = document.createElement("div");
       card.className = "forecast-accuracy-day";
       const date = document.createElement("strong");
-      date.textContent = new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+      date.textContent = new Date(`${entry.date}T12:00:00`).toLocaleDateString("de-DE", {
         weekday: "short",
         day: "2-digit",
         month: "2-digit",
@@ -453,15 +520,17 @@ async function refreshForecastAccuracy() {
       difference.textContent += ` · ${day.matched_hours} Stundenwerte verglichen`;
       const devices = document.createElement("span");
       devices.className = "forecast-accuracy-devices";
-      devices.textContent = day.devices.map((device) => {
-        const deviceSign = device.difference_kwh > 0 ? "+" : "";
-        return `${device.device_name}: ${device.expected_kwh.toFixed(1)} → ${device.actual_kwh.toFixed(1)} kWh (${deviceSign}${device.difference_kwh.toFixed(1)})`;
-      }).join(" · ");
+      devices.textContent = deviceId
+        ? ""
+        : entry.originalDay.devices.map((device) => {
+            const deviceSign = device.difference_kwh > 0 ? "+" : "";
+            return `${device.device_name}: ${device.expected_kwh.toFixed(1)} → ${device.actual_kwh.toFixed(1)} kWh (${deviceSign}${device.difference_kwh.toFixed(1)})`;
+          }).join(" · ");
       card.append(date, values, difference, devices);
       container.appendChild(card);
     }
 
-    const chronological = [...data.days].reverse();
+    const chronological = [...cardEntries].reverse();
     chartWrapper.classList.remove("hidden");
     if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
     state.forecastAccuracyChart = new Chart(
@@ -469,8 +538,8 @@ async function refreshForecastAccuracy() {
       {
         type: "bar",
         data: {
-          labels: chronological.map((day) =>
-            new Date(`${day.date}T12:00:00`).toLocaleDateString("de-DE", {
+          labels: chronological.map((entry) =>
+            new Date(`${entry.date}T12:00:00`).toLocaleDateString("de-DE", {
               day: "2-digit",
               month: "2-digit",
             })
@@ -478,12 +547,12 @@ async function refreshForecastAccuracy() {
           datasets: [
             {
               label: "Erwartet",
-              data: chronological.map((day) => day.expected_kwh),
+              data: chronological.map((entry) => entry.values.expected_kwh),
               backgroundColor: "rgba(56, 189, 248, 0.55)",
             },
             {
               label: "Tatsächlich",
-              data: chronological.map((day) => day.actual_kwh),
+              data: chronological.map((entry) => entry.values.actual_kwh),
               backgroundColor: "rgba(34, 197, 94, 0.65)",
             },
           ],
