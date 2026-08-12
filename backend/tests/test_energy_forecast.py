@@ -214,7 +214,30 @@ def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
     result = _summarize(training, [_weather(12, 600)])
     assert result["available"] is True
     assert result["days"][0]["expected_kwh"] == 4.0
-    assert [item["device_id"] for item in result["days"][0]["devices"]] == ["wr1", "wr2"]
+    devices = result["days"][0]["devices"]
+    assert [item["device_id"] for item in devices] == ["wr1", "wr2"]
+
+    # Pro-Geraet-Aufschluesselung: wr1 (3000 W) liefert mehr als wr2 (1000 W),
+    # beide haben aber dieselbe Prognosestunde (12 Uhr) als Produktionsfenster
+    # und Spitze - das gilt jetzt auch je Geraet, nicht nur kombiniert.
+    wr1, wr2 = devices
+    assert wr1["expected_kwh"] == 3.0
+    assert wr2["expected_kwh"] == 1.0
+    assert wr1["peak_kw"] == 3.0
+    assert wr2["peak_kw"] == 1.0
+    assert wr1["production_start"] is not None
+    assert wr2["production_start"] is not None
+
+    # Die Stundenwerte (fuer das Diagramm) tragen dieselbe Aufschluesselung -
+    # damit sich das Prognose-Diagramm im Frontend auf ein einzelnes Geraet
+    # filtern laesst (Klick auf den zugehoerigen Wechselrichter-Tab).
+    hour = result["hours"][0]
+    assert {item["device_id"] for item in hour["devices"]} == {"wr1", "wr2"}
+    hour_wr1 = next(item for item in hour["devices"] if item["device_id"] == "wr1")
+    hour_wr2 = next(item for item in hour["devices"] if item["device_id"] == "wr2")
+    assert hour_wr1["expected_kw"] == 3.0
+    assert hour_wr2["expected_kw"] == 1.0
+    assert round(hour_wr1["expected_kw"] + hour_wr2["expected_kw"], 3) == hour["expected_kw"]
 
 
 def test_forecast_endpoint_requires_login_and_returns_service_result(client, monkeypatch):

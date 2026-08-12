@@ -558,13 +558,31 @@ def _summarize(
     combined_hours = []
     for point in forecast_weather:
         interval_start = point.timestamp - timedelta(hours=1)
-        values = [hours[interval_start] for hours in per_device_hour.values()]
+        per_device_values = {
+            device_id: hours[interval_start]
+            for device_id, hours in per_device_hour.items()
+        }
+        values = list(per_device_values.values())
         combined_hours.append(
             {
                 "timestamp": interval_start,
                 "expected_kw": round(sum(value[0] for value in values) / 1000, 3),
                 "low_kw": round(sum(value[1] for value in values) / 1000, 3),
                 "high_kw": round(sum(value[2] for value in values) / 1000, 3),
+                # Stundenwerte je Geraet - damit sich Diagramm/Kacheln im
+                # Frontend auf ein einzelnes Geraet filtern lassen (Klick auf
+                # den zugehoerigen Wechselrichter-Tab), statt immer nur die
+                # ueber alle Geraete summierte Prognose zu zeigen.
+                "devices": [
+                    {
+                        "device_id": device_id,
+                        "device_name": device_names.get(device_id, device_id),
+                        "expected_kw": round(value[0] / 1000, 3),
+                        "low_kw": round(value[1] / 1000, 3),
+                        "high_kw": round(value[2] / 1000, 3),
+                    }
+                    for device_id, value in per_device_values.items()
+                ],
             }
         )
 
@@ -577,12 +595,27 @@ def _summarize(
     for date_key, day_hours in hours_by_day.items():
         devices = []
         for device_id, predictions in per_device_hour.items():
-            device_values = [
-                predictions[hour["timestamp"]]
+            device_hours_for_day = [
+                (hour["timestamp"], predictions[hour["timestamp"]])
                 for hour in day_hours
                 if hour["timestamp"] in predictions
             ]
+            device_values = [value for _timestamp, value in device_hours_for_day]
             device_expected, device_low, device_high = _aggregate_bounds(device_values)
+            # Produktionsfenster/Spitze je Geraet - dieselbe Logik wie unten
+            # fuer den kombinierten Tageswert (Schwelle 0.1 kW), nur auf die
+            # Stunden DIESES Geraets beschraenkt statt auf die ueber alle
+            # Geraete summierte Leistung.
+            device_active = [
+                (timestamp, value)
+                for timestamp, value in device_hours_for_day
+                if value[0] / 1000 >= 0.1
+            ]
+            device_peak = (
+                max(device_hours_for_day, key=lambda item: item[1][0])
+                if device_hours_for_day
+                else None
+            )
             devices.append(
                 {
                     "device_id": device_id,
@@ -590,6 +623,14 @@ def _summarize(
                     "expected_kwh": round(device_expected / 1000, 2),
                     "low_kwh": round(device_low / 1000, 2),
                     "high_kwh": round(device_high / 1000, 2),
+                    "production_start": device_active[0][0] if device_active else None,
+                    "production_end": (
+                        device_active[-1][0] + timedelta(hours=1) if device_active else None
+                    ),
+                    "peak_at": (
+                        device_peak[0] if device_peak and device_peak[1][0] > 0 else None
+                    ),
+                    "peak_kw": round(device_peak[1][0] / 1000, 3) if device_peak else 0.0,
                 }
             )
         day_expected, day_low, day_high = _aggregate_bounds(
