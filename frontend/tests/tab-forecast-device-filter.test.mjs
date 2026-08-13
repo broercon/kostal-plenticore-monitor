@@ -92,51 +92,95 @@ test("Prognosekontrolle zeigt nach Wechsel auf WR1 nur dessen eigenen Vergleich"
   assert.equal(devices.textContent, "");
 });
 
-test("Stuendliche Prognose zeigt nur die Stunden von heute, nicht von morgen", async () => {
+test("Prognosekontrolle zeigt 'Heute (bisher)' separat von den abgeschlossenen Tagen", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
-  await waitFor(() => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0);
+  await waitFor(() => !app.document.getElementById("forecast-accuracy-today").classList.contains("hidden"));
 
-  const rows = [...app.document.querySelectorAll("#forecast-hours-today .forecast-hour")];
-  // Der Mock liefert 3 Stunden: zwei gehoeren laut Backend-Anlagenzeit zum
-  // 13.07. (heute), obwohl eine davon in UTC noch der 12.07. ist. Die dritte
-  // gehoert zum 14.07. - nur die beiden von heute duerfen erscheinen.
-  assert.equal(rows.length, 2);
-  const times = rows.map((row) => row.querySelector("strong").textContent);
-  assert.deepEqual(times.sort(), ["12:00", "23:00"]);
-});
-
-test("Stuendliche Prognose heute filtert nach Wechsel auf WR1 auf dessen eigenen Anteil", async () => {
-  const app = await bootApp({ fetchHandler: makeBackend() });
-  app.clickViewTab("forecast");
-  await waitFor(() => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0);
-
-  const combinedValue = app.document.querySelector(
-    "#forecast-hours-today .forecast-hour-value"
+  const today = app.document.getElementById("forecast-accuracy-today");
+  assert.match(today.textContent, /Heute \(bisher\)/);
+  assert.match(today.textContent, /Erwartet 3\.0 · tatsächlich 4\.5 kWh/);
+  assert.match(today.textContent, /3 Stundenwerte bisher/);
+  // Muss unabhaengig von der Kachel-Liste abgeschlossener Tage bestehen -
+  // andere ".forecast-accuracy-day"-Elemente (siehe #forecast-accuracy-days)
+  // duerfen dadurch nicht verschwinden.
+  assert.equal(
+    app.document.querySelectorAll("#forecast-accuracy-days .forecast-accuracy-day").length,
+    1
   );
-  assert.equal(combinedValue.textContent, "3.0 kW");
-  const combinedDevices = app.document.querySelector(
-    "#forecast-hours-today .forecast-hour-devices"
-  );
-  assert.match(combinedDevices.textContent, /WR1: 2.0 kW/);
-  assert.match(combinedDevices.textContent, /WR2: 1.0 kW/);
 
   app.clickTab("WR1");
   await waitFor(() => app.state.selectedDeviceId === "wr1");
-  await waitFor(
-    () =>
-      app.document.querySelector("#forecast-hours-today .forecast-hour-value").textContent ===
-      "2.0 kW"
-  );
+  await waitFor(() => today.textContent.includes("2.0"));
+  assert.match(today.textContent, /Erwartet 2\.0 · tatsächlich 3\.0 kWh/);
+});
 
-  const filteredValue = app.document.querySelector(
-    "#forecast-hours-today .forecast-hour-value"
+test("Stuendliche Prognose (Balkendiagramm) zeigt nur die Stunden von heute, nicht von morgen", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.forecastHoursTodayChart !== null);
+
+  // Der Mock liefert 3 Stunden: zwei gehoeren laut Backend-Anlagenzeit zum
+  // 13.07. (heute), obwohl eine davon in UTC noch der 12.07. ist. Die dritte
+  // gehoert zum 14.07. - nur die beiden von heute duerfen im Diagramm
+  // erscheinen.
+  const labels = app.state.forecastHoursTodayChart.data.labels;
+  assert.deepEqual(labels.sort(), ["12:00", "23:00"]);
+
+  // Der Prognose-Balken ist ein Floating Bar ([low, high] je Stunde) - der
+  // gelernte Spannbereich steckt damit direkt in derselben Spalte und
+  // Farbe wie die Prognose selbst, kein separater dritter Balken noetig.
+  // Der Erwartungswert bleibt zusaetzlich fuer den Tooltip erhalten
+  // (expectedData).
+  const forecastDataset = app.state.forecastHoursTodayChart.data.datasets.find(
+    (d) => d.label === "Prognose"
   );
-  assert.equal(filteredValue.textContent, "2.0 kW");
-  const filteredDevices = app.document.querySelector(
-    "#forecast-hours-today .forecast-hour-devices"
-  );
-  assert.equal(filteredDevices.textContent, "");
+  assert.equal(forecastDataset.data.length, 2);
+  for (const range of forecastDataset.data) {
+    assert.equal(range.length, 2);
+    assert.ok(range[0] <= range[1]);
+  }
+  assert.equal(forecastDataset.expectedData.length, 2);
+});
+
+test("Stuendliche Prognose (Balkendiagramm) filtert nach Wechsel auf WR1 auf dessen eigenen Anteil", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.forecastHoursTodayChart !== null);
+
+  function forecastDataset() {
+    return app.state.forecastHoursTodayChart.data.datasets.find((d) => d.label === "Prognose");
+  }
+  function actualData() {
+    return app.state.forecastHoursTodayChart.data.datasets.find((d) => d.label === "Tatsächlich")
+      .data;
+  }
+  // Range-Werte (Balkenhoehe des Floating Bars) ueber ihr oberes Ende
+  // (high_kw) vergleichen - eindeutig genug, um die beiden Mock-Stunden zu
+  // unterscheiden.
+  function forecastHighValues() {
+    return [...forecastDataset().data].map((range) => range[1]);
+  }
+
+  // Kombiniert (Alle): 23:00-Stunde (Index 0 nach Sortierung im Mock ist
+  // die 23-Uhr-Stunde zuerst, siehe harness.mjs) hat expected_kw 3.0 (WR1
+  // 2.0 + WR2 1.0, Spannbereich 2.4-3.6), die 12-Uhr-Stunde 4.2 (2.7 + 1.5,
+  // Spannbereich 3.4-5.0). Ist-Werte laut Mock (hourly-per-device):
+  // 23:00-Stunde 0 kWh, 12-Uhr-Stunde 2.5+1.2=3.7 kWh.
+  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [3.0, 4.2]);
+  assert.deepEqual(forecastHighValues().sort((a, b) => a - b), [3.6, 5.0]);
+  assert.deepEqual([...actualData()].sort((a, b) => a - b), [0, 3.7]);
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(() => forecastDataset().expectedData.includes(2.0));
+
+  // Nur WR1s Anteil: 2.0 (23 Uhr, Spannbereich 1.6-2.4) und 2.7 (12 Uhr,
+  // Spannbereich 2.1-3.2); Ist-Wert nur WR1s gemessener Anteil (0 bzw. 2.5
+  // kWh), nicht die Summe mit WR2.
+  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [2.0, 2.7]);
+  assert.deepEqual(forecastHighValues().sort((a, b) => a - b), [2.4, 3.2]);
+  assert.deepEqual([...actualData()].sort((a, b) => a - b), [0, 2.5]);
 });
 
 test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async () => {
@@ -154,9 +198,7 @@ test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async 
     },
   });
   app.clickViewTab("forecast");
-  await waitFor(
-    () => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0
-  );
+  await waitFor(() => app.state.forecastHoursTodayChart !== null);
 
   app.clickTab("WR3 ohne Historie");
   await waitFor(() => app.state.selectedDeviceId === "wr3");
@@ -164,8 +206,5 @@ test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async 
     app.document.getElementById("forecast-status").textContent.includes("zu wenig Historie")
   );
 
-  assert.equal(
-    app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length,
-    0
-  );
+  assert.equal(app.state.forecastHoursTodayChart, null);
 });

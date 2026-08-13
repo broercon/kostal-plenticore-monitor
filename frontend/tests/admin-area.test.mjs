@@ -76,7 +76,13 @@ test("Dashboard zeigt Energie, Zeitraum und Wechselrichter der Prognose", async 
 test("Dashboard vergleicht gespeicherte Prognose mit echten Werten", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
-  await waitFor(() => app.document.querySelectorAll(".forecast-accuracy-day").length === 1);
+  // ".forecast-accuracy-day" kommt jetzt auch fuer die separate "Heute
+  // (bisher)"-Karte vor (#forecast-accuracy-today, siehe refreshForecast
+  // Accuracy()) - hier gezielt nur die abgeschlossenen Tage im eigentlichen
+  // Kacheln-Container zaehlen.
+  await waitFor(
+    () => app.document.querySelectorAll("#forecast-accuracy-days .forecast-accuracy-day").length === 1
+  );
   const text = app.document.getElementById("forecast-accuracy-days").textContent;
   assert.match(text, /Erwartet 11\.5/);
   assert.match(text, /tatsächlich 12\.0 kWh/);

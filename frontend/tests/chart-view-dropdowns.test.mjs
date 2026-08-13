@@ -1,6 +1,7 @@
-// Tests fuer die Ansichts-Dropdowns in "Verlauf" und "Verbrauch &
+// Tests fuer die Ansichts-Flyouts in "Verlauf" und "Verbrauch &
 // Wechselrichter": statt mehrerer gleichzeitig sichtbarer Diagramme steht
-// jeweils nur eines auf dem Bildschirm, gesteuert per <select>.
+// jeweils nur eines auf dem Bildschirm, gesteuert per Hover-Flyout-Menue am
+// jeweiligen Reiter oben (siehe setupViewTabs() in app.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -18,28 +19,24 @@ test("Verlauf-Tab zeigt per Default den Leistungsverlauf, nicht den Tagesverglei
   assert.equal(isHidden(app.document, "trend-view-daycompare"), true);
 });
 
-test("Verlauf-Tab: Dropdown wechselt zwischen Leistungsverlauf und Tagesvergleich, nie beide gleichzeitig", async () => {
+test("Verlauf-Tab: Flyout wechselt zwischen Leistungsverlauf und Tagesvergleich, nie beide gleichzeitig", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("trend");
   await waitFor(() => app.state.tabsLoaded.has("trend"));
 
-  const select = app.document.getElementById("trend-view-select");
-  select.value = "pv";
-  select.dispatchEvent(new app.window.Event("change", { bubbles: true }));
+  app.clickSubview("trend", "pv");
   await waitFor(() => isHidden(app.document, "trend-view-power") === true);
 
   assert.equal(isHidden(app.document, "trend-view-power"), true);
   assert.equal(isHidden(app.document, "trend-view-daycompare"), false);
   assert.equal(app.state.dayCompare.metric, "pv");
 
-  select.value = "solar_battery";
-  select.dispatchEvent(new app.window.Event("change", { bubbles: true }));
+  app.clickSubview("trend", "solar_battery");
   await waitFor(() => app.state.dayCompare.metric === "solar_battery");
   assert.equal(isHidden(app.document, "trend-view-power"), true);
   assert.equal(isHidden(app.document, "trend-view-daycompare"), false);
 
-  select.value = "power";
-  select.dispatchEvent(new app.window.Event("change", { bubbles: true }));
+  app.clickSubview("trend", "power");
   await waitFor(() => isHidden(app.document, "trend-view-power") === false);
   assert.equal(isHidden(app.document, "trend-view-daycompare"), true);
 });
@@ -53,14 +50,12 @@ test("Verbrauch-Tab zeigt per Default den Tagesverbrauch, nicht den Wechselricht
   assert.equal(isHidden(app.document, "hourly-section"), true);
 });
 
-test("Verbrauch-Tab: Dropdown zeigt Wechselrichter-Vergleich nur in 'Alle (Summe)'", async () => {
+test("Verbrauch-Tab: Flyout zeigt Wechselrichter-Vergleich nur in 'Alle (Summe)'", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("consumption");
   await waitFor(() => app.state.tabsLoaded.has("consumption"));
 
-  const select = app.document.getElementById("consumption-view-select");
-  select.value = "hourly";
-  select.dispatchEvent(new app.window.Event("change", { bubbles: true }));
+  app.clickSubview("consumption", "hourly");
   await waitFor(() => isHidden(app.document, "hourly-section") === false);
 
   assert.equal(isHidden(app.document, "consumption-view-dailytotals"), true);
@@ -69,7 +64,7 @@ test("Verbrauch-Tab: Dropdown zeigt Wechselrichter-Vergleich nur in 'Alle (Summe
   assert.equal(isHidden(app.document, "hourly-chart-unavailable"), true);
 
   // Einzelnen Wechselrichter waehlen: der Vergleich ergibt keinen Sinn mehr -
-  // die Sektion bleibt (Dropdown zeigt weiter "Wechselrichter-Vergleich"),
+  // die Sektion bleibt (Flyout zeigt weiter "Wechselrichter-Vergleich"),
   // aber statt des Diagramms erscheint der Hinweistext.
   app.clickTab("WR1");
   await waitFor(() => app.state.selectedDeviceId === "wr1");

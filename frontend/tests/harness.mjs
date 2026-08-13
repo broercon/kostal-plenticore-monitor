@@ -62,7 +62,21 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
       case "/api/readings/daily-home-breakdown":
         return { days: [] };
       case "/api/readings/hourly-per-device":
-        return { devices: [], buckets: [] };
+        // Ist-Werte fuer die stuendliche Prognose-Ansicht (Vergleich
+        // Prognose vs. echt, siehe app.js refreshForecast()) - die beiden
+        // Buckets entsprechen lokal genau den beiden "heutigen" Stunden aus
+        // dem /api/forecast-Mock unten (lokale Anlagenzeit, siehe deren
+        // local_hour-Felder).
+        return {
+          devices: [
+            { device_id: "wr1", device_name: "WR1" },
+            { device_id: "wr2", device_name: "WR2" },
+          ],
+          buckets: [
+            { bucket: "2026-07-13T01:00:00", values: { wr1: 0, wr2: 0 } },
+            { bucket: "2026-07-13T14:00:00", values: { wr1: 2.5, wr2: 1.2 } },
+          ],
+        };
       case "/api/readings/feed-in-summary":
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
@@ -127,6 +141,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
               // Anlagen-Zeitzone und muss fuer die Heute-Auswahl gelten.
               timestamp: "2026-07-12T23:00:00Z",
               local_date: "2026-07-13",
+              local_hour: "2026-07-13T01:00:00",
               expected_kw: 3.0,
               low_kw: 2.4,
               high_kw: 3.6,
@@ -138,6 +153,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
             {
               timestamp: "2026-07-13T12:00:00Z",
               local_date: "2026-07-13",
+              local_hour: "2026-07-13T14:00:00",
               expected_kw: 4.2,
               low_kw: 3.4,
               high_kw: 5.0,
@@ -149,6 +165,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
             {
               timestamp: "2026-07-14T12:00:00Z",
               local_date: "2026-07-14",
+              local_hour: "2026-07-14T14:00:00",
               expected_kw: 5.0,
               low_kw: 4.0,
               high_kw: 6.0,
@@ -164,6 +181,37 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           available: true,
           message: "Vergleich der gespeicherten Prognosen mit echten Messwerten.",
           overall_accuracy_percent: 92.4,
+          today_so_far: {
+            date: "2026-07-13",
+            expected_kwh: 3.0,
+            actual_kwh: 4.5,
+            difference_kwh: 1.5,
+            difference_percent: 50.0,
+            accuracy_percent: 66.7,
+            matched_hours: 3,
+            devices: [
+              {
+                device_id: "wr1",
+                device_name: "WR1",
+                expected_kwh: 2.0,
+                actual_kwh: 3.0,
+                difference_kwh: 1.0,
+                difference_percent: 50.0,
+                accuracy_percent: 66.7,
+                matched_hours: 3,
+              },
+              {
+                device_id: "wr2",
+                device_name: "WR2",
+                expected_kwh: 1.0,
+                actual_kwh: 1.5,
+                difference_kwh: 0.5,
+                difference_percent: 50.0,
+                accuracy_percent: 66.7,
+                matched_hours: 3,
+              },
+            ],
+          },
           days: [
             {
               date: "2026-07-12",
@@ -268,6 +316,21 @@ export async function bootApp({ fetchHandler }) {
     btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   }
 
+  // Klickt einen Eintrag im Hover-Flyout-Menue eines Ansichts-Tabs (ersetzt
+  // die frueheren <select>-Dropdowns, siehe setupViewTabs()/
+  // SUBVIEW_SETTERS in app.js) - anhand der Tab-Gruppe (data-tab-group,
+  // z.B. "trend") und des gewuenschten Unteransicht-Werts (data-subview,
+  // z.B. "pv"). Im echten Browser wuerde das Menue erst per Hover
+  // sichtbar - im Test wird direkt auf den (im DOM immer vorhandenen)
+  // Button geklickt, das reicht fuer den click-Handler in app.js.
+  function clickSubview(groupId, subview) {
+    const btn = document.querySelector(
+      `.view-tab-with-menu[data-tab-group="${groupId}"] button[data-subview="${subview}"]`
+    );
+    if (!btn) throw new Error(`Unteransicht nicht gefunden: ${groupId}/${subview}`);
+    btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  }
+
   const loadingCount = () => document.querySelectorAll(".is-loading").length;
   const isLoading = (selector) => {
     const node = document.querySelector(selector);
@@ -290,6 +353,7 @@ export async function bootApp({ fetchHandler }) {
     state,
     clickTab,
     clickViewTab,
+    clickSubview,
     loadingCount,
     isLoading,
     chartMetricLast,

@@ -164,15 +164,40 @@
     <button type="button" data-tab="overview" class="active">
       <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Übersicht
     </button>
-    <button type="button" data-tab="trend">
-      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verlauf
-    </button>
-    <button type="button" data-tab="consumption">
-      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verbrauch &amp; Wechselrichter
-    </button>
-    <button type="button" data-tab="forecast">
-      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Prognose
-    </button>
+
+    <div class="view-tab-with-menu" data-tab-group="trend">
+      <button type="button" data-tab="trend" class="view-tab-trigger">
+        <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verlauf
+      </button>
+      <div class="view-tab-menu">
+        <button type="button" data-subview="power">Leistungsverlauf</button>
+        <button type="button" data-subview="pv">PV-Ertrag</button>
+        <button type="button" data-subview="solar_battery">Verbrauch aus Batterie und Solar</button>
+        <button type="button" data-subview="grid">Verbrauch aus Netz</button>
+      </div>
+    </div>
+
+    <div class="view-tab-with-menu" data-tab-group="consumption">
+      <button type="button" data-tab="consumption" class="view-tab-trigger">
+        <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verbrauch &amp; Wechselrichter
+      </button>
+      <div class="view-tab-menu">
+        <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
+        <button type="button" data-subview="hourly">Wechselrichter-Vergleich</button>
+      </div>
+    </div>
+
+    <div class="view-tab-with-menu" data-tab-group="forecast">
+      <button type="button" data-tab="forecast" class="view-tab-trigger">
+        <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Prognose
+      </button>
+      <div class="view-tab-menu">
+        <button type="button" data-subview="days">Tagesübersicht</button>
+        <button type="button" data-subview="hours-today">Stündliche Prognose heute</button>
+        <button type="button" data-subview="week-chart">Wochenverlauf</button>
+        <button type="button" data-subview="accuracy">Prognosekontrolle</button>
+      </div>
+    </div>
   </nav>
 
   <div class="tab-panel" id="tab-panel-overview" data-tab-panel="overview">
@@ -239,16 +264,6 @@
   </div>
 
   <div class="tab-panel hidden" id="tab-panel-trend" data-tab-panel="trend">
-    <div class="chart-view-select-wrapper">
-      <label for="trend-view-select">Ansicht</label>
-      <select id="trend-view-select">
-        <option value="power">Leistungsverlauf</option>
-        <option value="pv">PV-Ertrag</option>
-        <option value="solar_battery">Verbrauch aus Batterie und Solar</option>
-        <option value="grid">Verbrauch aus Netz</option>
-      </select>
-    </div>
-
     <section class="chart-section" id="trend-view-power">
       <div class="daycompare-header">
         <h2>Leistungsverlauf</h2>
@@ -308,14 +323,6 @@
   </div>
 
   <div class="tab-panel hidden" id="tab-panel-consumption" data-tab-panel="consumption">
-    <div class="chart-view-select-wrapper">
-      <label for="consumption-view-select">Ansicht</label>
-      <select id="consumption-view-select">
-        <option value="dailytotals">Tagesverbrauch</option>
-        <option value="hourly">Wechselrichter-Vergleich</option>
-      </select>
-    </div>
-
     <section class="chart-section" id="consumption-view-dailytotals">
       <div class="daycompare-header">
         <h2>Tagesverbrauch</h2>
@@ -388,23 +395,16 @@
         <p class="muted" id="forecast-status">Wird geladen …</p>
       </div>
 
-      <div class="chart-view-select-wrapper">
-        <label for="forecast-view-select">Ansicht</label>
-        <select id="forecast-view-select">
-          <option value="days">Tagesübersicht</option>
-          <option value="hours-today">Stündliche Prognose heute</option>
-          <option value="week-chart">Wochenverlauf</option>
-          <option value="accuracy">Prognosekontrolle</option>
-        </select>
-      </div>
-
       <div class="forecast-days" id="forecast-days"></div>
 
       <div id="forecast-view-hours-today" class="hidden">
         <div class="forecast-hours-today-header">
           <h3>Stündliche Prognose heute</h3>
+          <p class="muted" id="forecast-hours-today-status"></p>
         </div>
-        <div class="forecast-hours-today" id="forecast-hours-today"></div>
+        <div class="chart-canvas-wrapper" id="forecast-hours-today-chart-wrapper">
+          <canvas id="forecast-hours-today-chart"></canvas>
+        </div>
       </div>
 
       <div id="forecast-view-week-chart" class="hidden">
@@ -419,6 +419,7 @@
         <h3>Prognosekontrolle</h3>
         <p class="muted" id="forecast-accuracy-status">Wird geladen …</p>
       </div>
+      <div class="forecast-accuracy-today hidden" id="forecast-accuracy-today"></div>
       <div class="forecast-accuracy-days" id="forecast-accuracy-days"></div>
       <div class="chart-canvas-wrapper forecast-accuracy-chart-wrapper" id="forecast-accuracy-chart-wrapper">
         <canvas id="forecast-accuracy-chart"></canvas>

@@ -23,11 +23,20 @@ const state = {
   chartsInteractive: true,
   forecastChart: null,
   forecastAccuracyChart: null,
+  forecastHoursTodayChart: null,
   // Welche Ansichts-Tabs (siehe setupViewTabs) schon mindestens einmal
   // geladen wurden - nur fuer diese laeuft ein periodisches Auto-Refresh und
   // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
   // nie besuchter Tab laedt seine Daten erst beim ersten Oeffnen.
   tabsLoaded: new Set(),
+  // Aktuell gewaehlte Unteransicht je Ansichts-Tab (siehe setupViewTabs) -
+  // ersetzt die frueheren separaten <select>-Elemente pro Tab. Die
+  // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
+  subView: {
+    trend: "power",
+    consumption: "dailytotals",
+    forecast: "days",
+  },
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -304,19 +313,34 @@ function fmtForecastTime(value) {
 
 async function refreshForecast() {
   return withLoading(["#forecast-section"], async () => {
-    const data = await fetchJson("/api/forecast");
+    // Prognose- und Ist-Werte werden parallel geladen: die Ist-Werte
+    // (heutiger Tag, je Wechselrichter) sind die Grundlage fuer den
+    // "Prognose vs. echt"-Vergleich der stuendlichen Ansicht weiter unten.
+    // Schlaegt der Ist-Werte-Abruf fehl, soll das die Prognose selbst nicht
+    // verhindern - dann zeigt die stuendliche Ansicht eben nur die
+    // Prognosebalken ohne Vergleich.
+    const [data, actualHourly] = await Promise.all([
+      fetchJson("/api/forecast"),
+      fetchJson("/api/readings/hourly-per-device?metric=pv&days=1").catch(
+        () => ({ devices: [], buckets: [] })
+      ),
+    ]);
     const status = el("forecast-status");
     const dayContainer = el("forecast-days");
-    const hoursTodayContainer = el("forecast-hours-today");
+    const hoursTodayStatus = el("forecast-hours-today-status");
     dayContainer.innerHTML = "";
     // Vor allen Rueckspruengen leeren: sonst bleiben beim Wechsel auf ein
     // Geraet ohne eigene Prognose die vorherigen Gesamtwerte sichtbar.
-    hoursTodayContainer.innerHTML = "";
+    hoursTodayStatus.textContent = "";
     if (!data.available) {
       status.textContent = data.message;
       if (state.forecastChart) {
         state.forecastChart.destroy();
         state.forecastChart = null;
+      }
+      if (state.forecastHoursTodayChart) {
+        state.forecastHoursTodayChart.destroy();
+        state.forecastHoursTodayChart = null;
       }
       return;
     }
@@ -341,6 +365,10 @@ async function refreshForecast() {
       if (state.forecastChart) {
         state.forecastChart.destroy();
         state.forecastChart = null;
+      }
+      if (state.forecastHoursTodayChart) {
+        state.forecastHoursTodayChart.destroy();
+        state.forecastHoursTodayChart = null;
       }
       return;
     }
@@ -398,38 +426,135 @@ async function refreshForecast() {
 
     // Stuendliche Prognose NUR fuer heute (bewusst kein weiterer Tag - die
     // Stundenwerte fuer 7 Tage sind ohnehin schon im Diagramm unten
-    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein).
+    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein), als
+    // Balkendiagramm: je Stunde ein Prognose-Balken (mit dem gelernten
+    // Spannbereich als Tooltip-Zusatzinfo) neben dem tatsaechlich
+    // gemessenen Ertrag - so ist die Abweichung direkt auf einen Blick
+    // sichtbar statt in Zahlen-Kacheln.
     // data.days[0] ist per Backend-Konvention immer der heutige lokale Tag
     // (siehe energy_forecast.forecast_weather_for_local_days).
     const todayKey = data.days[0]?.date;
     const todayHours = todayKey
       ? data.hours.filter((hour) => hour.local_date === todayKey)
       : [];
+
+    // Ist-Werte je Stunde aus /api/readings/hourly-per-device (siehe oben)
+    // ueber das lokale Stunden-Bucket (hour.local_hour) zuordnen - dasselbe
+    // Bucket-Format wie hour.local_date wird server-seitig berechnet, damit
+    // die Zuordnung nicht von der Zeitzone des Browsers abhaengt (siehe
+    // schemas.ForecastHourOut.local_hour).
+    const actualBuckets = new Map(
+      (actualHourly.buckets || []).map((bucket) => [bucket.bucket, bucket])
+    );
+    function actualKwhFor(hour) {
+      const bucket = actualBuckets.get(hour.local_hour);
+      if (!bucket) return null;
+      if (deviceId) {
+        const value = bucket.values[deviceId];
+        return value === undefined || value === null ? null : value;
+      }
+      const values = Object.values(bucket.values).filter(
+        (value) => value !== null && value !== undefined
+      );
+      if (values.length === 0) return null;
+      return values.reduce((sum, value) => sum + value, 0);
+    }
+    // Nur bereits vollstaendig vergangene Stunden bekommen einen Ist-Wert -
+    // fuer die laufende und kuenftige Stunden gibt es naturgemaess noch
+    // keine (vollstaendige) Messung.
+    const nowMs = Date.now();
+    function isHourElapsed(hour) {
+      return new Date(hour.timestamp).getTime() + 60 * 60 * 1000 <= nowMs;
+    }
+
+    const hourLabels = todayHours.map((hour) => fmtForecastTime(hour.timestamp));
+    const forecastExpected = [];
+    const forecastRanges = [];
+    const actualValues = [];
     for (const hour of todayHours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
-      if (!hourValues) continue;
-      const row = document.createElement("div");
-      row.className = "forecast-hour";
-      const time = document.createElement("strong");
-      time.textContent = fmtForecastTime(hour.timestamp);
-      const value = document.createElement("span");
-      value.className = "forecast-hour-value";
-      value.textContent = `${hourValues.expected_kw.toFixed(1)} kW`;
-      const range = document.createElement("span");
-      range.className = "muted";
-      range.textContent = `${hourValues.low_kw.toFixed(1)}–${hourValues.high_kw.toFixed(1)} kW`;
-      const devicesLine = document.createElement("span");
-      devicesLine.className = "forecast-hour-devices";
-      // Pro-Geraet-Aufschluesselung nur, wenn NICHT schon auf ein einzelnes
-      // Geraet gefiltert ist UND mehr als ein Geraet existiert (sonst
-      // redundant - derselbe Grundsatz wie bei den Tages-Kacheln).
-      devicesLine.textContent = deviceId || hour.devices.length <= 1
-        ? ""
-        : hour.devices
-            .map((device) => `${device.device_name}: ${device.expected_kw.toFixed(1)} kW`)
-            .join(" · ");
-      row.append(time, value, range, devicesLine);
-      hoursTodayContainer.appendChild(row);
+      forecastExpected.push(hourValues ? hourValues.expected_kw : null);
+      // Floating-Bar-Format ([low, high]) statt eines einzelnen Zahlenwerts:
+      // der Prognose-Balken zeigt damit direkt den gelernten Spannbereich als
+      // Balkenhoehe, in derselben Spalte und Farbe wie die Prognose selbst -
+      // kein separater dritter Balken noetig.
+      forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
+      actualValues.push(isHourElapsed(hour) ? actualKwhFor(hour) : null);
+    }
+
+    hoursTodayStatus.textContent = deviceId
+      ? `Prognose (mit Spannbereich) vs. tatsächlicher Ertrag von ${deviceName}, je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.`
+      : "Prognose (mit Spannbereich) vs. tatsächlicher Ertrag (alle Wechselrichter), je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.";
+
+    const hoursTodayDatasets = [
+      {
+        label: "Prognose",
+        data: forecastRanges,
+        backgroundColor: "#38bdf8",
+        borderColor: "#38bdf8",
+        borderWidth: 1,
+        borderRadius: 3,
+        // Nur fuer den Tooltip mitgefuehrt (kein eigenes Chart.js-Feld) -
+        // die Balkenhoehe selbst ist bereits der Spannbereich (data oben),
+        // der Erwartungswert wird zusaetzlich im Tooltip genannt.
+        expectedData: forecastExpected,
+      },
+      {
+        label: "Tatsächlich",
+        data: actualValues,
+        backgroundColor: "#facc15",
+        borderColor: "#facc15",
+        borderWidth: 1,
+        borderRadius: 3,
+      },
+    ];
+
+    if (state.forecastHoursTodayChart) {
+      state.forecastHoursTodayChart.data.labels = hourLabels;
+      state.forecastHoursTodayChart.data.datasets = hoursTodayDatasets;
+      state.forecastHoursTodayChart.update();
+    } else {
+      state.forecastHoursTodayChart = new Chart(
+        el("forecast-hours-today-chart").getContext("2d"),
+        {
+          type: "bar",
+          data: { labels: hourLabels, datasets: hoursTodayDatasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            events: chartEvents(),
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
+              y: { beginAtZero: true, title: { display: true, text: "kWh" } },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label(context) {
+                    if (context.dataset.label === "Prognose") {
+                      const range = context.raw;
+                      const expected = context.dataset.expectedData?.[context.dataIndex];
+                      if (!range || expected === null || expected === undefined) {
+                        return "Prognose: –";
+                      }
+                      return (
+                        `Prognose: ${expected.toFixed(1)} kWh ` +
+                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+                      );
+                    }
+                    const value = context.parsed.y;
+                    if (value === null || value === undefined) {
+                      return `${context.dataset.label}: –`;
+                    }
+                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
+                  },
+                },
+              },
+            },
+          },
+        }
+      );
     }
 
     const labels = data.hours.map((hour) =>
@@ -494,8 +619,11 @@ async function refreshForecastAccuracy() {
     const data = await fetchJson("/api/forecast/accuracy?days=30");
     const status = el("forecast-accuracy-status");
     const container = el("forecast-accuracy-days");
+    const todayContainer = el("forecast-accuracy-today");
     const chartWrapper = el("forecast-accuracy-chart").parentElement;
     container.innerHTML = "";
+    todayContainer.innerHTML = "";
+    todayContainer.classList.add("hidden");
     if (!data.available) {
       status.textContent = data.message;
       chartWrapper.classList.add("hidden");
@@ -515,6 +643,47 @@ async function refreshForecastAccuracy() {
     const deviceName = deviceId
       ? state.devices.find((d) => d.id === deviceId)?.name || deviceId
       : null;
+
+    // "Heute (bisher)" separat VOR den abgeschlossenen Tagen anzeigen -
+    // unabhaengig davon, ob unten ueberhaupt schon abgeschlossene Tage fuer
+    // das gewaehlte Geraet vorliegen (deshalb hier und nicht erst nach dem
+    // cardEntries-Fruehausstieg weiter unten). Die Abweichung kann hier
+    // groesser wirken als bei den abgeschlossenen Tagen, weil sich gute und
+    // schlechte Stunden noch nicht ueber einen ganzen Tag ausgleichen
+    // konnten (siehe forecast_evaluation.get_forecast_accuracy).
+    const todayValues = data.today_so_far
+      ? deviceId
+        ? data.today_so_far.devices.find((d) => d.device_id === deviceId)
+        : data.today_so_far
+      : null;
+    if (todayValues) {
+      const card = document.createElement("div");
+      card.className = "forecast-accuracy-day";
+      const title = document.createElement("strong");
+      title.textContent = "Heute (bisher)";
+      const values = document.createElement("span");
+      values.className = "forecast-accuracy-values";
+      values.textContent = `Erwartet ${todayValues.expected_kwh.toFixed(1)} · tatsächlich ${todayValues.actual_kwh.toFixed(1)} kWh`;
+      const difference = document.createElement("span");
+      difference.className = "muted";
+      const sign = todayValues.difference_kwh > 0 ? "+" : "";
+      const accuracy = todayValues.accuracy_percent === null
+        ? "Genauigkeit –"
+        : `Genauigkeit ${todayValues.accuracy_percent.toFixed(1)} %`;
+      difference.textContent =
+        `Abweichung ${sign}${todayValues.difference_kwh.toFixed(1)} kWh · ${accuracy} · ` +
+        `${todayValues.matched_hours} Stundenwerte bisher`;
+      const note = document.createElement("span");
+      note.className = "forecast-accuracy-today-note";
+      note.textContent =
+        "Noch kein abgeschlossener Tag – die Abweichung kann hier größer wirken als bei den " +
+        "Tagen unten, weil sich gute und schlechte Stunden noch nicht über einen ganzen Tag " +
+        "ausgleichen konnten.";
+      card.append(title, values, difference, note);
+      todayContainer.appendChild(card);
+      todayContainer.classList.remove("hidden");
+    }
+
     const cardEntries = [];
     for (const day of data.days) {
       const values = deviceId ? day.devices.find((d) => d.device_id === deviceId) : day;
@@ -1253,7 +1422,7 @@ async function refreshDayCompareChart() {
 }
 
 // Metrik (PV-Ertrag/Verbrauch aus Batterie & Solar/Verbrauch aus Netz) wird
-// seit dem Ansichts-Dropdown (siehe setupTrendViewSelect) nicht mehr ueber
+// seit dem Ansichts-Flyout (siehe setupTrendSubView) nicht mehr ueber
 // eigene Buttons gewaehlt, sondern kommt direkt aus state.dayCompare.metric -
 // applySolarBatteryDayLimit() bleibt trotzdem eine eigene Funktion, weil sie
 // sowohl beim Metrik- als auch beim Zeitraum-Wechsel gebraucht wird.
@@ -1287,48 +1456,45 @@ function setupDayCompareControls() {
 
 // --- Ansichts-Auswahl "Verlauf"-Tab: Leistungsverlauf ODER Tagesvergleich
 // (mit einer der drei Metriken) - es ist immer nur EIN Diagramm sichtbar,
-// gesteuert ueber ein einzelnes Dropdown statt mehrerer gleichzeitig
-// eingeblendeter Diagramm-Abschnitte. ---
+// gesteuert ueber das Hover-Flyout-Menue am "Verlauf"-Reiter oben (siehe
+// setupViewTabs/SUBVIEW_SETTERS) statt eines eigenen Dropdowns im
+// Content-Bereich. ---
 
-function setupTrendViewSelect() {
-  const select = el("trend-view-select");
-  const powerSection = el("trend-view-power");
-  const daycompareSection = el("trend-view-daycompare");
+function applyTrendSubView(view) {
+  const isPower = view === "power";
+  el("trend-view-power").classList.toggle("hidden", !isPower);
+  el("trend-view-daycompare").classList.toggle("hidden", isPower);
+}
 
-  function applyVisibility(view) {
-    const isPower = view === "power";
-    powerSection.classList.toggle("hidden", !isPower);
-    daycompareSection.classList.toggle("hidden", isPower);
+function setTrendSubView(view) {
+  state.subView.trend = view;
+  applyTrendSubView(view);
+  if (view === "power") {
+    state.chart?.resize();
+    refreshChart().catch(console.error);
+    return;
   }
+  state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
+  updateDayCompareHint(state.dayCompare.metric);
+  applySolarBatteryDayLimit();
+  // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
+  // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2) - das passiert
+  // erst NACHDEM der Abschnitt sichtbar ist, damit Chart.js die richtige
+  // Groesse ermitteln kann (ein waehrend "display:none" aufgebautes
+  // Diagramm wuerde mit 0x0 Pixeln berechnet).
+  if (state.dayCompare.chart) {
+    state.dayCompare.chart.destroy();
+    state.dayCompare.chart = null;
+  }
+  refreshDayCompareChart().catch(console.error);
+}
 
-  select.addEventListener("change", () => {
-    const view = select.value;
-    applyVisibility(view);
-    if (view === "power") {
-      state.chart?.resize();
-      refreshChart().catch(console.error);
-      return;
-    }
-    state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
-    updateDayCompareHint(state.dayCompare.metric);
-    applySolarBatteryDayLimit();
-    // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
-    // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2) - das passiert
-    // erst NACHDEM der Abschnitt sichtbar ist, damit Chart.js die richtige
-    // Groesse ermitteln kann (ein waehrend "display:none" aufgebautes
-    // Diagramm wuerde mit 0x0 Pixeln berechnet).
-    if (state.dayCompare.chart) {
-      state.dayCompare.chart.destroy();
-      state.dayCompare.chart = null;
-    }
-    refreshDayCompareChart().catch(console.error);
-  });
-
+function setupTrendSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshTrendTab() beim ersten Oeffnen des
   // Tabs (siehe setupViewTabs/TAB_LOADERS), damit noch nie besuchte Tabs
   // weiterhin erst bei Bedarf laden.
-  applyVisibility(select.value);
+  applyTrendSubView(state.subView.trend);
 }
 
 // --- Tagesverbrauch: gestapeltes Saeulendiagramm mit taeglichen kWh-Summen,
@@ -1466,44 +1632,45 @@ function updateHourlyCompareVisibility() {
   // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
   // vergleichen. Zusaetzlich muss oben im "Verbrauch & Wechselrichter"-Tab
   // die Ansicht "Wechselrichter-Vergleich" ausgewaehlt sein (siehe
-  // setupConsumptionViewSelect) - es ist immer nur eine der beiden
-  // Ansichten gleichzeitig sichtbar.
-  const dropdownWantsHourly = el("consumption-view-select")?.value === "hourly";
+  // setTrendSubView/state.subView.consumption) - es ist immer nur eine der
+  // beiden Ansichten gleichzeitig sichtbar.
+  const menuWantsHourly = state.subView.consumption === "hourly";
   const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
-  el("hourly-section").classList.toggle("hidden", !dropdownWantsHourly);
+  el("hourly-section").classList.toggle("hidden", !menuWantsHourly);
   el("hourly-chart-content").classList.toggle("hidden", !deviceOk);
   el("hourly-chart-unavailable").classList.toggle("hidden", deviceOk);
-  return dropdownWantsHourly && deviceOk;
+  return menuWantsHourly && deviceOk;
 }
 
 // --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: Tagesverbrauch ODER
 // Wechselrichter-Vergleich - wie beim Verlauf-Tab immer nur ein Diagramm
-// gleichzeitig sichtbar, gesteuert ueber ein Dropdown. ---
+// gleichzeitig sichtbar, gesteuert ueber das Hover-Flyout-Menue am
+// "Verbrauch & Wechselrichter"-Reiter oben. ---
 
-function setupConsumptionViewSelect() {
-  const select = el("consumption-view-select");
-  const dailytotalsSection = el("consumption-view-dailytotals");
+function applyConsumptionSubView() {
+  el("consumption-view-dailytotals").classList.toggle(
+    "hidden",
+    state.subView.consumption !== "dailytotals"
+  );
+  // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
+  // ab - updateHourlyCompareVisibility() wertet beides aus.
+  updateHourlyCompareVisibility();
+}
 
-  function applyVisibility() {
-    dailytotalsSection.classList.toggle("hidden", select.value !== "dailytotals");
-    // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
-    // ab - updateHourlyCompareVisibility() wertet beides aus.
-    updateHourlyCompareVisibility();
-  }
+function setConsumptionSubView(view) {
+  state.subView.consumption = view;
+  applyConsumptionSubView();
+  // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der Chart
+  // evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s fruehen
+  // Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt nachladen.
+  refreshHourlyCompareChart().catch(console.error);
+}
 
-  select.addEventListener("change", () => {
-    applyVisibility();
-    // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der
-    // Chart evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s
-    // fruehen Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt
-    // nachladen.
-    refreshHourlyCompareChart().catch(console.error);
-  });
-
+function setupConsumptionSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshConsumptionTab() beim ersten
   // Oeffnen des Tabs.
-  applyVisibility();
+  applyConsumptionSubView();
 }
 
 async function refreshHourlyCompareChart() {
@@ -1756,41 +1923,42 @@ function refreshForecastTab() {
 
 // --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
 // Prognose heute, Wochenverlauf-Diagramm oder Prognosekontrolle - wie bei
-// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar. Die
-// Kopfzeile (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie
-// sich auf die Prognose insgesamt bezieht, nicht nur auf eine der
-// Unteransichten. ---
+// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar, gesteuert
+// ueber das Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile
+// (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf
+// die Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
 
-function setupForecastViewSelect() {
-  const select = el("forecast-view-select");
-  const views = {
-    days: el("forecast-days"),
-    "hours-today": el("forecast-view-hours-today"),
-    "week-chart": el("forecast-view-week-chart"),
-    accuracy: el("forecast-accuracy-section"),
-  };
+const FORECAST_SUBVIEW_SECTIONS = {
+  days: () => el("forecast-days"),
+  "hours-today": () => el("forecast-view-hours-today"),
+  "week-chart": () => el("forecast-view-week-chart"),
+  accuracy: () => el("forecast-accuracy-section"),
+};
 
-  function applyVisibility(view) {
-    for (const [key, section] of Object.entries(views)) {
-      section.classList.toggle("hidden", key !== view);
-    }
+function applyForecastSubView(view) {
+  for (const [key, getSection] of Object.entries(FORECAST_SUBVIEW_SECTIONS)) {
+    getSection().classList.toggle("hidden", key !== view);
   }
+}
 
-  select.addEventListener("change", () => {
-    applyVisibility(select.value);
-    // Defensiv: forecast-chart/forecast-accuracy-chart werden im
-    // Hintergrund (Tab-Intervall) auch aktualisiert, waehrend ihre Ansicht
-    // gerade nicht ausgewaehlt ist (also "display:none") - ein erneutes
-    // resize() beim Sichtbarwerden stellt sicher, dass Chart.js die
-    // richtige Groesse verwendet, statt sich auf 0x0 zu verlassen.
-    state.forecastChart?.resize();
-    state.forecastAccuracyChart?.resize();
-  });
+function setForecastSubView(view) {
+  state.subView.forecast = view;
+  applyForecastSubView(view);
+  // Defensiv: forecast-chart/forecast-accuracy-chart/forecast-hours-today-
+  // chart werden im Hintergrund (Tab-Intervall) auch aktualisiert, waehrend
+  // ihre Ansicht gerade nicht ausgewaehlt ist (also "display:none") - ein
+  // erneutes resize() beim Sichtbarwerden stellt sicher, dass Chart.js die
+  // richtige Groesse verwendet, statt sich auf 0x0 zu verlassen.
+  state.forecastChart?.resize();
+  state.forecastAccuracyChart?.resize();
+  state.forecastHoursTodayChart?.resize();
+}
 
+function setupForecastSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshForecastTab() beim ersten Oeffnen
   // des Tabs.
-  applyVisibility(select.value);
+  applyForecastSubView(state.subView.forecast);
 }
 
 const TAB_LOADERS = {
@@ -1824,6 +1992,16 @@ function refreshLoadedTabs() {
     .map(([, loader]) => loader());
   return Promise.allSettled(tasks);
 }
+
+// Setzt bei Klick auf einen Flyout-Menuepunkt (siehe HTML: data-subview
+// innerhalb von .view-tab-menu) die passende Unteransicht des jeweiligen
+// Tabs - ein Eintrag je Tab-Gruppe (data-tab-group), Schluessel = Wert von
+// data-subview.
+const SUBVIEW_SETTERS = {
+  trend: setTrendSubView,
+  consumption: setConsumptionSubView,
+  forecast: setForecastSubView,
+};
 
 function setupViewTabs() {
   const nav = el("view-tabs");
@@ -1859,11 +2037,69 @@ function setupViewTabs() {
     }
   }
 
+  // Blendet ein per Hover offenes Flyout-Menue sofort aus, auch wenn die
+  // Maus noch darueber steht (z.B. nach Auswahl eines Menuepunkts per
+  // Klick) - .menu-suppress gewinnt per CSS gegen die :hover-Regel und wird
+  // erst entfernt, wenn die Maus den Reiter tatsaechlich verlaesst.
+  function suppressMenuUntilLeave(wrapper) {
+    wrapper.classList.remove("menu-open");
+    wrapper.classList.add("menu-suppress");
+    wrapper.addEventListener(
+      "mouseleave",
+      () => wrapper.classList.remove("menu-suppress"),
+      { once: true }
+    );
+  }
+
   nav.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-tab]");
-    if (!btn) return;
-    activate(btn.dataset.tab);
+    const subBtn = e.target.closest("button[data-subview]");
+    if (subBtn) {
+      const wrapper = subBtn.closest(".view-tab-with-menu");
+      const groupId = wrapper?.dataset.tabGroup;
+      if (groupId) {
+        activate(groupId);
+        SUBVIEW_SETTERS[groupId]?.(subBtn.dataset.subview);
+        for (const btn of wrapper.querySelectorAll("button[data-subview]")) {
+          btn.classList.toggle("active", btn === subBtn);
+        }
+      }
+      if (wrapper) suppressMenuUntilLeave(wrapper);
+      return;
+    }
+
+    const tabBtn = e.target.closest("button[data-tab]");
+    if (!tabBtn) return;
+    activate(tabBtn.dataset.tab);
+
+    // Touch-Fallback: ohne Hover gibt es keine andere Moeglichkeit, das
+    // Flyout-Menue ueberhaupt zu oeffnen - ein Tipp auf den Reiter blendet
+    // es zusaetzlich zum Tab-Wechsel ein bzw. wieder aus.
+    const wrapper = tabBtn.closest(".view-tab-with-menu");
+    if (wrapper && isTouchDevice()) {
+      wrapper.classList.toggle("menu-open");
+    }
   });
+
+  // Klick ausserhalb eines Reiters mit Flyout schliesst ein per Touch
+  // geoeffnetes Menue wieder (Hover-Menues schliessen ohnehin automatisch,
+  // sobald die Maus den Reiter verlaesst).
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".view-tab-with-menu")) return;
+    for (const wrapper of nav.querySelectorAll(".view-tab-with-menu.menu-open")) {
+      wrapper.classList.remove("menu-open");
+    }
+  });
+
+  // Markiert im Flyout-Menue den zur aktuellen Unteransicht passenden
+  // Eintrag als "active" (z.B. nach einem Seiten-Reload, bei dem
+  // state.subView noch die Vorgabewerte hat).
+  for (const wrapper of nav.querySelectorAll(".view-tab-with-menu")) {
+    const groupId = wrapper.dataset.tabGroup;
+    const current = state.subView[groupId];
+    for (const btn of wrapper.querySelectorAll("button[data-subview]")) {
+      btn.classList.toggle("active", btn.dataset.subview === current);
+    }
+  }
 
   activate(initial);
 }
@@ -1898,6 +2134,7 @@ function setChartsInteractive(on) {
     state.hourlyCompare.chart,
     state.forecastChart,
     state.forecastAccuracyChart,
+    state.forecastHoursTodayChart,
   ];
   for (const c of charts) {
     if (!c || !c.options) continue;
@@ -1961,12 +2198,12 @@ async function init() {
   setupAdminArea();
   await loadDevices();
   setupRangeButtons();
-  setupTrendViewSelect();
+  setupTrendSubView();
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
-  setupConsumptionViewSelect();
-  setupForecastViewSelect();
+  setupConsumptionSubView();
+  setupForecastSubView();
   setupChartInteractionToggle();
   // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
   // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die
