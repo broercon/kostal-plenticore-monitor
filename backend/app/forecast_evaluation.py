@@ -307,3 +307,119 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
         "days": result_days,
         "today_so_far": today_so_far,
     }
+
+
+def get_yesterday_hourly_comparison(now: datetime | None = None) -> dict:
+    """Stuendlicher Prognose-vs-Ist-Vergleich fuer den GESTRIGEN (lokalen)
+    Kalendertag - das Gegenstueck zur "Stuendliche Prognose heute"-Ansicht
+    im Frontend (siehe app.js refreshForecast()), nur fuer den bereits
+    vollstaendig abgeschlossenen Vortag: dort hat inzwischen jede Stunde
+    einen Ist-Wert, waehrend bei "heute" die noch laufenden/kuenftigen
+    Stunden zwangslaeufig fehlen.
+
+    Anders als /api/forecast (aus der WETTERVORHERSAGE gebaut, reicht nur in
+    die Zukunft) stammen die Prognosewerte hier aus den gespeicherten
+    ForecastPrediction-Zeilen (siehe save_forecast_predictions) - dieselbe
+    Datengrundlage wie get_forecast_accuracy(), hier aber auf Stundenebene
+    belassen statt zu einem Tageswert verdichtet, inkl. Aufschluesselung je
+    Wechselrichter (fuer die Geraete-Filterung im Frontend)."""
+    from .energy_forecast import load_hourly_pv_history
+
+    now = _utc(now or datetime.now(timezone.utc))
+    local_tz = ZoneInfo(settings.timezone_name)
+    today = now.astimezone(local_tz).date()
+    yesterday = today - timedelta(days=1)
+    date_key = yesterday.isoformat()
+    start = datetime.combine(yesterday, time.min, tzinfo=local_tz).astimezone(timezone.utc)
+    end = datetime.combine(today, time.min, tzinfo=local_tz).astimezone(timezone.utc)
+
+    session = SessionLocal()
+    try:
+        stored = session.scalars(
+            select(ForecastPrediction)
+            .where(
+                ForecastPrediction.target_timestamp >= start,
+                ForecastPrediction.target_timestamp < end,
+            )
+            .order_by(ForecastPrediction.target_timestamp)
+        ).all()
+    finally:
+        session.close()
+
+    if not stored:
+        return {
+            "available": False,
+            "message": "Für gestern liegen keine gespeicherten Prognosen vor.",
+            "date": date_key,
+            "hours": [],
+        }
+
+    actual_history = load_hourly_pv_history(start, end)
+    device_names = {device.id: device.name for device in settings.inverters}
+
+    # Je Stunde UND Geraet: Prognose (aus ForecastPrediction) UND Ist-Wert
+    # (aus den echten Messwerten) zusammenfuehren. Fehlt der Ist-Wert (noch)
+    # - z.B. ein Datenausfall - bleibt actual_kw None statt 0, damit das
+    # Frontend "keine Messung" von "Nullertrag" unterscheiden kann.
+    by_hour_device: dict[datetime, dict[str, dict]] = defaultdict(dict)
+    for prediction in stored:
+        target = _utc(prediction.target_timestamp)
+        actual_w = actual_history.get(prediction.device_id, {}).get(
+            target + timedelta(hours=1)
+        )
+        by_hour_device[target][prediction.device_id] = {
+            "expected_w": prediction.expected_w,
+            "low_w": prediction.low_w,
+            "high_w": prediction.high_w,
+            "actual_w": actual_w,
+        }
+
+    hours = []
+    for target in sorted(by_hour_device):
+        per_device = by_hour_device[target]
+        devices = [
+            {
+                "device_id": device_id,
+                "device_name": device_names.get(device_id, device_id),
+                "expected_kw": round(values["expected_w"] / 1000, 3),
+                "low_kw": round(values["low_w"] / 1000, 3),
+                "high_kw": round(values["high_w"] / 1000, 3),
+                "actual_kw": (
+                    round(values["actual_w"] / 1000, 3)
+                    if values["actual_w"] is not None
+                    else None
+                ),
+            }
+            for device_id, values in per_device.items()
+        ]
+        local_start = target.astimezone(local_tz)
+        actual_values = [d["actual_kw"] for d in devices if d["actual_kw"] is not None]
+        hours.append(
+            {
+                "timestamp": target,
+                # Gleiches Bucket-Format wie ForecastHourOut.local_hour /
+                # aggregation.hourly_kwh_per_device - konsistente Zuordnung
+                # ohne erneute (fehleranfaellige) Zeitzonen-Umrechnung im
+                # Frontend.
+                "local_hour": local_start.replace(
+                    minute=0, second=0, microsecond=0
+                ).strftime("%Y-%m-%dT%H:%M:%S"),
+                # Kombination ueber alle Geraete INNERHALB DERSELBEN STUNDE
+                # ist eine simple Summe (physikalisch gueltig, siehe
+                # _aggregate_bounds/get_forecast_accuracy) - anders als eine
+                # Kombination ueber mehrere STUNDEN hinweg, die hier nicht
+                # stattfindet (jede Stunde bleibt fuer sich stehen).
+                "expected_kw": round(sum(d["expected_kw"] for d in devices), 3),
+                "low_kw": round(sum(d["low_kw"] for d in devices), 3),
+                "high_kw": round(sum(d["high_kw"] for d in devices), 3),
+                "actual_kw": round(sum(actual_values), 3) if actual_values else None,
+                "devices": devices,
+            }
+        )
+
+    return {
+        "available": True,
+        "message": "Stündlicher Vergleich der gespeicherten Prognosen mit den echten Messwerten für gestern.",
+        "date": date_key,
+        "hours": hours,
+    }

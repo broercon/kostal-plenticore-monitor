@@ -208,3 +208,63 @@ test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async 
 
   assert.equal(app.state.forecastHoursTodayChart, null);
 });
+
+test("Prognose gestern zeigt die stuendlichen Werte kombiniert und filtert nach Wechselrichter", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.forecastYesterdayChart !== null);
+
+  const labels = app.state.forecastYesterdayChart.data.labels;
+  assert.equal(labels.length, 2);
+
+  function forecastDataset() {
+    return app.state.forecastYesterdayChart.data.datasets.find((d) => d.label === "Prognose");
+  }
+  function actualData() {
+    return app.state.forecastYesterdayChart.data.datasets.find(
+      (d) => d.label === "Tatsächlich"
+    ).data;
+  }
+
+  // Kombiniert (Alle): Stunde 1 (07:00 lokal) hat expected_kw 2.0 (1.2+0.8),
+  // Stunde 2 (13:00 lokal) 4.5 (3.0+1.5) - beide Stunden von gestern sind
+  // komplett vorbei, daher haben BEIDE bereits einen Ist-Wert (anders als
+  // bei "heute").
+  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [2.0, 4.5]);
+  assert.deepEqual([...actualData()].sort((a, b) => a - b), [2.3, 4.0]);
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(() => forecastDataset().expectedData.includes(1.2));
+
+  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [1.2, 3.0]);
+  assert.deepEqual([...actualData()].sort((a, b) => a - b), [1.4, 2.6]);
+});
+
+test("Prognose gestern wird bei Geraet ohne eigene Prognose geleert", async () => {
+  const base = makeBackend();
+  const app = await bootApp({
+    fetchHandler: async (url, options) => {
+      if (url.pathname === "/api/devices") {
+        return [
+          { id: "wr1", name: "WR1", host: "h1" },
+          { id: "wr2", name: "WR2", host: "h2" },
+          { id: "wr3", name: "WR3 ohne Historie", host: "h3" },
+        ];
+      }
+      return base(url, options);
+    },
+  });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.forecastYesterdayChart !== null);
+
+  app.clickTab("WR3 ohne Historie");
+  await waitFor(() => app.state.selectedDeviceId === "wr3");
+  await waitFor(() =>
+    app.document
+      .getElementById("forecast-yesterday-status")
+      .textContent.includes("keine gespeicherten Prognosen")
+  );
+
+  assert.equal(app.state.forecastYesterdayChart, null);
+});
