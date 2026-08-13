@@ -383,6 +383,67 @@ canvas {
   background: var(--accent-blue);
 }
 
+.view-tab-with-menu {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.view-tab-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px;
+  min-width: 240px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* Kein Abstand zwischen Reiter und Menue (kein margin-top): sonst gibt es
+   eine Luecke, in der die Maus weder ueber dem Reiter noch ueber dem Menue
+   steht - das Menue wuerde beim Herunterfahren sofort wieder zuklappen,
+   bevor die Maus es erreicht. */
+.view-tab-with-menu:hover .view-tab-menu,
+.view-tab-with-menu.menu-open .view-tab-menu {
+  display: block;
+}
+
+/* Direkt nach Auswahl eines Menuepunkts per Klick (siehe app.js,
+   suppressMenuUntilLeave) soll das Menue sofort zuklappen, auch wenn die
+   Maus noch ueber dem Reiter steht - .menu-suppress gewinnt hier gegen die
+   :hover-Regel oben, wird aber entfernt, sobald die Maus den Reiter
+   tatsaechlich verlaesst. */
+.view-tab-with-menu.menu-suppress .view-tab-menu {
+  display: none !important;
+}
+
+.view-tab-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.view-tab-menu button:hover {
+  background: var(--panel-hover);
+}
+
+.view-tab-menu button.active {
+  background: var(--panel-hover);
+  color: var(--accent-blue);
+}
+
 .tab-panel {
   animation: tab-panel-in 0.2s ease;
 }
@@ -490,18 +551,6 @@ canvas {
 }
 
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
-
-.chart-view-select-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.chart-view-select-wrapper label {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
 
 .hidden {
   display: none !important;

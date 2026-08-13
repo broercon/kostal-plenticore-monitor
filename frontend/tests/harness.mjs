@@ -268,6 +268,21 @@ export async function bootApp({ fetchHandler }) {
     btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   }
 
+  // Klickt einen Eintrag im Hover-Flyout-Menue eines Ansichts-Tabs (ersetzt
+  // die frueheren <select>-Dropdowns, siehe setupViewTabs()/
+  // SUBVIEW_SETTERS in app.js) - anhand der Tab-Gruppe (data-tab-group,
+  // z.B. "trend") und des gewuenschten Unteransicht-Werts (data-subview,
+  // z.B. "pv"). Im echten Browser wuerde das Menue erst per Hover
+  // sichtbar - im Test wird direkt auf den (im DOM immer vorhandenen)
+  // Button geklickt, das reicht fuer den click-Handler in app.js.
+  function clickSubview(groupId, subview) {
+    const btn = document.querySelector(
+      `.view-tab-with-menu[data-tab-group="${groupId}"] button[data-subview="${subview}"]`
+    );
+    if (!btn) throw new Error(`Unteransicht nicht gefunden: ${groupId}/${subview}`);
+    btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  }
+
   const loadingCount = () => document.querySelectorAll(".is-loading").length;
   const isLoading = (selector) => {
     const node = document.querySelector(selector);
@@ -290,6 +305,7 @@ export async function bootApp({ fetchHandler }) {
     state,
     clickTab,
     clickViewTab,
+    clickSubview,
     loadingCount,
     isLoading,
     chartMetricLast,

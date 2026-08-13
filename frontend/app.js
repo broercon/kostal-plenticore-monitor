@@ -28,6 +28,14 @@ const state = {
   // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
   // nie besuchter Tab laedt seine Daten erst beim ersten Oeffnen.
   tabsLoaded: new Set(),
+  // Aktuell gewaehlte Unteransicht je Ansichts-Tab (siehe setupViewTabs) -
+  // ersetzt die frueheren separaten <select>-Elemente pro Tab. Die
+  // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
+  subView: {
+    trend: "power",
+    consumption: "dailytotals",
+    forecast: "days",
+  },
 };
 
 // Maximale Tage, bei denen die Solar/Batterie-Aufteilung (2 Kurven pro Tag)
@@ -1253,7 +1261,7 @@ async function refreshDayCompareChart() {
 }
 
 // Metrik (PV-Ertrag/Verbrauch aus Batterie & Solar/Verbrauch aus Netz) wird
-// seit dem Ansichts-Dropdown (siehe setupTrendViewSelect) nicht mehr ueber
+// seit dem Ansichts-Flyout (siehe setupTrendSubView) nicht mehr ueber
 // eigene Buttons gewaehlt, sondern kommt direkt aus state.dayCompare.metric -
 // applySolarBatteryDayLimit() bleibt trotzdem eine eigene Funktion, weil sie
 // sowohl beim Metrik- als auch beim Zeitraum-Wechsel gebraucht wird.
@@ -1287,48 +1295,45 @@ function setupDayCompareControls() {
 
 // --- Ansichts-Auswahl "Verlauf"-Tab: Leistungsverlauf ODER Tagesvergleich
 // (mit einer der drei Metriken) - es ist immer nur EIN Diagramm sichtbar,
-// gesteuert ueber ein einzelnes Dropdown statt mehrerer gleichzeitig
-// eingeblendeter Diagramm-Abschnitte. ---
+// gesteuert ueber das Hover-Flyout-Menue am "Verlauf"-Reiter oben (siehe
+// setupViewTabs/SUBVIEW_SETTERS) statt eines eigenen Dropdowns im
+// Content-Bereich. ---
 
-function setupTrendViewSelect() {
-  const select = el("trend-view-select");
-  const powerSection = el("trend-view-power");
-  const daycompareSection = el("trend-view-daycompare");
+function applyTrendSubView(view) {
+  const isPower = view === "power";
+  el("trend-view-power").classList.toggle("hidden", !isPower);
+  el("trend-view-daycompare").classList.toggle("hidden", isPower);
+}
 
-  function applyVisibility(view) {
-    const isPower = view === "power";
-    powerSection.classList.toggle("hidden", !isPower);
-    daycompareSection.classList.toggle("hidden", isPower);
+function setTrendSubView(view) {
+  state.subView.trend = view;
+  applyTrendSubView(view);
+  if (view === "power") {
+    state.chart?.resize();
+    refreshChart().catch(console.error);
+    return;
   }
+  state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
+  updateDayCompareHint(state.dayCompare.metric);
+  applySolarBatteryDayLimit();
+  // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
+  // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2) - das passiert
+  // erst NACHDEM der Abschnitt sichtbar ist, damit Chart.js die richtige
+  // Groesse ermitteln kann (ein waehrend "display:none" aufgebautes
+  // Diagramm wuerde mit 0x0 Pixeln berechnet).
+  if (state.dayCompare.chart) {
+    state.dayCompare.chart.destroy();
+    state.dayCompare.chart = null;
+  }
+  refreshDayCompareChart().catch(console.error);
+}
 
-  select.addEventListener("change", () => {
-    const view = select.value;
-    applyVisibility(view);
-    if (view === "power") {
-      state.chart?.resize();
-      refreshChart().catch(console.error);
-      return;
-    }
-    state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
-    updateDayCompareHint(state.dayCompare.metric);
-    applySolarBatteryDayLimit();
-    // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
-    // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2) - das passiert
-    // erst NACHDEM der Abschnitt sichtbar ist, damit Chart.js die richtige
-    // Groesse ermitteln kann (ein waehrend "display:none" aufgebautes
-    // Diagramm wuerde mit 0x0 Pixeln berechnet).
-    if (state.dayCompare.chart) {
-      state.dayCompare.chart.destroy();
-      state.dayCompare.chart = null;
-    }
-    refreshDayCompareChart().catch(console.error);
-  });
-
+function setupTrendSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshTrendTab() beim ersten Oeffnen des
   // Tabs (siehe setupViewTabs/TAB_LOADERS), damit noch nie besuchte Tabs
   // weiterhin erst bei Bedarf laden.
-  applyVisibility(select.value);
+  applyTrendSubView(state.subView.trend);
 }
 
 // --- Tagesverbrauch: gestapeltes Saeulendiagramm mit taeglichen kWh-Summen,
@@ -1466,44 +1471,45 @@ function updateHourlyCompareVisibility() {
   // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
   // vergleichen. Zusaetzlich muss oben im "Verbrauch & Wechselrichter"-Tab
   // die Ansicht "Wechselrichter-Vergleich" ausgewaehlt sein (siehe
-  // setupConsumptionViewSelect) - es ist immer nur eine der beiden
-  // Ansichten gleichzeitig sichtbar.
-  const dropdownWantsHourly = el("consumption-view-select")?.value === "hourly";
+  // setTrendSubView/state.subView.consumption) - es ist immer nur eine der
+  // beiden Ansichten gleichzeitig sichtbar.
+  const menuWantsHourly = state.subView.consumption === "hourly";
   const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
-  el("hourly-section").classList.toggle("hidden", !dropdownWantsHourly);
+  el("hourly-section").classList.toggle("hidden", !menuWantsHourly);
   el("hourly-chart-content").classList.toggle("hidden", !deviceOk);
   el("hourly-chart-unavailable").classList.toggle("hidden", deviceOk);
-  return dropdownWantsHourly && deviceOk;
+  return menuWantsHourly && deviceOk;
 }
 
 // --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: Tagesverbrauch ODER
 // Wechselrichter-Vergleich - wie beim Verlauf-Tab immer nur ein Diagramm
-// gleichzeitig sichtbar, gesteuert ueber ein Dropdown. ---
+// gleichzeitig sichtbar, gesteuert ueber das Hover-Flyout-Menue am
+// "Verbrauch & Wechselrichter"-Reiter oben. ---
 
-function setupConsumptionViewSelect() {
-  const select = el("consumption-view-select");
-  const dailytotalsSection = el("consumption-view-dailytotals");
+function applyConsumptionSubView() {
+  el("consumption-view-dailytotals").classList.toggle(
+    "hidden",
+    state.subView.consumption !== "dailytotals"
+  );
+  // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
+  // ab - updateHourlyCompareVisibility() wertet beides aus.
+  updateHourlyCompareVisibility();
+}
 
-  function applyVisibility() {
-    dailytotalsSection.classList.toggle("hidden", select.value !== "dailytotals");
-    // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
-    // ab - updateHourlyCompareVisibility() wertet beides aus.
-    updateHourlyCompareVisibility();
-  }
+function setConsumptionSubView(view) {
+  state.subView.consumption = view;
+  applyConsumptionSubView();
+  // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der Chart
+  // evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s fruehen
+  // Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt nachladen.
+  refreshHourlyCompareChart().catch(console.error);
+}
 
-  select.addEventListener("change", () => {
-    applyVisibility();
-    // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der
-    // Chart evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s
-    // fruehen Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt
-    // nachladen.
-    refreshHourlyCompareChart().catch(console.error);
-  });
-
+function setupConsumptionSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshConsumptionTab() beim ersten
   // Oeffnen des Tabs.
-  applyVisibility();
+  applyConsumptionSubView();
 }
 
 async function refreshHourlyCompareChart() {
@@ -1756,41 +1762,41 @@ function refreshForecastTab() {
 
 // --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
 // Prognose heute, Wochenverlauf-Diagramm oder Prognosekontrolle - wie bei
-// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar. Die
-// Kopfzeile (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie
-// sich auf die Prognose insgesamt bezieht, nicht nur auf eine der
-// Unteransichten. ---
+// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar, gesteuert
+// ueber das Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile
+// (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf
+// die Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
 
-function setupForecastViewSelect() {
-  const select = el("forecast-view-select");
-  const views = {
-    days: el("forecast-days"),
-    "hours-today": el("forecast-view-hours-today"),
-    "week-chart": el("forecast-view-week-chart"),
-    accuracy: el("forecast-accuracy-section"),
-  };
+const FORECAST_SUBVIEW_SECTIONS = {
+  days: () => el("forecast-days"),
+  "hours-today": () => el("forecast-view-hours-today"),
+  "week-chart": () => el("forecast-view-week-chart"),
+  accuracy: () => el("forecast-accuracy-section"),
+};
 
-  function applyVisibility(view) {
-    for (const [key, section] of Object.entries(views)) {
-      section.classList.toggle("hidden", key !== view);
-    }
+function applyForecastSubView(view) {
+  for (const [key, getSection] of Object.entries(FORECAST_SUBVIEW_SECTIONS)) {
+    getSection().classList.toggle("hidden", key !== view);
   }
+}
 
-  select.addEventListener("change", () => {
-    applyVisibility(select.value);
-    // Defensiv: forecast-chart/forecast-accuracy-chart werden im
-    // Hintergrund (Tab-Intervall) auch aktualisiert, waehrend ihre Ansicht
-    // gerade nicht ausgewaehlt ist (also "display:none") - ein erneutes
-    // resize() beim Sichtbarwerden stellt sicher, dass Chart.js die
-    // richtige Groesse verwendet, statt sich auf 0x0 zu verlassen.
-    state.forecastChart?.resize();
-    state.forecastAccuracyChart?.resize();
-  });
+function setForecastSubView(view) {
+  state.subView.forecast = view;
+  applyForecastSubView(view);
+  // Defensiv: forecast-chart/forecast-accuracy-chart werden im Hintergrund
+  // (Tab-Intervall) auch aktualisiert, waehrend ihre Ansicht gerade nicht
+  // ausgewaehlt ist (also "display:none") - ein erneutes resize() beim
+  // Sichtbarwerden stellt sicher, dass Chart.js die richtige Groesse
+  // verwendet, statt sich auf 0x0 zu verlassen.
+  state.forecastChart?.resize();
+  state.forecastAccuracyChart?.resize();
+}
 
+function setupForecastSubView() {
   // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
   // eigentliche Laden uebernimmt refreshForecastTab() beim ersten Oeffnen
   // des Tabs.
-  applyVisibility(select.value);
+  applyForecastSubView(state.subView.forecast);
 }
 
 const TAB_LOADERS = {
@@ -1824,6 +1830,16 @@ function refreshLoadedTabs() {
     .map(([, loader]) => loader());
   return Promise.allSettled(tasks);
 }
+
+// Setzt bei Klick auf einen Flyout-Menuepunkt (siehe HTML: data-subview
+// innerhalb von .view-tab-menu) die passende Unteransicht des jeweiligen
+// Tabs - ein Eintrag je Tab-Gruppe (data-tab-group), Schluessel = Wert von
+// data-subview.
+const SUBVIEW_SETTERS = {
+  trend: setTrendSubView,
+  consumption: setConsumptionSubView,
+  forecast: setForecastSubView,
+};
 
 function setupViewTabs() {
   const nav = el("view-tabs");
@@ -1859,11 +1875,69 @@ function setupViewTabs() {
     }
   }
 
+  // Blendet ein per Hover offenes Flyout-Menue sofort aus, auch wenn die
+  // Maus noch darueber steht (z.B. nach Auswahl eines Menuepunkts per
+  // Klick) - .menu-suppress gewinnt per CSS gegen die :hover-Regel und wird
+  // erst entfernt, wenn die Maus den Reiter tatsaechlich verlaesst.
+  function suppressMenuUntilLeave(wrapper) {
+    wrapper.classList.remove("menu-open");
+    wrapper.classList.add("menu-suppress");
+    wrapper.addEventListener(
+      "mouseleave",
+      () => wrapper.classList.remove("menu-suppress"),
+      { once: true }
+    );
+  }
+
   nav.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-tab]");
-    if (!btn) return;
-    activate(btn.dataset.tab);
+    const subBtn = e.target.closest("button[data-subview]");
+    if (subBtn) {
+      const wrapper = subBtn.closest(".view-tab-with-menu");
+      const groupId = wrapper?.dataset.tabGroup;
+      if (groupId) {
+        activate(groupId);
+        SUBVIEW_SETTERS[groupId]?.(subBtn.dataset.subview);
+        for (const btn of wrapper.querySelectorAll("button[data-subview]")) {
+          btn.classList.toggle("active", btn === subBtn);
+        }
+      }
+      if (wrapper) suppressMenuUntilLeave(wrapper);
+      return;
+    }
+
+    const tabBtn = e.target.closest("button[data-tab]");
+    if (!tabBtn) return;
+    activate(tabBtn.dataset.tab);
+
+    // Touch-Fallback: ohne Hover gibt es keine andere Moeglichkeit, das
+    // Flyout-Menue ueberhaupt zu oeffnen - ein Tipp auf den Reiter blendet
+    // es zusaetzlich zum Tab-Wechsel ein bzw. wieder aus.
+    const wrapper = tabBtn.closest(".view-tab-with-menu");
+    if (wrapper && isTouchDevice()) {
+      wrapper.classList.toggle("menu-open");
+    }
   });
+
+  // Klick ausserhalb eines Reiters mit Flyout schliesst ein per Touch
+  // geoeffnetes Menue wieder (Hover-Menues schliessen ohnehin automatisch,
+  // sobald die Maus den Reiter verlaesst).
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".view-tab-with-menu")) return;
+    for (const wrapper of nav.querySelectorAll(".view-tab-with-menu.menu-open")) {
+      wrapper.classList.remove("menu-open");
+    }
+  });
+
+  // Markiert im Flyout-Menue den zur aktuellen Unteransicht passenden
+  // Eintrag als "active" (z.B. nach einem Seiten-Reload, bei dem
+  // state.subView noch die Vorgabewerte hat).
+  for (const wrapper of nav.querySelectorAll(".view-tab-with-menu")) {
+    const groupId = wrapper.dataset.tabGroup;
+    const current = state.subView[groupId];
+    for (const btn of wrapper.querySelectorAll("button[data-subview]")) {
+      btn.classList.toggle("active", btn.dataset.subview === current);
+    }
+  }
 
   activate(initial);
 }
@@ -1961,12 +2035,12 @@ async function init() {
   setupAdminArea();
   await loadDevices();
   setupRangeButtons();
-  setupTrendViewSelect();
+  setupTrendSubView();
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
-  setupConsumptionViewSelect();
-  setupForecastViewSelect();
+  setupConsumptionSubView();
+  setupForecastSubView();
   setupChartInteractionToggle();
   // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
   // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die
