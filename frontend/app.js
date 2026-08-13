@@ -1689,6 +1689,45 @@ function refreshForecastTab() {
   return Promise.allSettled([refreshForecast(), refreshForecastAccuracy()]);
 }
 
+// --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
+// Prognose heute, Wochenverlauf-Diagramm oder Prognosekontrolle - wie bei
+// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar. Die
+// Kopfzeile (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie
+// sich auf die Prognose insgesamt bezieht, nicht nur auf eine der
+// Unteransichten. ---
+
+function setupForecastViewSelect() {
+  const select = el("forecast-view-select");
+  const views = {
+    days: el("forecast-days"),
+    "hours-today": el("forecast-view-hours-today"),
+    "week-chart": el("forecast-view-week-chart"),
+    accuracy: el("forecast-accuracy-section"),
+  };
+
+  function applyVisibility(view) {
+    for (const [key, section] of Object.entries(views)) {
+      section.classList.toggle("hidden", key !== view);
+    }
+  }
+
+  select.addEventListener("change", () => {
+    applyVisibility(select.value);
+    // Defensiv: forecast-chart/forecast-accuracy-chart werden im
+    // Hintergrund (Tab-Intervall) auch aktualisiert, waehrend ihre Ansicht
+    // gerade nicht ausgewaehlt ist (also "display:none") - ein erneutes
+    // resize() beim Sichtbarwerden stellt sicher, dass Chart.js die
+    // richtige Groesse verwendet, statt sich auf 0x0 zu verlassen.
+    state.forecastChart?.resize();
+    state.forecastAccuracyChart?.resize();
+  });
+
+  // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
+  // eigentliche Laden uebernimmt refreshForecastTab() beim ersten Oeffnen
+  // des Tabs.
+  applyVisibility(select.value);
+}
+
 const TAB_LOADERS = {
   overview: refreshOverview,
   trend: refreshTrendTab,
@@ -1860,6 +1899,7 @@ async function init() {
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
+  setupForecastViewSelect();
   setupChartInteractionToggle();
   // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
   // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die
