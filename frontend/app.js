@@ -1212,40 +1212,28 @@ async function refreshDayCompareChart() {
   });
 }
 
-function setupDayCompareControls() {
-  const metricContainer = el("daycompare-metric-buttons");
+// Metrik (PV-Ertrag/Verbrauch aus Batterie & Solar/Verbrauch aus Netz) wird
+// seit dem Ansichts-Dropdown (siehe setupTrendViewSelect) nicht mehr ueber
+// eigene Buttons gewaehlt, sondern kommt direkt aus state.dayCompare.metric -
+// applySolarBatteryDayLimit() bleibt trotzdem eine eigene Funktion, weil sie
+// sowohl beim Metrik- als auch beim Zeitraum-Wechsel gebraucht wird.
+function applySolarBatteryDayLimit() {
   const dayContainer = el("daycompare-day-buttons");
-
-  function applySolarBatteryDayLimit() {
-    const isSolarBattery = state.dayCompare.metric === "solar_battery";
+  const isSolarBattery = state.dayCompare.metric === "solar_battery";
+  for (const b of dayContainer.querySelectorAll("button")) {
+    const days = Number(b.dataset.days);
+    b.disabled = isSolarBattery && days > SOLAR_BATTERY_MAX_DAYS;
+  }
+  if (isSolarBattery && state.dayCompare.days > SOLAR_BATTERY_MAX_DAYS) {
+    state.dayCompare.days = SOLAR_BATTERY_MAX_DAYS;
     for (const b of dayContainer.querySelectorAll("button")) {
-      const days = Number(b.dataset.days);
-      b.disabled = isSolarBattery && days > SOLAR_BATTERY_MAX_DAYS;
-    }
-    if (isSolarBattery && state.dayCompare.days > SOLAR_BATTERY_MAX_DAYS) {
-      state.dayCompare.days = SOLAR_BATTERY_MAX_DAYS;
-      for (const b of dayContainer.querySelectorAll("button")) {
-        b.classList.toggle("active", Number(b.dataset.days) === SOLAR_BATTERY_MAX_DAYS);
-      }
+      b.classList.toggle("active", Number(b.dataset.days) === SOLAR_BATTERY_MAX_DAYS);
     }
   }
+}
 
-  metricContainer.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-metric]");
-    if (!btn) return;
-    for (const b of metricContainer.querySelectorAll("button")) b.classList.remove("active");
-    btn.classList.add("active");
-    state.dayCompare.metric = btn.dataset.metric;
-    updateDayCompareHint(state.dayCompare.metric);
-    applySolarBatteryDayLimit();
-    // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
-    // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2).
-    if (state.dayCompare.chart) {
-      state.dayCompare.chart.destroy();
-      state.dayCompare.chart = null;
-    }
-    refreshDayCompareChart().catch(console.error);
-  });
+function setupDayCompareControls() {
+  const dayContainer = el("daycompare-day-buttons");
 
   dayContainer.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-days]");
@@ -1255,6 +1243,52 @@ function setupDayCompareControls() {
     state.dayCompare.days = Number(btn.dataset.days);
     refreshDayCompareChart().catch(console.error);
   });
+}
+
+// --- Ansichts-Auswahl "Verlauf"-Tab: Leistungsverlauf ODER Tagesvergleich
+// (mit einer der drei Metriken) - es ist immer nur EIN Diagramm sichtbar,
+// gesteuert ueber ein einzelnes Dropdown statt mehrerer gleichzeitig
+// eingeblendeter Diagramm-Abschnitte. ---
+
+function setupTrendViewSelect() {
+  const select = el("trend-view-select");
+  const powerSection = el("trend-view-power");
+  const daycompareSection = el("trend-view-daycompare");
+
+  function applyVisibility(view) {
+    const isPower = view === "power";
+    powerSection.classList.toggle("hidden", !isPower);
+    daycompareSection.classList.toggle("hidden", isPower);
+  }
+
+  select.addEventListener("change", () => {
+    const view = select.value;
+    applyVisibility(view);
+    if (view === "power") {
+      state.chart?.resize();
+      refreshChart().catch(console.error);
+      return;
+    }
+    state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
+    updateDayCompareHint(state.dayCompare.metric);
+    applySolarBatteryDayLimit();
+    // Bei Metrikwechsel muss der Chart neu aufgebaut werden (Achsentitel,
+    // Anzahl Datasets pro Tag aendert sich zwischen 1 und 2) - das passiert
+    // erst NACHDEM der Abschnitt sichtbar ist, damit Chart.js die richtige
+    // Groesse ermitteln kann (ein waehrend "display:none" aufgebautes
+    // Diagramm wuerde mit 0x0 Pixeln berechnet).
+    if (state.dayCompare.chart) {
+      state.dayCompare.chart.destroy();
+      state.dayCompare.chart = null;
+    }
+    refreshDayCompareChart().catch(console.error);
+  });
+
+  // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
+  // eigentliche Laden uebernimmt refreshTrendTab() beim ersten Oeffnen des
+  // Tabs (siehe setupViewTabs/TAB_LOADERS), damit noch nie besuchte Tabs
+  // weiterhin erst bei Bedarf laden.
+  applyVisibility(select.value);
 }
 
 // --- Tagesverbrauch: gestapeltes Saeulendiagramm mit taeglichen kWh-Summen,
@@ -1390,10 +1424,46 @@ function updateHourlyCompareVisibility() {
   // "Alle (Summe)" ausgewaehlt ist (selectedDeviceId === "") UND es
   // ueberhaupt mehr als einen Wechselrichter gibt - bei einem einzelnen
   // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
-  // vergleichen.
-  const visible = state.selectedDeviceId === "" && state.devices.length > 1;
-  el("hourly-section").classList.toggle("hidden", !visible);
-  return visible;
+  // vergleichen. Zusaetzlich muss oben im "Verbrauch & Wechselrichter"-Tab
+  // die Ansicht "Wechselrichter-Vergleich" ausgewaehlt sein (siehe
+  // setupConsumptionViewSelect) - es ist immer nur eine der beiden
+  // Ansichten gleichzeitig sichtbar.
+  const dropdownWantsHourly = el("consumption-view-select")?.value === "hourly";
+  const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
+  el("hourly-section").classList.toggle("hidden", !dropdownWantsHourly);
+  el("hourly-chart-content").classList.toggle("hidden", !deviceOk);
+  el("hourly-chart-unavailable").classList.toggle("hidden", deviceOk);
+  return dropdownWantsHourly && deviceOk;
+}
+
+// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: Tagesverbrauch ODER
+// Wechselrichter-Vergleich - wie beim Verlauf-Tab immer nur ein Diagramm
+// gleichzeitig sichtbar, gesteuert ueber ein Dropdown. ---
+
+function setupConsumptionViewSelect() {
+  const select = el("consumption-view-select");
+  const dailytotalsSection = el("consumption-view-dailytotals");
+
+  function applyVisibility() {
+    dailytotalsSection.classList.toggle("hidden", select.value !== "dailytotals");
+    // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
+    // ab - updateHourlyCompareVisibility() wertet beides aus.
+    updateHourlyCompareVisibility();
+  }
+
+  select.addEventListener("change", () => {
+    applyVisibility();
+    // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der
+    // Chart evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s
+    // fruehen Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt
+    // nachladen.
+    refreshHourlyCompareChart().catch(console.error);
+  });
+
+  // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
+  // eigentliche Laden uebernimmt refreshConsumptionTab() beim ersten
+  // Oeffnen des Tabs.
+  applyVisibility();
 }
 
 async function refreshHourlyCompareChart() {
@@ -1812,9 +1882,11 @@ async function init() {
   setupAdminArea();
   await loadDevices();
   setupRangeButtons();
+  setupTrendViewSelect();
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupHourlyCompareControls();
+  setupConsumptionViewSelect();
   setupChartInteractionToggle();
   // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
   // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die

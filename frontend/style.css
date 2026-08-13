@@ -491,6 +491,18 @@ canvas {
 
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
 
+.chart-view-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.chart-view-select-wrapper label {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .hidden {
   display: none !important;
 }
