@@ -468,31 +468,36 @@ async function refreshForecast() {
     }
 
     const hourLabels = todayHours.map((hour) => fmtForecastTime(hour.timestamp));
-    const forecastValues = [];
+    const forecastExpected = [];
     const forecastRanges = [];
     const actualValues = [];
     for (const hour of todayHours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
-      forecastValues.push(hourValues ? hourValues.expected_kw : null);
+      forecastExpected.push(hourValues ? hourValues.expected_kw : null);
+      // Floating-Bar-Format ([low, high]) statt eines einzelnen Zahlenwerts:
+      // der Prognose-Balken zeigt damit direkt den gelernten Spannbereich als
+      // Balkenhoehe, in derselben Spalte und Farbe wie die Prognose selbst -
+      // kein separater dritter Balken noetig.
       forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
       actualValues.push(isHourElapsed(hour) ? actualKwhFor(hour) : null);
     }
 
     hoursTodayStatus.textContent = deviceId
-      ? `Prognose vs. tatsächlicher Ertrag von ${deviceName}, je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.`
-      : "Prognose vs. tatsächlicher Ertrag (alle Wechselrichter), je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.";
+      ? `Prognose (mit Spannbereich) vs. tatsächlicher Ertrag von ${deviceName}, je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.`
+      : "Prognose (mit Spannbereich) vs. tatsächlicher Ertrag (alle Wechselrichter), je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.";
 
     const hoursTodayDatasets = [
       {
         label: "Prognose",
-        data: forecastValues,
+        data: forecastRanges,
         backgroundColor: "#38bdf8",
         borderColor: "#38bdf8",
         borderWidth: 1,
         borderRadius: 3,
         // Nur fuer den Tooltip mitgefuehrt (kein eigenes Chart.js-Feld) -
-        // zeigt den gelernten Spannbereich der jeweiligen Stunde mit an.
-        rangeData: forecastRanges,
+        // die Balkenhoehe selbst ist bereits der Spannbereich (data oben),
+        // der Erwartungswert wird zusaetzlich im Tooltip genannt.
+        expectedData: forecastExpected,
       },
       {
         label: "Tatsächlich",
@@ -527,15 +532,22 @@ async function refreshForecast() {
               tooltip: {
                 callbacks: {
                   label(context) {
+                    if (context.dataset.label === "Prognose") {
+                      const range = context.raw;
+                      const expected = context.dataset.expectedData?.[context.dataIndex];
+                      if (!range || expected === null || expected === undefined) {
+                        return "Prognose: –";
+                      }
+                      return (
+                        `Prognose: ${expected.toFixed(1)} kWh ` +
+                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+                      );
+                    }
                     const value = context.parsed.y;
                     if (value === null || value === undefined) {
                       return `${context.dataset.label}: –`;
                     }
-                    const range = context.dataset.rangeData?.[context.dataIndex];
-                    const rangeText = range
-                      ? ` (Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      : "";
-                    return `${context.dataset.label}: ${value.toFixed(1)} kWh${rangeText}`;
+                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
                   },
                 },
               },
