@@ -91,14 +91,14 @@ def test_get_latest_appends_corrected_combined_entry(client, monkeypatch):
         poller_singleton.latest = {}
 
 
-def test_get_today_summary_appends_corrected_combined_entry(client, monkeypatch):
+def test_get_today_summary_appends_corrected_combined_entry(client, monkeypatch, frozen_now):
     monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
     _login(client)
 
     from app.database import SessionLocal
     from app.models import Reading
 
-    now = datetime.now(timezone.utc)
+    now = frozen_now
     db = SessionLocal()
     try:
         db.add_all(
@@ -245,13 +245,13 @@ def test_get_history_uses_house_wide_home_for_single_device_selection(client, mo
     assert point["pv_power_w"] == pytest.approx(1332.9)
 
 
-def test_get_daily_totals_home_metric_ignores_device_id_when_multi(client, monkeypatch):
+def test_get_daily_totals_home_metric_ignores_device_id_when_multi(client, monkeypatch, frozen_now):
     """Fuer die hausweite Metrik "home" muss /daily-totals denselben Wert
     liefern, egal ob device_id=wr1 mitgegeben wird oder nicht - Hausverbrauch
     laesst sich nicht sinnvoll einem einzelnen Wechselrichter zuordnen."""
     monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
     _login(client)
-    now = datetime.now(timezone.utc)
+    now = frozen_now
     _insert_two_device_readings(now)
 
     res_all = client.get("/api/readings/daily-totals?metric=home&days=1")
@@ -269,13 +269,13 @@ def test_get_daily_totals_home_metric_ignores_device_id_when_multi(client, monke
     assert kwh_wr1 < kwh_all
 
 
-def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeypatch):
+def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeypatch, frozen_now):
     """Die drei Anteile (PV/Speicher/Netz) muessen sich zum bekannten,
     korrigierten Gesamt-Hausverbrauch aufsummieren (fuer den gestapelten
     Balken im Tagesverbrauch-Diagramm)."""
     monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
     _login(client)
-    now = datetime.now(timezone.utc)
+    now = frozen_now
     _insert_two_device_readings(now)
 
     res_breakdown = client.get("/api/readings/daily-home-breakdown?days=1")
@@ -293,7 +293,7 @@ def test_get_daily_home_breakdown_sums_to_total_home_consumption(client, monkeyp
     )
 
 
-def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatch):
+def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatch, frozen_now):
     """Regression: der PV-Gesamtwert ("_all_") ist die Summe der je Geraet
     ermittelten REINEN PV-Tageswerte (pv_power_w - battery_power_w, Batterie
     an PV3 herausgerechnet) - und der geraeteeigene Zaehler yield_day_kwh wird
@@ -305,7 +305,7 @@ def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatc
 
     monkeypatch.setattr(app_settings, "inverters", [WR1, WR2])
 
-    now = datetime.now(timezone.utc)
+    now = frozen_now
     # Bogus-Zaehler im Live-Cache: muss ignoriert werden.
     poller_singleton.latest = {
         "wr1": {"device_id": "wr1", "device_name": WR1.name, "timestamp": now,
