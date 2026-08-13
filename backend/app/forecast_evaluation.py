@@ -84,64 +84,23 @@ def _difference_percent(expected_kwh: float, actual_kwh: float) -> float | None:
     return 100.0 * (actual_kwh - expected_kwh) / expected_kwh
 
 
-def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
-    """Vergleicht abgeschlossene Stundenprognosen mit der echten PV-Leistung."""
-    from .energy_forecast import load_hourly_pv_history
+def _build_accuracy_days(
+    matched: list[tuple[str, datetime, str, float, float]],
+    device_names: dict[str, str],
+) -> tuple[list[dict], float, float]:
+    """Baut aus bereits abgeglichenen (date_key, Stunde, device_id,
+    expected_w, actual_w)-Tupeln die Genauigkeits-Eintraege je Tag (mit
+    Pro-Geraet- UND kombinierter Aufschluesselung). Wird sowohl fuer die
+    abgeschlossenen Vergangenheitstage als auch fuer "heute (bisher)"
+    verwendet - dieselbe Aggregationslogik (stuendliche absolute Fehler
+    statt Netto-Tagesdifferenz, siehe Kommentare in get_forecast_accuracy)
+    gilt fuer beide gleichermassen.
 
-    now = _utc(now or datetime.now(timezone.utc))
-    local_tz = ZoneInfo(settings.timezone_name)
-    today = now.astimezone(local_tz).date()
-    end = datetime.combine(today, time.min, tzinfo=local_tz).astimezone(timezone.utc)
-    start = datetime.combine(
-        today - timedelta(days=days), time.min, tzinfo=local_tz
-    ).astimezone(timezone.utc)
-
-    session = SessionLocal()
-    try:
-        stored = session.scalars(
-            select(ForecastPrediction)
-            .where(
-                ForecastPrediction.target_timestamp >= start,
-                ForecastPrediction.target_timestamp < end,
-            )
-            .order_by(ForecastPrediction.target_timestamp)
-        ).all()
-    finally:
-        session.close()
-    if not stored:
-        return {
-            "available": False,
-            "message": "Noch keine abgeschlossenen Prognosen zum Vergleichen.",
-            "overall_accuracy_percent": None,
-            "days": [],
-        }
-
-    actual_history = load_hourly_pv_history(start, end)
-    device_names = {device.id: device.name for device in settings.inverters}
-
-    # Jede Stunde, fuer die eine gespeicherte Vorhersage UND ein passender
-    # Messwert existiert: (date_key, Stunde, device_id, expected_w, actual_w).
-    matched: list[tuple[str, datetime, str, float, float]] = []
-    for prediction in stored:
-        target = _utc(prediction.target_timestamp)
-        actual = actual_history.get(prediction.device_id, {}).get(
-            target + timedelta(hours=1)
-        )
-        if actual is None:
-            continue
-        date_key = target.astimezone(local_tz).date().isoformat()
-        matched.append(
-            (date_key, target, prediction.device_id, prediction.expected_w, actual)
-        )
-
-    if not matched:
-        return {
-            "available": False,
-            "message": "Prognosen vorhanden, aber noch keine passenden Messwerte.",
-            "overall_accuracy_percent": None,
-            "days": [],
-        }
-
+    Rueckgabe: (Tages-Eintraege absteigend nach Datum, Summe der absoluten
+    Fehler ueber ALLE uebergebenen Tage, Summe des Ist-Ertrags ueber ALLE
+    uebergebenen Tage) - die letzten beiden Werte dienen dem Aufrufer zur
+    Berechnung einer uebergreifenden Genauigkeit (z.B.
+    overall_accuracy_percent)."""
     # Pro Geraet UND Tag: die Abweichung JEDER einzelnen Stunde zaehlt fuer
     # sich (absolut) in die Genauigkeit ein, nicht die Differenz der
     # Tagessumme - sonst wuerde ein Tag, an dem die Prognose z.B. vormittags
@@ -246,6 +205,99 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
                 "devices": devices,
             }
         )
+    return result_days, total_abs_error, total_actual
+
+
+def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
+    """Vergleicht abgeschlossene Stundenprognosen mit der echten PV-Leistung.
+
+    "days" bezieht sich ausschliesslich auf ABGESCHLOSSENE, vergangene Tage
+    (result["days"]) - der laufende Tag ist bewusst nicht darunter, weil er
+    noch nicht vorbei ist und eine Mischung aus vollstaendigen und
+    unvollstaendigen Tagen die Statistik verzerren wuerde. Stattdessen
+    liefert result["today_so_far"] zusaetzlich (falls schon Messwerte fuer
+    heute vorliegen) denselben Vergleich fuer die bereits vergangenen
+    Stunden des laufenden Tages - die Abweichung kann dort durchaus groesser
+    ausfallen als bei den vollstaendigen Tagen, weil hier absichtlich JEDE
+    einzelne Stunde zaehlt und sich noch keine guten UND schlechten Stunden
+    ueber einen ganzen Tag ausgleichen konnten."""
+    from .energy_forecast import load_hourly_pv_history
+
+    now = _utc(now or datetime.now(timezone.utc))
+    local_tz = ZoneInfo(settings.timezone_name)
+    today = now.astimezone(local_tz).date()
+    today_key = today.isoformat()
+    today_start = datetime.combine(today, time.min, tzinfo=local_tz).astimezone(
+        timezone.utc
+    )
+    start = datetime.combine(
+        today - timedelta(days=days), time.min, tzinfo=local_tz
+    ).astimezone(timezone.utc)
+
+    session = SessionLocal()
+    try:
+        stored = session.scalars(
+            select(ForecastPrediction)
+            .where(
+                ForecastPrediction.target_timestamp >= start,
+                # Obere Grenze ist "now" statt des bisherigen
+                # Tagesbeginns: so fliessen auch schon vergangene Stunden
+                # des LAUFENDEN Tages mit ein (fuer today_so_far unten),
+                # ohne die Historie doppelt abzufragen.
+                ForecastPrediction.target_timestamp < now,
+            )
+            .order_by(ForecastPrediction.target_timestamp)
+        ).all()
+    finally:
+        session.close()
+    if not stored:
+        return {
+            "available": False,
+            "message": "Noch keine abgeschlossenen Prognosen zum Vergleichen.",
+            "overall_accuracy_percent": None,
+            "days": [],
+            "today_so_far": None,
+        }
+
+    actual_history = load_hourly_pv_history(start, now)
+    device_names = {device.id: device.name for device in settings.inverters}
+
+    # Jede Stunde, fuer die eine gespeicherte Vorhersage UND ein passender
+    # Messwert existiert: (date_key, Stunde, device_id, expected_w, actual_w).
+    matched: list[tuple[str, datetime, str, float, float]] = []
+    for prediction in stored:
+        target = _utc(prediction.target_timestamp)
+        actual = actual_history.get(prediction.device_id, {}).get(
+            target + timedelta(hours=1)
+        )
+        if actual is None:
+            continue
+        date_key = target.astimezone(local_tz).date().isoformat()
+        matched.append(
+            (date_key, target, prediction.device_id, prediction.expected_w, actual)
+        )
+
+    if not matched:
+        return {
+            "available": False,
+            "message": "Prognosen vorhanden, aber noch keine passenden Messwerte.",
+            "overall_accuracy_percent": None,
+            "days": [],
+            "today_so_far": None,
+        }
+
+    # Heutiger (laufender) Tag getrennt von den abgeschlossenen
+    # Vergangenheitstagen halten - siehe Docstring oben.
+    matched_past = [item for item in matched if item[0] != today_key]
+    matched_today = [item for item in matched if item[0] == today_key]
+
+    result_days, total_abs_error, total_actual = _build_accuracy_days(
+        matched_past, device_names
+    )
+    today_days, _today_abs_error, _today_actual = _build_accuracy_days(
+        matched_today, device_names
+    )
+    today_so_far = today_days[0] if today_days else None
 
     overall = _accuracy_from_absolute_error(total_abs_error, total_actual)
     return {
@@ -253,4 +305,5 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
         "message": "Vergleich der gespeicherten Prognosen mit echten Messwerten.",
         "overall_accuracy_percent": round(overall, 1) if overall is not None else None,
         "days": result_days,
+        "today_so_far": today_so_far,
     }

@@ -607,8 +607,11 @@ async function refreshForecastAccuracy() {
     const data = await fetchJson("/api/forecast/accuracy?days=30");
     const status = el("forecast-accuracy-status");
     const container = el("forecast-accuracy-days");
+    const todayContainer = el("forecast-accuracy-today");
     const chartWrapper = el("forecast-accuracy-chart").parentElement;
     container.innerHTML = "";
+    todayContainer.innerHTML = "";
+    todayContainer.classList.add("hidden");
     if (!data.available) {
       status.textContent = data.message;
       chartWrapper.classList.add("hidden");
@@ -628,6 +631,47 @@ async function refreshForecastAccuracy() {
     const deviceName = deviceId
       ? state.devices.find((d) => d.id === deviceId)?.name || deviceId
       : null;
+
+    // "Heute (bisher)" separat VOR den abgeschlossenen Tagen anzeigen -
+    // unabhaengig davon, ob unten ueberhaupt schon abgeschlossene Tage fuer
+    // das gewaehlte Geraet vorliegen (deshalb hier und nicht erst nach dem
+    // cardEntries-Fruehausstieg weiter unten). Die Abweichung kann hier
+    // groesser wirken als bei den abgeschlossenen Tagen, weil sich gute und
+    // schlechte Stunden noch nicht ueber einen ganzen Tag ausgleichen
+    // konnten (siehe forecast_evaluation.get_forecast_accuracy).
+    const todayValues = data.today_so_far
+      ? deviceId
+        ? data.today_so_far.devices.find((d) => d.device_id === deviceId)
+        : data.today_so_far
+      : null;
+    if (todayValues) {
+      const card = document.createElement("div");
+      card.className = "forecast-accuracy-day";
+      const title = document.createElement("strong");
+      title.textContent = "Heute (bisher)";
+      const values = document.createElement("span");
+      values.className = "forecast-accuracy-values";
+      values.textContent = `Erwartet ${todayValues.expected_kwh.toFixed(1)} · tatsächlich ${todayValues.actual_kwh.toFixed(1)} kWh`;
+      const difference = document.createElement("span");
+      difference.className = "muted";
+      const sign = todayValues.difference_kwh > 0 ? "+" : "";
+      const accuracy = todayValues.accuracy_percent === null
+        ? "Genauigkeit –"
+        : `Genauigkeit ${todayValues.accuracy_percent.toFixed(1)} %`;
+      difference.textContent =
+        `Abweichung ${sign}${todayValues.difference_kwh.toFixed(1)} kWh · ${accuracy} · ` +
+        `${todayValues.matched_hours} Stundenwerte bisher`;
+      const note = document.createElement("span");
+      note.className = "forecast-accuracy-today-note";
+      note.textContent =
+        "Noch kein abgeschlossener Tag – die Abweichung kann hier größer wirken als bei den " +
+        "Tagen unten, weil sich gute und schlechte Stunden noch nicht über einen ganzen Tag " +
+        "ausgleichen konnten.";
+      card.append(title, values, difference, note);
+      todayContainer.appendChild(card);
+      todayContainer.classList.remove("hidden");
+    }
+
     const cardEntries = [];
     for (const day of data.days) {
       const values = deviceId ? day.devices.find((d) => d.device_id === deviceId) : day;

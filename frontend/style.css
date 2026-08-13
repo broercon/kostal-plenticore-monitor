@@ -796,6 +796,24 @@ canvas {
   display: none;
 }
 
+/* "Heute (bisher)" - optisch bewusst vom Rest abgesetzt (gestrichelter statt
+   durchgezogener Rahmen, Akzentfarbe): kein abgeschlossener Tag wie die
+   Kacheln darunter, daher nicht direkt mit ihnen vergleichbar. */
+.forecast-accuracy-today {
+  margin: 12px 0;
+  padding: 11px;
+  border: 1px dashed var(--accent-blue);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.forecast-accuracy-today .forecast-accuracy-today-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
 /* ---- Aktualisierungs-Ring in der Topbar: fuellt sich ueber das
    Auto-Refresh-Intervall und ist "voll", wenn die Werte aktualisiert
    werden. ---- */

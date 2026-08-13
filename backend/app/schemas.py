@@ -369,3 +369,9 @@ class ForecastAccuracyOut(BaseModel):
     message: str
     overall_accuracy_percent: float | None = None
     days: list[ForecastAccuracyDayOut]
+    # Derselbe Vergleich fuer die bereits vergangenen Stunden des LAUFENDEN
+    # Tages, getrennt von den abgeschlossenen Tagen in "days" gehalten (kein
+    # vollstaendiger Tag, daher nicht direkt vergleichbar) - siehe
+    # forecast_evaluation.get_forecast_accuracy fuer die Begruendung. None,
+    # solange fuer heute noch keine passenden Messwerte vorliegen.
+    today_so_far: ForecastAccuracyDayOut | None = None

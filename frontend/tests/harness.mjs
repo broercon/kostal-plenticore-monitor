@@ -181,6 +181,37 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           available: true,
           message: "Vergleich der gespeicherten Prognosen mit echten Messwerten.",
           overall_accuracy_percent: 92.4,
+          today_so_far: {
+            date: "2026-07-13",
+            expected_kwh: 3.0,
+            actual_kwh: 4.5,
+            difference_kwh: 1.5,
+            difference_percent: 50.0,
+            accuracy_percent: 66.7,
+            matched_hours: 3,
+            devices: [
+              {
+                device_id: "wr1",
+                device_name: "WR1",
+                expected_kwh: 2.0,
+                actual_kwh: 3.0,
+                difference_kwh: 1.0,
+                difference_percent: 50.0,
+                accuracy_percent: 66.7,
+                matched_hours: 3,
+              },
+              {
+                device_id: "wr2",
+                device_name: "WR2",
+                expected_kwh: 1.0,
+                actual_kwh: 1.5,
+                difference_kwh: 0.5,
+                difference_percent: 50.0,
+                accuracy_percent: 66.7,
+                matched_hours: 3,
+              },
+            ],
+          },
           days: [
             {
               date: "2026-07-12",

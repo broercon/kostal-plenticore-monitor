@@ -206,6 +206,109 @@ def test_accuracy_allows_cancellation_across_devices_within_the_same_hour(client
     assert wr2["accuracy_percent"] < 100.0
 
 
+def test_accuracy_reports_today_so_far_separately_from_completed_days(client):
+    """Der laufende Tag darf nicht in "days" (abgeschlossene Tage)
+    landen - stattdessen soll er separat in "today_so_far" auftauchen, mit
+    derselben stuendlichen Genauigkeitsberechnung wie bei den
+    abgeschlossenen Tagen."""
+    yesterday_hour = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    today_hour = datetime(2026, 6, 2, 8, tzinfo=timezone.utc)
+    generated_at = yesterday_hour - timedelta(days=1)
+    save_forecast_predictions(
+        {"wr1": {yesterday_hour: (3000.0, 2000.0, 4000.0)}},
+        {"wr1": "standard"},
+        generated_at,
+    )
+    save_forecast_predictions(
+        {"wr1": {today_hour: (2000.0, 1000.0, 3000.0)}},
+        {"wr1": "standard"},
+        today_hour - timedelta(hours=2),
+    )
+    session = SessionLocal()
+    try:
+        session.add_all(
+            [
+                Reading(
+                    device_id="wr1",
+                    device_name="WR 1",
+                    timestamp=yesterday_hour + timedelta(minutes=30),
+                    pv_power_w=4000.0,
+                    battery_power_w=0.0,
+                ),
+                # Heute lief die Prognose staerker daneben (1500 W zu
+                # niedrig) als der abgeschlossene Vergangenheitstag (1000 W
+                # zu hoch) - genau das soll today_so_far zeigen koennen,
+                # ohne die "days"-Statistik zu verfaelschen.
+                Reading(
+                    device_id="wr1",
+                    device_name="WR 1",
+                    timestamp=today_hour + timedelta(minutes=30),
+                    pv_power_w=3500.0,
+                    battery_power_w=0.0,
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    # "now" liegt am selben Kalendertag (lokal, Europe/Berlin) wie today_hour,
+    # aber nach dessen vollstaendigem Ablauf.
+    result = get_forecast_accuracy(
+        days=2, now=datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    )
+
+    assert result["available"] is True
+    # Der laufende Tag (2026-06-02) darf NICHT unter den abgeschlossenen
+    # Tagen auftauchen.
+    assert all(day["date"] != "2026-06-02" for day in result["days"])
+    assert any(day["date"] == "2026-06-01" for day in result["days"])
+
+    assert result["today_so_far"] is not None
+    assert result["today_so_far"]["date"] == "2026-06-02"
+    assert result["today_so_far"]["expected_kwh"] == 2.0
+    assert result["today_so_far"]["actual_kwh"] == 3.5
+    assert result["today_so_far"]["devices"][0]["device_id"] == "wr1"
+
+    # overall_accuracy_percent bezieht sich weiterhin nur auf die
+    # abgeschlossenen Tage, nicht auf den unvollstaendigen laufenden Tag.
+    completed_day = next(d for d in result["days"] if d["date"] == "2026-06-01")
+    assert result["overall_accuracy_percent"] == completed_day["accuracy_percent"]
+
+
+def test_accuracy_today_so_far_is_none_without_matching_hours_today(client):
+    """Solange fuer den laufenden Tag noch keine passenden Messwerte
+    vorliegen (z.B. ganz am Anfang des Tages), bleibt today_so_far None,
+    statt einen leeren/falschen Eintrag vorzutaeuschen."""
+    yesterday_hour = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    generated_at = yesterday_hour - timedelta(days=1)
+    save_forecast_predictions(
+        {"wr1": {yesterday_hour: (3000.0, 2000.0, 4000.0)}},
+        {"wr1": "standard"},
+        generated_at,
+    )
+    session = SessionLocal()
+    try:
+        session.add(
+            Reading(
+                device_id="wr1",
+                device_name="WR 1",
+                timestamp=yesterday_hour + timedelta(minutes=30),
+                pv_power_w=4000.0,
+                battery_power_w=0.0,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    result = get_forecast_accuracy(
+        days=2, now=datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    )
+    assert result["available"] is True
+    assert result["today_so_far"] is None
+
+
 def test_accuracy_endpoint_requires_login(client):
     assert client.get("/api/forecast/accuracy").status_code == 401
     make_user("accuracy-viewer", "valid-password", role="betreiber")

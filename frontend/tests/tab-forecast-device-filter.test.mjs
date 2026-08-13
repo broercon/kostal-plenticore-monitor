@@ -92,6 +92,29 @@ test("Prognosekontrolle zeigt nach Wechsel auf WR1 nur dessen eigenen Vergleich"
   assert.equal(devices.textContent, "");
 });
 
+test("Prognosekontrolle zeigt 'Heute (bisher)' separat von den abgeschlossenen Tagen", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => !app.document.getElementById("forecast-accuracy-today").classList.contains("hidden"));
+
+  const today = app.document.getElementById("forecast-accuracy-today");
+  assert.match(today.textContent, /Heute \(bisher\)/);
+  assert.match(today.textContent, /Erwartet 3\.0 · tatsächlich 4\.5 kWh/);
+  assert.match(today.textContent, /3 Stundenwerte bisher/);
+  // Muss unabhaengig von der Kachel-Liste abgeschlossener Tage bestehen -
+  // andere ".forecast-accuracy-day"-Elemente (siehe #forecast-accuracy-days)
+  // duerfen dadurch nicht verschwinden.
+  assert.equal(
+    app.document.querySelectorAll("#forecast-accuracy-days .forecast-accuracy-day").length,
+    1
+  );
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(() => today.textContent.includes("2.0"));
+  assert.match(today.textContent, /Erwartet 2\.0 · tatsächlich 3\.0 kWh/);
+});
+
 test("Stuendliche Prognose (Balkendiagramm) zeigt nur die Stunden von heute, nicht von morgen", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
