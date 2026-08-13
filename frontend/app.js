@@ -307,7 +307,11 @@ async function refreshForecast() {
     const data = await fetchJson("/api/forecast");
     const status = el("forecast-status");
     const dayContainer = el("forecast-days");
+    const hoursTodayContainer = el("forecast-hours-today");
     dayContainer.innerHTML = "";
+    // Vor allen Rueckspruengen leeren: sonst bleiben beim Wechsel auf ein
+    // Geraet ohne eigene Prognose die vorherigen Gesamtwerte sichtbar.
+    hoursTodayContainer.innerHTML = "";
     if (!data.available) {
       status.textContent = data.message;
       if (state.forecastChart) {
@@ -397,18 +401,9 @@ async function refreshForecast() {
     // enthalten, hier soll gezielt "heute im Detail" sichtbar sein).
     // data.days[0] ist per Backend-Konvention immer der heutige lokale Tag
     // (siehe energy_forecast.forecast_weather_for_local_days).
-    const hoursTodayContainer = el("forecast-hours-today");
-    hoursTodayContainer.innerHTML = "";
     const todayKey = data.days[0]?.date;
-    const localDateKey = (isoTimestamp) => {
-      const d = new Date(isoTimestamp);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
-    };
     const todayHours = todayKey
-      ? data.hours.filter((hour) => localDateKey(hour.timestamp) === todayKey)
+      ? data.hours.filter((hour) => hour.local_date === todayKey)
       : [];
     for (const hour of todayHours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;

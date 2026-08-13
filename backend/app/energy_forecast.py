@@ -566,6 +566,10 @@ def _summarize(
         combined_hours.append(
             {
                 "timestamp": interval_start,
+                # Explizite Anlagen-Lokalzeit fuer Frontends: die Zuordnung
+                # zu "heute" darf nicht von der Zeitzone des betrachtenden
+                # Browsers abhaengen.
+                "local_date": interval_start.astimezone(local_tz).date().isoformat(),
                 "expected_kw": round(sum(value[0] for value in values) / 1000, 3),
                 "low_kw": round(sum(value[1] for value in values) / 1000, 3),
                 "high_kw": round(sum(value[2] for value in values) / 1000, 3),
@@ -588,8 +592,7 @@ def _summarize(
 
     hours_by_day: dict[str, list[dict]] = defaultdict(list)
     for hour in combined_hours:
-        date_key = hour["timestamp"].astimezone(local_tz).date().isoformat()
-        hours_by_day[date_key].append(hour)
+        hours_by_day[hour["local_date"]].append(hour)
 
     days = []
     for date_key, day_hours in hours_by_day.items():
