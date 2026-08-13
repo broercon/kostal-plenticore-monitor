@@ -30,6 +30,8 @@ os.environ["FRONTEND_DIR"] = str(_TEST_DIR / "no-frontend")
 os.environ["AUTO_IMPORT_HISTORY"] = "false"
 os.environ["TIMEZONE"] = "Europe/Berlin"
 
+from datetime import datetime, timezone  # noqa: E402
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -53,6 +55,50 @@ def client():
     init_db()
     auth.seed_default_users()
     return TestClient(fastapi_app)
+
+
+# Fester Referenzzeitpunkt weit von jeder Tagesgrenze entfernt (12:00 UTC =
+# 13:00/14:00 Europe/Berlin, je nach Sommerzeit) - fuer Tests, die Messwerte
+# "gerade eben" einfuegen und danach ueber einen Endpunkt/eine Funktion die
+# TAGES-Aggregation abrufen (z.B. /api/readings/today-summary,
+# build_daily_summaries). Ohne eingefrorene Zeit wuerden solche Tests knapp
+# vor lokaler Mitternacht sporadisch fehlschlagen: die Testdaten werden mit
+# einem "now" kurz VOR Mitternacht eingefuegt, der Endpunkt bestimmt "heute"
+# aber ueber einen eigenen, wenige Millisekunden SPAETEREN
+# datetime.now()-Aufruf - liegt dazwischen die Tagesgrenze, faellt der
+# frisch eingefuegte Messwert faelschlich aus "heute" heraus (siehe
+# frozen_now()-Fixture unten).
+FROZEN_NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture()
+def frozen_now(monkeypatch):
+    """Friert 'jetzt' auf FROZEN_NOW ein, fuer alle Module, die "heute"
+    ueber datetime.now(...) bestimmen (app.timeutil, app.daily_summary,
+    app.main) - siehe Kommentar bei FROZEN_NOW oben. Gibt FROZEN_NOW
+    zurueck, damit der Test dieselbe Referenzzeit fuer seine Testdaten
+    verwendet (statt eines eigenen datetime.now(timezone.utc)-Aufrufs, der
+    dann leicht von der eingefrorenen Zeit abweichen wuerde).
+
+    Nur .now() wird ueberschrieben - alles andere (combine, min,
+    fromtimestamp, Konstruktor, ...) verhaelt sich wie das echte
+    datetime.datetime, da _FrozenDatetime davon erbt statt es zu ersetzen.
+    """
+    import app.daily_summary as daily_summary_module
+    import app.main as main_module
+    import app.timeutil as timeutil_module
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return FROZEN_NOW.replace(tzinfo=None)
+            return FROZEN_NOW.astimezone(tz)
+
+    for module in (daily_summary_module, main_module, timeutil_module):
+        monkeypatch.setattr(module, "datetime", _FrozenDatetime)
+
+    return FROZEN_NOW
 
 
 def make_user(username: str, password: str, role: str = "betreiber", must_change_password: bool = False) -> User:
