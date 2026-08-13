@@ -318,15 +318,20 @@ canvas {
 
 .view-tabs {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 4px;
   margin-bottom: 22px;
   border-bottom: 1px solid var(--panel-border);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.view-tabs::-webkit-scrollbar {
-  display: none;
+  /* WICHTIG: hier kein overflow-x/-y setzen. Die Flyout-Menues
+     (.view-tab-menu) haengen unterhalb der Reiter und ueberragen damit die
+     Boxhoehe von .view-tabs - jedes overflow ausser "visible" auf EINER
+     Achse zwingt laut CSS-Spec auch die ANDERE Achse zu "auto" (selbst
+     wenn diese explizit auf "visible" gesetzt waere), was die Menues
+     abschneiden wuerde (in jedem Standard-Browser, nicht nur Safari - war
+     vorher per overflow-x:auto genau dieser Bug). Bei zu vielen/zu langen
+     Reitern wird stattdessen in eine zweite Zeile umgebrochen
+     (flex-wrap), statt horizontal zu scrollen. */
 }
 
 .view-tabs button {
