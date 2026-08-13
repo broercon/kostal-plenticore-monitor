@@ -176,6 +176,66 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
             },
           ],
         };
+      case "/api/forecast/yesterday":
+        return {
+          available: true,
+          message: "Stündlicher Vergleich der gespeicherten Prognosen mit den echten Messwerten für gestern.",
+          date: "2026-07-12",
+          hours: [
+            {
+              timestamp: "2026-07-12T05:00:00Z",
+              local_hour: "2026-07-12T07:00:00",
+              expected_kw: 2.0,
+              low_kw: 1.6,
+              high_kw: 2.4,
+              actual_kw: 2.3,
+              devices: [
+                {
+                  device_id: "wr1",
+                  device_name: "WR1",
+                  expected_kw: 1.2,
+                  low_kw: 1.0,
+                  high_kw: 1.4,
+                  actual_kw: 1.4,
+                },
+                {
+                  device_id: "wr2",
+                  device_name: "WR2",
+                  expected_kw: 0.8,
+                  low_kw: 0.6,
+                  high_kw: 1.0,
+                  actual_kw: 0.9,
+                },
+              ],
+            },
+            {
+              timestamp: "2026-07-12T11:00:00Z",
+              local_hour: "2026-07-12T13:00:00",
+              expected_kw: 4.5,
+              low_kw: 3.8,
+              high_kw: 5.2,
+              actual_kw: 4.0,
+              devices: [
+                {
+                  device_id: "wr1",
+                  device_name: "WR1",
+                  expected_kw: 3.0,
+                  low_kw: 2.5,
+                  high_kw: 3.5,
+                  actual_kw: 2.6,
+                },
+                {
+                  device_id: "wr2",
+                  device_name: "WR2",
+                  expected_kw: 1.5,
+                  low_kw: 1.3,
+                  high_kw: 1.7,
+                  actual_kw: 1.4,
+                },
+              ],
+            },
+          ],
+        };
       case "/api/forecast/accuracy":
         return {
           available: true,

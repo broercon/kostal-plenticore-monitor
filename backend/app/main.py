@@ -42,7 +42,7 @@ from .forecast_config import (
     update_config as update_forecast_config,
 )
 from .energy_forecast import forecast_service
-from .forecast_evaluation import get_forecast_accuracy
+from .forecast_evaluation import get_forecast_accuracy, get_yesterday_hourly_comparison
 from .daily_summary import (
     build_daily_home_breakdown,
     build_daily_summaries,
@@ -71,6 +71,7 @@ from .schemas import (
     ForecastConfigIn,
     ForecastConfigOut,
     ForecastAccuracyOut,
+    ForecastYesterdayOut,
     EnergyForecastOut,
     PvYieldSummaryOut,
     HistoryPoint,
@@ -295,6 +296,16 @@ async def get_forecast_accuracy_endpoint(
     """Vergleicht gespeicherte Prognosen mit der spaeter gemessenen Erzeugung."""
     result = await asyncio.to_thread(get_forecast_accuracy, days)
     return ForecastAccuracyOut.model_validate(result)
+
+
+@app.get("/api/forecast/yesterday", response_model=ForecastYesterdayOut)
+async def get_forecast_yesterday_endpoint(
+    _user: User = Depends(auth.get_current_user),
+) -> ForecastYesterdayOut:
+    """Stuendlicher Prognose-vs-Ist-Vergleich fuer den gestrigen, komplett
+    abgeschlossenen Tag (siehe forecast_evaluation.get_yesterday_hourly_comparison)."""
+    result = await asyncio.to_thread(get_yesterday_hourly_comparison)
+    return ForecastYesterdayOut.model_validate(result)
 
 
 @app.post("/api/admin/import-history", response_model=ImportTriggerOut)

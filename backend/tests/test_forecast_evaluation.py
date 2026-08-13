@@ -6,7 +6,11 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.forecast_evaluation import get_forecast_accuracy, save_forecast_predictions
+from app.forecast_evaluation import (
+    get_forecast_accuracy,
+    get_yesterday_hourly_comparison,
+    save_forecast_predictions,
+)
 from app.models import ForecastPrediction, Reading
 
 from .conftest import make_user
@@ -307,6 +311,128 @@ def test_accuracy_today_so_far_is_none_without_matching_hours_today(client):
     )
     assert result["available"] is True
     assert result["today_so_far"] is None
+
+
+def test_yesterday_hourly_comparison_combines_devices_and_keeps_hours_separate(client):
+    """Gegenstueck zu get_forecast_accuracy(), aber auf Stundenebene fuer den
+    kompletten Vortag: jede Stunde bleibt fuer sich (keine Tagesverdichtung),
+    die Kombination ueber die Geraete INNERHALB derselben Stunde ist aber
+    weiterhin eine simple Summe (physikalisch gueltig)."""
+    hour1 = datetime(2026, 6, 1, 11, tzinfo=timezone.utc)
+    hour2 = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    generated_at = hour1 - timedelta(days=1)
+    save_forecast_predictions(
+        {
+            "wr1": {
+                hour1: (3000.0, 2500.0, 3500.0),
+                hour2: (4000.0, 3500.0, 4500.0),
+            },
+            "wr2": {
+                hour1: (1000.0, 800.0, 1200.0),
+                hour2: (1500.0, 1300.0, 1700.0),
+            },
+        },
+        {"wr1": "standard", "wr2": "learned"},
+        generated_at,
+    )
+    session = SessionLocal()
+    try:
+        session.add_all(
+            [
+                Reading(
+                    device_id="wr1",
+                    device_name="WR 1",
+                    timestamp=hour1 + timedelta(minutes=30),
+                    pv_power_w=3200.0,
+                    battery_power_w=0.0,
+                ),
+                Reading(
+                    device_id="wr1",
+                    device_name="WR 1",
+                    timestamp=hour2 + timedelta(minutes=30),
+                    pv_power_w=3900.0,
+                    battery_power_w=0.0,
+                ),
+                Reading(
+                    device_id="wr2",
+                    device_name="WR 2",
+                    timestamp=hour1 + timedelta(minutes=30),
+                    pv_power_w=900.0,
+                    battery_power_w=0.0,
+                ),
+                Reading(
+                    device_id="wr2",
+                    device_name="WR 2",
+                    timestamp=hour2 + timedelta(minutes=30),
+                    pv_power_w=1600.0,
+                    battery_power_w=0.0,
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    # "now" liegt lokal (Europe/Berlin) am 2026-06-02 - der Vortag ist damit
+    # der 2026-06-01, an dem beide Stunden liegen.
+    result = get_yesterday_hourly_comparison(
+        now=datetime(2026, 6, 2, 8, tzinfo=timezone.utc)
+    )
+    assert result["available"] is True
+    assert result["date"] == "2026-06-01"
+    assert len(result["hours"]) == 2
+
+    hour1_entry, hour2_entry = result["hours"]
+    assert hour1_entry["expected_kw"] == 4.0  # 3.0 + 1.0
+    assert hour1_entry["actual_kw"] == 4.1  # 3.2 + 0.9
+    assert hour1_entry["low_kw"] == 3.3
+    assert hour1_entry["high_kw"] == 4.7
+    assert {d["device_id"] for d in hour1_entry["devices"]} == {"wr1", "wr2"}
+    wr1_hour1 = next(d for d in hour1_entry["devices"] if d["device_id"] == "wr1")
+    assert wr1_hour1["expected_kw"] == 3.0
+    assert wr1_hour1["actual_kw"] == 3.2
+
+    assert hour2_entry["expected_kw"] == 5.5  # 4.0 + 1.5
+    assert hour2_entry["actual_kw"] == 5.5  # 3.9 + 1.6
+
+
+def test_yesterday_hourly_comparison_unavailable_without_stored_predictions(client):
+    result = get_yesterday_hourly_comparison(
+        now=datetime(2026, 6, 2, 8, tzinfo=timezone.utc)
+    )
+    assert result["available"] is False
+    assert result["date"] == "2026-06-01"
+    assert result["hours"] == []
+
+
+def test_yesterday_hourly_comparison_keeps_actual_none_without_matching_reading(client):
+    """Fehlt fuer eine gespeicherte Prognose-Stunde noch der passende
+    Messwert (z.B. Ausfall), bleibt actual_kw None statt faelschlich 0."""
+    hour = datetime(2026, 6, 1, 11, tzinfo=timezone.utc)
+    save_forecast_predictions(
+        {"wr1": {hour: (3000.0, 2500.0, 3500.0)}},
+        {"wr1": "standard"},
+        hour - timedelta(days=1),
+    )
+    result = get_yesterday_hourly_comparison(
+        now=datetime(2026, 6, 2, 8, tzinfo=timezone.utc)
+    )
+    assert result["available"] is True
+    assert len(result["hours"]) == 1
+    assert result["hours"][0]["actual_kw"] is None
+    assert result["hours"][0]["devices"][0]["actual_kw"] is None
+
+
+def test_yesterday_endpoint_requires_login(client):
+    assert client.get("/api/forecast/yesterday").status_code == 401
+    make_user("yesterday-viewer", "valid-password", role="betreiber")
+    client.post(
+        "/api/auth/login",
+        json={"username": "yesterday-viewer", "password": "valid-password"},
+    )
+    response = client.get("/api/forecast/yesterday")
+    assert response.status_code == 200
+    assert response.json()["available"] is False
 
 
 def test_accuracy_endpoint_requires_login(client):

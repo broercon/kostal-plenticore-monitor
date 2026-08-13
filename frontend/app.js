@@ -24,6 +24,7 @@ const state = {
   forecastChart: null,
   forecastAccuracyChart: null,
   forecastHoursTodayChart: null,
+  forecastYesterdayChart: null,
   // Welche Ansichts-Tabs (siehe setupViewTabs) schon mindestens einmal
   // geladen wurden - nur fuer diese laeuft ein periodisches Auto-Refresh und
   // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
@@ -611,6 +612,130 @@ async function refreshForecast() {
       },
     });
 
+  });
+}
+
+// --- "Gestern" (Prognose-Tab): dieselbe stuendliche Balken-Darstellung wie
+// "Stuendliche Prognose heute" (Floating-Bar Prognose + Balken Ist-Wert),
+// aber fuer den komplett abgeschlossenen Vortag - dort hat inzwischen jede
+// Stunde einen Ist-Wert. Anders als bei "heute" liefert das Backend
+// (/api/forecast/yesterday, aus den gespeicherten ForecastPrediction-Zeilen
+// statt der Wettervorhersage) Prognose UND Ist-Wert bereits gemeinsam je
+// Stunde - kein zweiter Fetch/Abgleich noetig wie bei refreshForecast(). ---
+async function refreshForecastYesterday() {
+  return withLoading(["#forecast-yesterday-chart-wrapper"], async () => {
+    const data = await fetchJson("/api/forecast/yesterday");
+    const status = el("forecast-yesterday-status");
+    const deviceId = state.selectedDeviceId;
+    const deviceName = deviceId
+      ? state.devices.find((d) => d.id === deviceId)?.name || deviceId
+      : null;
+
+    if (!data.available) {
+      status.textContent = data.message;
+      if (state.forecastYesterdayChart) {
+        state.forecastYesterdayChart.destroy();
+        state.forecastYesterdayChart = null;
+      }
+      return;
+    }
+
+    const deviceHasData =
+      !deviceId ||
+      data.hours.some((hour) => hour.devices.some((d) => d.device_id === deviceId));
+    if (deviceId && !deviceHasData) {
+      status.textContent = `Für ${deviceName} liegen für gestern keine gespeicherten Prognosen vor.`;
+      if (state.forecastYesterdayChart) {
+        state.forecastYesterdayChart.destroy();
+        state.forecastYesterdayChart = null;
+      }
+      return;
+    }
+
+    status.textContent = deviceId
+      ? `Stündlicher Vergleich für ${deviceName}, gestern (${data.date}).`
+      : `${data.message} (${data.date})`;
+
+    const hourLabels = data.hours.map((hour) => fmtForecastTime(hour.timestamp));
+    const forecastExpected = [];
+    const forecastRanges = [];
+    const actualValues = [];
+    for (const hour of data.hours) {
+      const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
+      forecastExpected.push(hourValues ? hourValues.expected_kw : null);
+      forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
+      actualValues.push(hourValues ? hourValues.actual_kw : null);
+    }
+
+    const datasets = [
+      {
+        label: "Prognose",
+        data: forecastRanges,
+        backgroundColor: "#38bdf8",
+        borderColor: "#38bdf8",
+        borderWidth: 1,
+        borderRadius: 3,
+        // Nur fuer den Tooltip mitgefuehrt - die Balkenhoehe selbst ist
+        // bereits der Spannbereich (data oben), siehe refreshForecast().
+        expectedData: forecastExpected,
+      },
+      {
+        label: "Tatsächlich",
+        data: actualValues,
+        backgroundColor: "#facc15",
+        borderColor: "#facc15",
+        borderWidth: 1,
+        borderRadius: 3,
+      },
+    ];
+
+    if (state.forecastYesterdayChart) {
+      state.forecastYesterdayChart.data.labels = hourLabels;
+      state.forecastYesterdayChart.data.datasets = datasets;
+      state.forecastYesterdayChart.update();
+    } else {
+      state.forecastYesterdayChart = new Chart(
+        el("forecast-yesterday-chart").getContext("2d"),
+        {
+          type: "bar",
+          data: { labels: hourLabels, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            events: chartEvents(),
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
+              y: { beginAtZero: true, title: { display: true, text: "kWh" } },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label(context) {
+                    if (context.dataset.label === "Prognose") {
+                      const range = context.raw;
+                      const expected = context.dataset.expectedData?.[context.dataIndex];
+                      if (!range || expected === null || expected === undefined) {
+                        return "Prognose: –";
+                      }
+                      return (
+                        `Prognose: ${expected.toFixed(1)} kWh ` +
+                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+                      );
+                    }
+                    const value = context.parsed.y;
+                    if (value === null || value === undefined) {
+                      return `${context.dataset.label}: –`;
+                    }
+                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
+                  },
+                },
+              },
+            },
+          },
+        }
+      );
+    }
   });
 }
 
@@ -1918,7 +2043,11 @@ function refreshConsumptionTab() {
 }
 
 function refreshForecastTab() {
-  return Promise.allSettled([refreshForecast(), refreshForecastAccuracy()]);
+  return Promise.allSettled([
+    refreshForecast(),
+    refreshForecastYesterday(),
+    refreshForecastAccuracy(),
+  ]);
 }
 
 // --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
@@ -1931,6 +2060,7 @@ function refreshForecastTab() {
 const FORECAST_SUBVIEW_SECTIONS = {
   days: () => el("forecast-days"),
   "hours-today": () => el("forecast-view-hours-today"),
+  yesterday: () => el("forecast-view-yesterday"),
   "week-chart": () => el("forecast-view-week-chart"),
   accuracy: () => el("forecast-accuracy-section"),
 };
@@ -1952,6 +2082,7 @@ function setForecastSubView(view) {
   state.forecastChart?.resize();
   state.forecastAccuracyChart?.resize();
   state.forecastHoursTodayChart?.resize();
+  state.forecastYesterdayChart?.resize();
 }
 
 function setupForecastSubView() {
@@ -2135,6 +2266,7 @@ function setChartsInteractive(on) {
     state.forecastChart,
     state.forecastAccuracyChart,
     state.forecastHoursTodayChart,
+    state.forecastYesterdayChart,
   ];
   for (const c of charts) {
     if (!c || !c.options) continue;

@@ -364,6 +364,32 @@ class ForecastAccuracyDayOut(BaseModel):
     devices: list[ForecastAccuracyDeviceOut]
 
 
+class ForecastYesterdayHourDeviceOut(BaseModel):
+    device_id: str
+    device_name: str
+    expected_kw: float
+    low_kw: float
+    high_kw: float
+    actual_kw: float | None = None
+
+
+class ForecastYesterdayHourOut(BaseModel):
+    timestamp: datetime
+    local_hour: str
+    expected_kw: float
+    low_kw: float
+    high_kw: float
+    actual_kw: float | None = None
+    devices: list[ForecastYesterdayHourDeviceOut] = []
+
+
+class ForecastYesterdayOut(BaseModel):
+    available: bool
+    message: str
+    date: str | None = None
+    hours: list[ForecastYesterdayHourOut]
+
+
 class ForecastAccuracyOut(BaseModel):
     available: bool
     message: str
