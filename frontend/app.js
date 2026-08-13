@@ -23,6 +23,7 @@ const state = {
   chartsInteractive: true,
   forecastChart: null,
   forecastAccuracyChart: null,
+  forecastHoursTodayChart: null,
   // Welche Ansichts-Tabs (siehe setupViewTabs) schon mindestens einmal
   // geladen wurden - nur fuer diese laeuft ein periodisches Auto-Refresh und
   // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
@@ -312,19 +313,34 @@ function fmtForecastTime(value) {
 
 async function refreshForecast() {
   return withLoading(["#forecast-section"], async () => {
-    const data = await fetchJson("/api/forecast");
+    // Prognose- und Ist-Werte werden parallel geladen: die Ist-Werte
+    // (heutiger Tag, je Wechselrichter) sind die Grundlage fuer den
+    // "Prognose vs. echt"-Vergleich der stuendlichen Ansicht weiter unten.
+    // Schlaegt der Ist-Werte-Abruf fehl, soll das die Prognose selbst nicht
+    // verhindern - dann zeigt die stuendliche Ansicht eben nur die
+    // Prognosebalken ohne Vergleich.
+    const [data, actualHourly] = await Promise.all([
+      fetchJson("/api/forecast"),
+      fetchJson("/api/readings/hourly-per-device?metric=pv&days=1").catch(
+        () => ({ devices: [], buckets: [] })
+      ),
+    ]);
     const status = el("forecast-status");
     const dayContainer = el("forecast-days");
-    const hoursTodayContainer = el("forecast-hours-today");
+    const hoursTodayStatus = el("forecast-hours-today-status");
     dayContainer.innerHTML = "";
     // Vor allen Rueckspruengen leeren: sonst bleiben beim Wechsel auf ein
     // Geraet ohne eigene Prognose die vorherigen Gesamtwerte sichtbar.
-    hoursTodayContainer.innerHTML = "";
+    hoursTodayStatus.textContent = "";
     if (!data.available) {
       status.textContent = data.message;
       if (state.forecastChart) {
         state.forecastChart.destroy();
         state.forecastChart = null;
+      }
+      if (state.forecastHoursTodayChart) {
+        state.forecastHoursTodayChart.destroy();
+        state.forecastHoursTodayChart = null;
       }
       return;
     }
@@ -349,6 +365,10 @@ async function refreshForecast() {
       if (state.forecastChart) {
         state.forecastChart.destroy();
         state.forecastChart = null;
+      }
+      if (state.forecastHoursTodayChart) {
+        state.forecastHoursTodayChart.destroy();
+        state.forecastHoursTodayChart = null;
       }
       return;
     }
@@ -406,38 +426,123 @@ async function refreshForecast() {
 
     // Stuendliche Prognose NUR fuer heute (bewusst kein weiterer Tag - die
     // Stundenwerte fuer 7 Tage sind ohnehin schon im Diagramm unten
-    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein).
+    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein), als
+    // Balkendiagramm: je Stunde ein Prognose-Balken (mit dem gelernten
+    // Spannbereich als Tooltip-Zusatzinfo) neben dem tatsaechlich
+    // gemessenen Ertrag - so ist die Abweichung direkt auf einen Blick
+    // sichtbar statt in Zahlen-Kacheln.
     // data.days[0] ist per Backend-Konvention immer der heutige lokale Tag
     // (siehe energy_forecast.forecast_weather_for_local_days).
     const todayKey = data.days[0]?.date;
     const todayHours = todayKey
       ? data.hours.filter((hour) => hour.local_date === todayKey)
       : [];
+
+    // Ist-Werte je Stunde aus /api/readings/hourly-per-device (siehe oben)
+    // ueber das lokale Stunden-Bucket (hour.local_hour) zuordnen - dasselbe
+    // Bucket-Format wie hour.local_date wird server-seitig berechnet, damit
+    // die Zuordnung nicht von der Zeitzone des Browsers abhaengt (siehe
+    // schemas.ForecastHourOut.local_hour).
+    const actualBuckets = new Map(
+      (actualHourly.buckets || []).map((bucket) => [bucket.bucket, bucket])
+    );
+    function actualKwhFor(hour) {
+      const bucket = actualBuckets.get(hour.local_hour);
+      if (!bucket) return null;
+      if (deviceId) {
+        const value = bucket.values[deviceId];
+        return value === undefined || value === null ? null : value;
+      }
+      const values = Object.values(bucket.values).filter(
+        (value) => value !== null && value !== undefined
+      );
+      if (values.length === 0) return null;
+      return values.reduce((sum, value) => sum + value, 0);
+    }
+    // Nur bereits vollstaendig vergangene Stunden bekommen einen Ist-Wert -
+    // fuer die laufende und kuenftige Stunden gibt es naturgemaess noch
+    // keine (vollstaendige) Messung.
+    const nowMs = Date.now();
+    function isHourElapsed(hour) {
+      return new Date(hour.timestamp).getTime() + 60 * 60 * 1000 <= nowMs;
+    }
+
+    const hourLabels = todayHours.map((hour) => fmtForecastTime(hour.timestamp));
+    const forecastValues = [];
+    const forecastRanges = [];
+    const actualValues = [];
     for (const hour of todayHours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
-      if (!hourValues) continue;
-      const row = document.createElement("div");
-      row.className = "forecast-hour";
-      const time = document.createElement("strong");
-      time.textContent = fmtForecastTime(hour.timestamp);
-      const value = document.createElement("span");
-      value.className = "forecast-hour-value";
-      value.textContent = `${hourValues.expected_kw.toFixed(1)} kW`;
-      const range = document.createElement("span");
-      range.className = "muted";
-      range.textContent = `${hourValues.low_kw.toFixed(1)}–${hourValues.high_kw.toFixed(1)} kW`;
-      const devicesLine = document.createElement("span");
-      devicesLine.className = "forecast-hour-devices";
-      // Pro-Geraet-Aufschluesselung nur, wenn NICHT schon auf ein einzelnes
-      // Geraet gefiltert ist UND mehr als ein Geraet existiert (sonst
-      // redundant - derselbe Grundsatz wie bei den Tages-Kacheln).
-      devicesLine.textContent = deviceId || hour.devices.length <= 1
-        ? ""
-        : hour.devices
-            .map((device) => `${device.device_name}: ${device.expected_kw.toFixed(1)} kW`)
-            .join(" · ");
-      row.append(time, value, range, devicesLine);
-      hoursTodayContainer.appendChild(row);
+      forecastValues.push(hourValues ? hourValues.expected_kw : null);
+      forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
+      actualValues.push(isHourElapsed(hour) ? actualKwhFor(hour) : null);
+    }
+
+    hoursTodayStatus.textContent = deviceId
+      ? `Prognose vs. tatsächlicher Ertrag von ${deviceName}, je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.`
+      : "Prognose vs. tatsächlicher Ertrag (alle Wechselrichter), je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.";
+
+    const hoursTodayDatasets = [
+      {
+        label: "Prognose",
+        data: forecastValues,
+        backgroundColor: "#38bdf8",
+        borderColor: "#38bdf8",
+        borderWidth: 1,
+        borderRadius: 3,
+        // Nur fuer den Tooltip mitgefuehrt (kein eigenes Chart.js-Feld) -
+        // zeigt den gelernten Spannbereich der jeweiligen Stunde mit an.
+        rangeData: forecastRanges,
+      },
+      {
+        label: "Tatsächlich",
+        data: actualValues,
+        backgroundColor: "#facc15",
+        borderColor: "#facc15",
+        borderWidth: 1,
+        borderRadius: 3,
+      },
+    ];
+
+    if (state.forecastHoursTodayChart) {
+      state.forecastHoursTodayChart.data.labels = hourLabels;
+      state.forecastHoursTodayChart.data.datasets = hoursTodayDatasets;
+      state.forecastHoursTodayChart.update();
+    } else {
+      state.forecastHoursTodayChart = new Chart(
+        el("forecast-hours-today-chart").getContext("2d"),
+        {
+          type: "bar",
+          data: { labels: hourLabels, datasets: hoursTodayDatasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            events: chartEvents(),
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
+              y: { beginAtZero: true, title: { display: true, text: "kWh" } },
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label(context) {
+                    const value = context.parsed.y;
+                    if (value === null || value === undefined) {
+                      return `${context.dataset.label}: –`;
+                    }
+                    const range = context.dataset.rangeData?.[context.dataIndex];
+                    const rangeText = range
+                      ? ` (Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+                      : "";
+                    return `${context.dataset.label}: ${value.toFixed(1)} kWh${rangeText}`;
+                  },
+                },
+              },
+            },
+          },
+        }
+      );
     }
 
     const labels = data.hours.map((hour) =>
@@ -1783,13 +1888,14 @@ function applyForecastSubView(view) {
 function setForecastSubView(view) {
   state.subView.forecast = view;
   applyForecastSubView(view);
-  // Defensiv: forecast-chart/forecast-accuracy-chart werden im Hintergrund
-  // (Tab-Intervall) auch aktualisiert, waehrend ihre Ansicht gerade nicht
-  // ausgewaehlt ist (also "display:none") - ein erneutes resize() beim
-  // Sichtbarwerden stellt sicher, dass Chart.js die richtige Groesse
-  // verwendet, statt sich auf 0x0 zu verlassen.
+  // Defensiv: forecast-chart/forecast-accuracy-chart/forecast-hours-today-
+  // chart werden im Hintergrund (Tab-Intervall) auch aktualisiert, waehrend
+  // ihre Ansicht gerade nicht ausgewaehlt ist (also "display:none") - ein
+  // erneutes resize() beim Sichtbarwerden stellt sicher, dass Chart.js die
+  // richtige Groesse verwendet, statt sich auf 0x0 zu verlassen.
   state.forecastChart?.resize();
   state.forecastAccuracyChart?.resize();
+  state.forecastHoursTodayChart?.resize();
 }
 
 function setupForecastSubView() {
@@ -1972,6 +2078,7 @@ function setChartsInteractive(on) {
     state.hourlyCompare.chart,
     state.forecastChart,
     state.forecastAccuracyChart,
+    state.forecastHoursTodayChart,
   ];
   for (const c of charts) {
     if (!c || !c.options) continue;

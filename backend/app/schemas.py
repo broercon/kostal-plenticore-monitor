@@ -284,6 +284,13 @@ class ForecastHourDeviceOut(BaseModel):
 class ForecastHourOut(BaseModel):
     timestamp: datetime
     local_date: str
+    # Stunden-Bucket in Anlagen-Lokalzeit, exakt im selben Format wie die
+    # Bucket-Schluessel von aggregation.hourly_kwh_per_device
+    # ("YYYY-MM-DDTHH:00:00") - damit sich Prognose- und Ist-Werte im
+    # Frontend ueber einen simplen String-Vergleich einander zuordnen
+    # lassen, ohne die Zeitzonen-Umrechnung nochmal (fehleranfaellig) im
+    # Browser nachzubauen (siehe local_date-Kommentar oben).
+    local_hour: str
     expected_kw: float
     low_kw: float
     high_kw: float

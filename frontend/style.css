@@ -748,36 +748,8 @@ canvas {
   margin: 0 0 4px;
 }
 
-.forecast-hours-today {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
+#forecast-hours-today-chart-wrapper {
   margin: 12px 0;
-}
-
-.forecast-hour {
-  padding: 8px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: var(--bg);
-  font-size: 0.82rem;
-}
-
-.forecast-hour strong,
-.forecast-hour span {
-  display: block;
-}
-
-.forecast-hour-value {
-  margin: 3px 0;
-  color: var(--accent-blue);
-  font-weight: 600;
-}
-
-.forecast-hour-devices {
-  margin-top: 4px;
-  font-size: 0.72rem;
-  color: var(--muted);
 }
 
 .forecast-accuracy-header {

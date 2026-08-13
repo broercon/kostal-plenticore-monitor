@@ -563,13 +563,21 @@ def _summarize(
             for device_id, hours in per_device_hour.items()
         }
         values = list(per_device_values.values())
+        local_start = interval_start.astimezone(local_tz)
         combined_hours.append(
             {
                 "timestamp": interval_start,
                 # Explizite Anlagen-Lokalzeit fuer Frontends: die Zuordnung
                 # zu "heute" darf nicht von der Zeitzone des betrachtenden
                 # Browsers abhaengen.
-                "local_date": interval_start.astimezone(local_tz).date().isoformat(),
+                "local_date": local_start.date().isoformat(),
+                # Gleiches Bucket-Format wie aggregation.hourly_kwh_per_device,
+                # damit das Frontend Prognose- und Ist-Werte je Stunde ohne
+                # eigene Zeitzonen-Logik zusammenfuehren kann (siehe
+                # Kommentar in schemas.ForecastHourOut.local_hour).
+                "local_hour": local_start.replace(
+                    minute=0, second=0, microsecond=0
+                ).strftime("%Y-%m-%dT%H:%M:%S"),
                 "expected_kw": round(sum(value[0] for value in values) / 1000, 3),
                 "low_kw": round(sum(value[1] for value in values) / 1000, 3),
                 "high_kw": round(sum(value[2] for value in values) / 1000, 3),

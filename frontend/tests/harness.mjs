@@ -62,7 +62,21 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
       case "/api/readings/daily-home-breakdown":
         return { days: [] };
       case "/api/readings/hourly-per-device":
-        return { devices: [], buckets: [] };
+        // Ist-Werte fuer die stuendliche Prognose-Ansicht (Vergleich
+        // Prognose vs. echt, siehe app.js refreshForecast()) - die beiden
+        // Buckets entsprechen lokal genau den beiden "heutigen" Stunden aus
+        // dem /api/forecast-Mock unten (lokale Anlagenzeit, siehe deren
+        // local_hour-Felder).
+        return {
+          devices: [
+            { device_id: "wr1", device_name: "WR1" },
+            { device_id: "wr2", device_name: "WR2" },
+          ],
+          buckets: [
+            { bucket: "2026-07-13T01:00:00", values: { wr1: 0, wr2: 0 } },
+            { bucket: "2026-07-13T14:00:00", values: { wr1: 2.5, wr2: 1.2 } },
+          ],
+        };
       case "/api/readings/feed-in-summary":
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
@@ -127,6 +141,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
               // Anlagen-Zeitzone und muss fuer die Heute-Auswahl gelten.
               timestamp: "2026-07-12T23:00:00Z",
               local_date: "2026-07-13",
+              local_hour: "2026-07-13T01:00:00",
               expected_kw: 3.0,
               low_kw: 2.4,
               high_kw: 3.6,
@@ -138,6 +153,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
             {
               timestamp: "2026-07-13T12:00:00Z",
               local_date: "2026-07-13",
+              local_hour: "2026-07-13T14:00:00",
               expected_kw: 4.2,
               low_kw: 3.4,
               high_kw: 5.0,
@@ -149,6 +165,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
             {
               timestamp: "2026-07-14T12:00:00Z",
               local_date: "2026-07-14",
+              local_hour: "2026-07-14T14:00:00",
               expected_kw: 5.0,
               low_kw: 4.0,
               high_kw: 6.0,

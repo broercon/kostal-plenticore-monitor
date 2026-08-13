@@ -400,8 +400,11 @@
       <div id="forecast-view-hours-today" class="hidden">
         <div class="forecast-hours-today-header">
           <h3>Stündliche Prognose heute</h3>
+          <p class="muted" id="forecast-hours-today-status"></p>
         </div>
-        <div class="forecast-hours-today" id="forecast-hours-today"></div>
+        <div class="chart-canvas-wrapper" id="forecast-hours-today-chart-wrapper">
+          <canvas id="forecast-hours-today-chart"></canvas>
+        </div>
       </div>
 
       <div id="forecast-view-week-chart" class="hidden">

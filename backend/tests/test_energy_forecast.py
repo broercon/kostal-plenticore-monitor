@@ -233,6 +233,10 @@ def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
     # filtern laesst (Klick auf den zugehoerigen Wechselrichter-Tab).
     hour = result["hours"][0]
     assert hour["local_date"] == "2026-06-01"
+    # Europe/Berlin ist im Juni CEST (UTC+2); 11:00 UTC (interval_start) wird
+    # damit lokal zu 13:00 - dasselbe Bucket-Format wie
+    # aggregation.hourly_kwh_per_device, siehe schemas.ForecastHourOut.local_hour.
+    assert hour["local_hour"] == "2026-06-01T13:00:00"
     assert {item["device_id"] for item in hour["devices"]} == {"wr1", "wr2"}
     hour_wr1 = next(item for item in hour["devices"] if item["device_id"] == "wr1")
     hour_wr2 = next(item for item in hour["devices"] if item["device_id"] == "wr2")
