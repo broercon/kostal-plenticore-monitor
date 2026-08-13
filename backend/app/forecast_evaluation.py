@@ -66,10 +66,16 @@ def save_forecast_predictions(
         session.close()
 
 
-def _accuracy(expected_kwh: float, actual_kwh: float) -> float | None:
+def _accuracy_from_absolute_error(abs_error_kwh: float, actual_kwh: float) -> float | None:
+    """Genauigkeit auf Basis der Summe der ABSOLUTEN stuendlichen Fehler,
+    nicht der Differenz der (ueber mehrere Stunden aufsummierten)
+    Gesamtwerte - siehe get_forecast_accuracy() fuer die Begruendung: ein
+    Tag mit vormittags zu hoher und nachmittags zu niedriger Prognose darf
+    nicht als treffsicher gelten, nur weil sich die Fehler beim Aufsummieren
+    gegenseitig aufheben."""
     if actual_kwh < 0.05:
         return None
-    return max(0.0, 100.0 * (1.0 - abs(actual_kwh - expected_kwh) / actual_kwh))
+    return max(0.0, 100.0 * (1.0 - abs_error_kwh / actual_kwh))
 
 
 def _difference_percent(expected_kwh: float, actual_kwh: float) -> float | None:
@@ -112,7 +118,10 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
 
     actual_history = load_hourly_pv_history(start, end)
     device_names = {device.id: device.name for device in settings.inverters}
-    by_day_device: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+
+    # Jede Stunde, fuer die eine gespeicherte Vorhersage UND ein passender
+    # Messwert existiert: (date_key, Stunde, device_id, expected_w, actual_w).
+    matched: list[tuple[str, datetime, str, float, float]] = []
     for prediction in stored:
         target = _utc(prediction.target_timestamp)
         actual = actual_history.get(prediction.device_id, {}).get(
@@ -121,11 +130,11 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
         if actual is None:
             continue
         date_key = target.astimezone(local_tz).date().isoformat()
-        by_day_device[(date_key, prediction.device_id)].append(
-            (prediction.expected_w, actual)
+        matched.append(
+            (date_key, target, prediction.device_id, prediction.expected_w, actual)
         )
 
-    if not by_day_device:
+    if not matched:
         return {
             "available": False,
             "message": "Prognosen vorhanden, aber noch keine passenden Messwerte.",
@@ -133,11 +142,22 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
             "days": [],
         }
 
-    by_day: dict[str, list[dict]] = defaultdict(list)
+    # Pro Geraet UND Tag: die Abweichung JEDER einzelnen Stunde zaehlt fuer
+    # sich (absolut) in die Genauigkeit ein, nicht die Differenz der
+    # Tagessumme - sonst wuerde ein Tag, an dem die Prognose z.B. vormittags
+    # zu hoch und nachmittags zu niedrig lag, faelschlich als treffsicher
+    # gelten, nur weil sich beide Fehler beim Aufsummieren gegenseitig
+    # aufheben (Netto-Differenz nahe 0, obwohl JEDE Stunde daneben lag).
+    by_day_device: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+    for date_key, _hour, device_id, expected_w, actual_w in matched:
+        by_day_device[(date_key, device_id)].append((expected_w, actual_w))
+
+    device_day_entries: dict[str, list[dict]] = defaultdict(list)
     for (date_key, device_id), samples in by_day_device.items():
         expected_kwh = sum(item[0] for item in samples) / 1000
         actual_kwh = sum(item[1] for item in samples) / 1000
-        by_day[date_key].append(
+        abs_error_kwh = sum(abs(item[0] - item[1]) for item in samples) / 1000
+        device_day_entries[date_key].append(
             {
                 "device_id": device_id,
                 "device_name": device_names.get(device_id, device_id),
@@ -152,27 +172,59 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
                 ),
                 "accuracy_percent": (
                     round(value, 1)
-                    if (value := _accuracy(expected_kwh, actual_kwh)) is not None
+                    if (
+                        value := _accuracy_from_absolute_error(
+                            abs_error_kwh, actual_kwh
+                        )
+                    )
+                    is not None
                     else None
                 ),
                 "matched_hours": len(samples),
             }
         )
 
+    # Tageswert UEBER ALLE GERAETE: je Stunde zuerst ueber die Geraete
+    # summieren (das darf sich ausgleichen - wenn WR1 in einer Stunde zu
+    # viel und WR2 zu wenig prognostiziert hat, kann die Gesamtanlage in
+    # dieser Stunde trotzdem treffsicher gewesen sein, das ist eine echte
+    # physikalische Kombination am selben Hausanschluss), aber die daraus
+    # entstandenen STUENDLICHEN Gesamtabweichungen wieder absolut
+    # aufsummieren statt die Tagessumme zu bilden - aus demselben Grund wie
+    # oben, nur fuer die kombinierte Anlage statt pro Geraet.
+    combined_hourly: dict[tuple[str, datetime], list[float]] = defaultdict(
+        lambda: [0.0, 0.0]
+    )
+    for date_key, hour, _device_id, expected_w, actual_w in matched:
+        entry = combined_hourly[(date_key, hour)]
+        entry[0] += expected_w
+        entry[1] += actual_w
+
+    by_day_expected: dict[str, float] = defaultdict(float)
+    by_day_actual: dict[str, float] = defaultdict(float)
+    by_day_abs_error: dict[str, float] = defaultdict(float)
+    for (date_key, _hour), (expected_w, actual_w) in combined_hourly.items():
+        by_day_expected[date_key] += expected_w / 1000
+        by_day_actual[date_key] += actual_w / 1000
+        by_day_abs_error[date_key] += abs(expected_w - actual_w) / 1000
+
     result_days = []
-    total_expected = 0.0
+    total_abs_error = 0.0
     total_actual = 0.0
-    for date_key in sorted(by_day, reverse=True):
-        devices = sorted(by_day[date_key], key=lambda item: item["device_name"])
-        expected_kwh = sum(item["expected_kwh"] for item in devices)
-        actual_kwh = sum(item["actual_kwh"] for item in devices)
-        total_expected += expected_kwh
-        total_actual += actual_kwh
+    for date_key in sorted(by_day_expected, reverse=True):
+        devices = sorted(
+            device_day_entries[date_key], key=lambda item: item["device_name"]
+        )
+        expected_kwh = round(by_day_expected[date_key], 2)
+        actual_kwh = round(by_day_actual[date_key], 2)
+        abs_error_kwh = by_day_abs_error[date_key]
+        total_abs_error += abs_error_kwh
+        total_actual += by_day_actual[date_key]
         result_days.append(
             {
                 "date": date_key,
-                "expected_kwh": round(expected_kwh, 2),
-                "actual_kwh": round(actual_kwh, 2),
+                "expected_kwh": expected_kwh,
+                "actual_kwh": actual_kwh,
                 "difference_kwh": round(actual_kwh - expected_kwh, 2),
                 "difference_percent": (
                     round(value, 1)
@@ -182,7 +234,12 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
                 ),
                 "accuracy_percent": (
                     round(value, 1)
-                    if (value := _accuracy(expected_kwh, actual_kwh)) is not None
+                    if (
+                        value := _accuracy_from_absolute_error(
+                            abs_error_kwh, actual_kwh
+                        )
+                    )
+                    is not None
                     else None
                 ),
                 "matched_hours": sum(item["matched_hours"] for item in devices),
@@ -190,7 +247,7 @@ def get_forecast_accuracy(days: int = 30, now: datetime | None = None) -> dict:
             }
         )
 
-    overall = _accuracy(total_expected, total_actual)
+    overall = _accuracy_from_absolute_error(total_abs_error, total_actual)
     return {
         "available": True,
         "message": "Vergleich der gespeicherten Prognosen mit echten Messwerten.",

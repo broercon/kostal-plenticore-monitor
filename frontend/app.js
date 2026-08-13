@@ -307,7 +307,11 @@ async function refreshForecast() {
     const data = await fetchJson("/api/forecast");
     const status = el("forecast-status");
     const dayContainer = el("forecast-days");
+    const hoursTodayContainer = el("forecast-hours-today");
     dayContainer.innerHTML = "";
+    // Vor allen Rueckspruengen leeren: sonst bleiben beim Wechsel auf ein
+    // Geraet ohne eigene Prognose die vorherigen Gesamtwerte sichtbar.
+    hoursTodayContainer.innerHTML = "";
     if (!data.available) {
       status.textContent = data.message;
       if (state.forecastChart) {
@@ -390,6 +394,42 @@ async function refreshForecast() {
             .join(" · ");
       card.append(date, value, range, windowText, devices);
       dayContainer.appendChild(card);
+    }
+
+    // Stuendliche Prognose NUR fuer heute (bewusst kein weiterer Tag - die
+    // Stundenwerte fuer 7 Tage sind ohnehin schon im Diagramm unten
+    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein).
+    // data.days[0] ist per Backend-Konvention immer der heutige lokale Tag
+    // (siehe energy_forecast.forecast_weather_for_local_days).
+    const todayKey = data.days[0]?.date;
+    const todayHours = todayKey
+      ? data.hours.filter((hour) => hour.local_date === todayKey)
+      : [];
+    for (const hour of todayHours) {
+      const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
+      if (!hourValues) continue;
+      const row = document.createElement("div");
+      row.className = "forecast-hour";
+      const time = document.createElement("strong");
+      time.textContent = fmtForecastTime(hour.timestamp);
+      const value = document.createElement("span");
+      value.className = "forecast-hour-value";
+      value.textContent = `${hourValues.expected_kw.toFixed(1)} kW`;
+      const range = document.createElement("span");
+      range.className = "muted";
+      range.textContent = `${hourValues.low_kw.toFixed(1)}–${hourValues.high_kw.toFixed(1)} kW`;
+      const devicesLine = document.createElement("span");
+      devicesLine.className = "forecast-hour-devices";
+      // Pro-Geraet-Aufschluesselung nur, wenn NICHT schon auf ein einzelnes
+      // Geraet gefiltert ist UND mehr als ein Geraet existiert (sonst
+      // redundant - derselbe Grundsatz wie bei den Tages-Kacheln).
+      devicesLine.textContent = deviceId || hour.devices.length <= 1
+        ? ""
+        : hour.devices
+            .map((device) => `${device.device_name}: ${device.expected_kw.toFixed(1)} kW`)
+            .join(" · ");
+      row.append(time, value, range, devicesLine);
+      hoursTodayContainer.appendChild(row);
     }
 
     const labels = data.hours.map((hour) =>

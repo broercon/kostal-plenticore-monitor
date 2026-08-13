@@ -283,6 +283,7 @@ class ForecastHourDeviceOut(BaseModel):
 
 class ForecastHourOut(BaseModel):
     timestamp: datetime
+    local_date: str
     expected_kw: float
     low_kw: float
     high_kw: float

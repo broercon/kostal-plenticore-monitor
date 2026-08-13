@@ -2,6 +2,12 @@
 // im Gesamt-Tab werden die ueber alle Geraete summierten Werte gezeigt, nach
 // Wechsel auf einen einzelnen Wechselrichter nur noch dessen eigener Anteil
 // (Kacheln, Diagramm und Prognosekontrolle).
+// TZ fest auf UTC setzen, BEVOR harness.mjs/jsdom geladen wird: die Tests
+// unten pruefen ueber fmtForecastTime() formatierte lokale Uhrzeiten, die
+// sonst je nach Zeitzone des Test-Rechners (siehe TZ-Umgebungsvariable)
+// unterschiedlich ausfallen wuerden.
+process.env.TZ = "UTC";
+
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -20,7 +26,7 @@ test("Prognose zeigt im Gesamt-Tab die ueber alle Geraete summierten Werte", asy
   const dataset = app.state.forecastChart.data.datasets.find(
     (d) => d.label === "Erwartete PV-Leistung"
   );
-  assert.equal(dataset.data[0], 4.2); // kombinierter Stundenwert
+  assert.equal(dataset.data[1], 4.2); // kombinierter Stundenwert (12 Uhr)
 });
 
 test("Prognose zeigt nach Wechsel auf WR1 nur dessen eigenen Anteil", async () => {
@@ -46,7 +52,7 @@ test("Prognose zeigt nach Wechsel auf WR1 nur dessen eigenen Anteil", async () =
   const dataset = app.state.forecastChart.data.datasets.find(
     (d) => d.label === "Erwartete PV-Leistung"
   );
-  assert.equal(dataset.data[0], 2.7); // nur WR1s Anteil der Stunde, nicht 4.2
+  assert.equal(dataset.data[1], 2.7); // nur WR1s Anteil der Stunde (12 Uhr), nicht 4.2
 
   // Zurueck auf "Alle (Summe)": wieder die kombinierten Werte.
   app.clickTab("Alle (Summe)");
@@ -84,4 +90,82 @@ test("Prognosekontrolle zeigt nach Wechsel auf WR1 nur dessen eigenen Vergleich"
     "#forecast-accuracy-days .forecast-accuracy-devices"
   );
   assert.equal(devices.textContent, "");
+});
+
+test("Stuendliche Prognose zeigt nur die Stunden von heute, nicht von morgen", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0);
+
+  const rows = [...app.document.querySelectorAll("#forecast-hours-today .forecast-hour")];
+  // Der Mock liefert 3 Stunden: zwei gehoeren laut Backend-Anlagenzeit zum
+  // 13.07. (heute), obwohl eine davon in UTC noch der 12.07. ist. Die dritte
+  // gehoert zum 14.07. - nur die beiden von heute duerfen erscheinen.
+  assert.equal(rows.length, 2);
+  const times = rows.map((row) => row.querySelector("strong").textContent);
+  assert.deepEqual(times.sort(), ["12:00", "23:00"]);
+});
+
+test("Stuendliche Prognose heute filtert nach Wechsel auf WR1 auf dessen eigenen Anteil", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0);
+
+  const combinedValue = app.document.querySelector(
+    "#forecast-hours-today .forecast-hour-value"
+  );
+  assert.equal(combinedValue.textContent, "3.0 kW");
+  const combinedDevices = app.document.querySelector(
+    "#forecast-hours-today .forecast-hour-devices"
+  );
+  assert.match(combinedDevices.textContent, /WR1: 2.0 kW/);
+  assert.match(combinedDevices.textContent, /WR2: 1.0 kW/);
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(
+    () =>
+      app.document.querySelector("#forecast-hours-today .forecast-hour-value").textContent ===
+      "2.0 kW"
+  );
+
+  const filteredValue = app.document.querySelector(
+    "#forecast-hours-today .forecast-hour-value"
+  );
+  assert.equal(filteredValue.textContent, "2.0 kW");
+  const filteredDevices = app.document.querySelector(
+    "#forecast-hours-today .forecast-hour-devices"
+  );
+  assert.equal(filteredDevices.textContent, "");
+});
+
+test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async () => {
+  const base = makeBackend();
+  const app = await bootApp({
+    fetchHandler: async (url, options) => {
+      if (url.pathname === "/api/devices") {
+        return [
+          { id: "wr1", name: "WR1", host: "h1" },
+          { id: "wr2", name: "WR2", host: "h2" },
+          { id: "wr3", name: "WR3 ohne Historie", host: "h3" },
+        ];
+      }
+      return base(url, options);
+    },
+  });
+  app.clickViewTab("forecast");
+  await waitFor(
+    () => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0
+  );
+
+  app.clickTab("WR3 ohne Historie");
+  await waitFor(() => app.state.selectedDeviceId === "wr3");
+  await waitFor(() =>
+    app.document.getElementById("forecast-status").textContent.includes("zu wenig Historie")
+  );
+
+  assert.equal(
+    app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length,
+    0
+  );
 });

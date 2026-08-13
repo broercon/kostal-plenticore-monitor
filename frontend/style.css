@@ -677,6 +677,48 @@ canvas {
   color: var(--muted);
 }
 
+.forecast-hours-today-header {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.forecast-hours-today-header h3 {
+  margin: 0 0 4px;
+}
+
+.forecast-hours-today {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.forecast-hour {
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.82rem;
+}
+
+.forecast-hour strong,
+.forecast-hour span {
+  display: block;
+}
+
+.forecast-hour-value {
+  margin: 3px 0;
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.forecast-hour-devices {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .forecast-accuracy-header {
   margin-top: 22px;
   padding-top: 18px;

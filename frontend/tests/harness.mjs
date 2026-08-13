@@ -123,13 +123,38 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           ],
           hours: [
             {
+              // In UTC noch der Vortag; local_date stammt aus der
+              // Anlagen-Zeitzone und muss fuer die Heute-Auswahl gelten.
+              timestamp: "2026-07-12T23:00:00Z",
+              local_date: "2026-07-13",
+              expected_kw: 3.0,
+              low_kw: 2.4,
+              high_kw: 3.6,
+              devices: [
+                { device_id: "wr1", device_name: "WR1", expected_kw: 2.0, low_kw: 1.6, high_kw: 2.4 },
+                { device_id: "wr2", device_name: "WR2", expected_kw: 1.0, low_kw: 0.8, high_kw: 1.2 },
+              ],
+            },
+            {
               timestamp: "2026-07-13T12:00:00Z",
+              local_date: "2026-07-13",
               expected_kw: 4.2,
               low_kw: 3.4,
               high_kw: 5.0,
               devices: [
                 { device_id: "wr1", device_name: "WR1", expected_kw: 2.7, low_kw: 2.1, high_kw: 3.2 },
                 { device_id: "wr2", device_name: "WR2", expected_kw: 1.5, low_kw: 1.3, high_kw: 1.8 },
+              ],
+            },
+            {
+              timestamp: "2026-07-14T12:00:00Z",
+              local_date: "2026-07-14",
+              expected_kw: 5.0,
+              low_kw: 4.0,
+              high_kw: 6.0,
+              devices: [
+                { device_id: "wr1", device_name: "WR1", expected_kw: 3.0, low_kw: 2.4, high_kw: 3.6 },
+                { device_id: "wr2", device_name: "WR2", expected_kw: 2.0, low_kw: 1.6, high_kw: 2.4 },
               ],
             },
           ],
