@@ -392,6 +392,51 @@ async function refreshForecast() {
       dayContainer.appendChild(card);
     }
 
+    // Stuendliche Prognose NUR fuer heute (bewusst kein weiterer Tag - die
+    // Stundenwerte fuer 7 Tage sind ohnehin schon im Diagramm unten
+    // enthalten, hier soll gezielt "heute im Detail" sichtbar sein).
+    // data.days[0] ist per Backend-Konvention immer der heutige lokale Tag
+    // (siehe energy_forecast.forecast_weather_for_local_days).
+    const hoursTodayContainer = el("forecast-hours-today");
+    hoursTodayContainer.innerHTML = "";
+    const todayKey = data.days[0]?.date;
+    const localDateKey = (isoTimestamp) => {
+      const d = new Date(isoTimestamp);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}`;
+    };
+    const todayHours = todayKey
+      ? data.hours.filter((hour) => localDateKey(hour.timestamp) === todayKey)
+      : [];
+    for (const hour of todayHours) {
+      const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
+      if (!hourValues) continue;
+      const row = document.createElement("div");
+      row.className = "forecast-hour";
+      const time = document.createElement("strong");
+      time.textContent = fmtForecastTime(hour.timestamp);
+      const value = document.createElement("span");
+      value.className = "forecast-hour-value";
+      value.textContent = `${hourValues.expected_kw.toFixed(1)} kW`;
+      const range = document.createElement("span");
+      range.className = "muted";
+      range.textContent = `${hourValues.low_kw.toFixed(1)}–${hourValues.high_kw.toFixed(1)} kW`;
+      const devicesLine = document.createElement("span");
+      devicesLine.className = "forecast-hour-devices";
+      // Pro-Geraet-Aufschluesselung nur, wenn NICHT schon auf ein einzelnes
+      // Geraet gefiltert ist UND mehr als ein Geraet existiert (sonst
+      // redundant - derselbe Grundsatz wie bei den Tages-Kacheln).
+      devicesLine.textContent = deviceId || hour.devices.length <= 1
+        ? ""
+        : hour.devices
+            .map((device) => `${device.device_name}: ${device.expected_kw.toFixed(1)} kW`)
+            .join(" · ");
+      row.append(time, value, range, devicesLine);
+      hoursTodayContainer.appendChild(row);
+    }
+
     const labels = data.hours.map((hour) =>
       new Date(hour.timestamp).toLocaleString("de-DE", {
         weekday: "short",
