@@ -366,17 +366,34 @@
         <h2>PV-Prognose</h2>
         <p class="muted" id="forecast-status">Wird geladen …</p>
       </div>
+
+      <div class="chart-view-select-wrapper">
+        <label for="forecast-view-select">Ansicht</label>
+        <select id="forecast-view-select">
+          <option value="days">Tagesübersicht</option>
+          <option value="hours-today">Stündliche Prognose heute</option>
+          <option value="week-chart">Wochenverlauf</option>
+          <option value="accuracy">Prognosekontrolle</option>
+        </select>
+      </div>
+
       <div class="forecast-days" id="forecast-days"></div>
-      <div class="chart-canvas-wrapper" id="forecast-chart-wrapper">
-        <canvas id="forecast-chart"></canvas>
+
+      <div id="forecast-view-hours-today" class="hidden">
+        <div class="forecast-hours-today-header">
+          <h3>Stündliche Prognose heute</h3>
+        </div>
+        <div class="forecast-hours-today" id="forecast-hours-today"></div>
       </div>
-      <div class="forecast-hours-today-header">
-        <h3>Stündliche Prognose heute</h3>
+
+      <div id="forecast-view-week-chart" class="hidden">
+        <div class="chart-canvas-wrapper" id="forecast-chart-wrapper">
+          <canvas id="forecast-chart"></canvas>
+        </div>
       </div>
-      <div class="forecast-hours-today" id="forecast-hours-today"></div>
     </section>
 
-    <section class="chart-section forecast-section" id="forecast-accuracy-section">
+    <section class="chart-section forecast-section hidden" id="forecast-accuracy-section">
       <div class="forecast-accuracy-header">
         <h3>Prognosekontrolle</h3>
         <p class="muted" id="forecast-accuracy-status">Wird geladen …</p>
