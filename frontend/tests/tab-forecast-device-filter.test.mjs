@@ -98,11 +98,12 @@ test("Stuendliche Prognose zeigt nur die Stunden von heute, nicht von morgen", a
   await waitFor(() => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0);
 
   const rows = [...app.document.querySelectorAll("#forecast-hours-today .forecast-hour")];
-  // Der Mock liefert 3 Stunden: zwei am 13.07. (heute) und eine am 14.07.
-  // (morgen) - nur die beiden von heute duerfen erscheinen.
+  // Der Mock liefert 3 Stunden: zwei gehoeren laut Backend-Anlagenzeit zum
+  // 13.07. (heute), obwohl eine davon in UTC noch der 12.07. ist. Die dritte
+  // gehoert zum 14.07. - nur die beiden von heute duerfen erscheinen.
   assert.equal(rows.length, 2);
   const times = rows.map((row) => row.querySelector("strong").textContent);
-  assert.deepEqual(times.sort(), ["11:00", "12:00"]);
+  assert.deepEqual(times.sort(), ["12:00", "23:00"]);
 });
 
 test("Stuendliche Prognose heute filtert nach Wechsel auf WR1 auf dessen eigenen Anteil", async () => {
@@ -136,4 +137,35 @@ test("Stuendliche Prognose heute filtert nach Wechsel auf WR1 auf dessen eigenen
     "#forecast-hours-today .forecast-hour-devices"
   );
   assert.equal(filteredDevices.textContent, "");
+});
+
+test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async () => {
+  const base = makeBackend();
+  const app = await bootApp({
+    fetchHandler: async (url, options) => {
+      if (url.pathname === "/api/devices") {
+        return [
+          { id: "wr1", name: "WR1", host: "h1" },
+          { id: "wr2", name: "WR2", host: "h2" },
+          { id: "wr3", name: "WR3 ohne Historie", host: "h3" },
+        ];
+      }
+      return base(url, options);
+    },
+  });
+  app.clickViewTab("forecast");
+  await waitFor(
+    () => app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length > 0
+  );
+
+  app.clickTab("WR3 ohne Historie");
+  await waitFor(() => app.state.selectedDeviceId === "wr3");
+  await waitFor(() =>
+    app.document.getElementById("forecast-status").textContent.includes("zu wenig Historie")
+  );
+
+  assert.equal(
+    app.document.querySelectorAll("#forecast-hours-today .forecast-hour").length,
+    0
+  );
 });
