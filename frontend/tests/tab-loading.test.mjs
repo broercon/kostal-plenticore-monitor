@@ -1,6 +1,6 @@
 // Tests fuer den (jetzt pro Panel unabhaengigen) Ladeindikator sowie das
-// Lazy-Loading der Ansichts-Tabs (siehe withLoading()/setupViewTabs() in
-// app.js).
+// Hintergrund-Vorladen aller Ansichts-Tabs beim Start (siehe
+// withLoading()/setupViewTabs()/init() in app.js).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor, sleep } from "./harness.mjs";
@@ -14,24 +14,28 @@ const backend = () =>
     historyPv: (dev) => (dev === "wr1" ? 600 : dev === "wr2" ? 400 : 1000),
   });
 
-test("Ansichts-Tabs ausser 'Uebersicht' laden erst beim ersten Oeffnen", async () => {
+test("alle Ansichts-Tabs laden schon beim Start im Hintergrund, nicht erst beim ersten Oeffnen", async () => {
   const app = await bootApp({ fetchHandler: backend() });
   await waitFor(() => app.loadingCount() === 0);
 
-  // Direkt nach dem Start ist die Uebersicht fertig, der Verlaufs-Chart
-  // ("trend"-Tab) wurde noch nie geoeffnet und hat daher auch nie geladen.
+  // Direkt nach dem Start sind ALLE Tabs schon geladen - auch "trend", der
+  // noch nie angeklickt wurde. Das eigentliche Anklicken macht danach also
+  // keinen neuen Request mehr noetig, nur noch das Umschalten der
+  // Sichtbarkeit.
   assert.equal(app.state.tabsLoaded.has("overview"), true);
-  assert.equal(app.state.tabsLoaded.has("trend"), false);
-  assert.equal(app.state.chart, null, "Leistungsverlauf-Chart wurde noch nicht aufgebaut");
-
-  app.clickViewTab("trend");
-  assert.ok(
-    app.isLoading("#power-chart-wrapper"),
-    "direkt nach dem ersten Oeffnen zeigt der Verlaufs-Tab seinen eigenen Ladeindikator"
-  );
-  await waitFor(() => !app.isLoading("#power-chart-wrapper"));
   assert.equal(app.state.tabsLoaded.has("trend"), true);
-  assert.ok(app.state.chart, "Leistungsverlauf-Chart ist jetzt aufgebaut");
+  assert.equal(app.state.tabsLoaded.has("consumption"), true);
+  assert.equal(app.state.tabsLoaded.has("forecast"), true);
+  assert.ok(app.state.chart, "Leistungsverlauf-Chart ist schon vor dem ersten Oeffnen aufgebaut");
+
+  // Da die Daten schon vorliegen, zeigt das Umschalten auf "trend" keinen
+  // neuen Ladeindikator mehr (kein Request wird dadurch ausgeloest).
+  app.clickViewTab("trend");
+  assert.equal(
+    app.isLoading("#power-chart-wrapper"),
+    false,
+    "Umschalten auf einen schon vorgeladenen Tab loest keinen neuen Ladeindikator aus"
+  );
 });
 
 test("fertige Panels bleiben sofort sichtbar, auch waehrend ein anderes Panel noch laedt", async () => {
@@ -87,5 +91,23 @@ test("bei schnellem Wechselrichter-Wechsel verschwindet der Indikator erst, wenn
     app.isLoading("#power-chart-wrapper"),
     false,
     "verspaetete WR1-Antwort laesst den Indikator nicht aufflackern"
+  );
+});
+
+test("beim Wechsel auf einen im Hintergrund vorgeladenen Tab wird die Diagrammgroesse aktualisiert (resize)", async () => {
+  const app = await bootApp({ fetchHandler: backend() });
+  await waitFor(() => app.loadingCount() === 0);
+
+  // state.chart wurde bereits im Hintergrund erzeugt, waehrend das
+  // "trend"-Panel noch "display:none" war - Chart.js kennt an dieser
+  // Stelle nur eine 0x0-Groesse.
+  assert.ok(app.state.chart, "Leistungsverlauf-Chart ist schon vor dem ersten Oeffnen aufgebaut");
+  const resizeCountBefore = app.state.chart.resizeCount;
+
+  app.clickViewTab("trend");
+
+  assert.ok(
+    app.state.chart.resizeCount > resizeCountBefore,
+    "resize() wird beim Sichtbarwerden des Tabs nachgezogen, damit das Diagramm nicht bei 0x0 bleibt"
   );
 });

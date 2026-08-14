@@ -325,9 +325,17 @@ export async function bootApp({ fetchHandler }) {
     constructor(_ctx, config) {
       this.data = config.data;
       this.options = config.options;
+      this.resizeCount = 0;
     }
     update() {}
     destroy() {}
+    // Zaehlt Aufrufe mit, damit Tests pruefen koennen, dass ein im
+    // Hintergrund (waehrend das Tab-Panel noch "display:none" war)
+    // erzeugtes Diagramm beim tatsaechlichen Sichtbarwerden per resize()
+    // nachgezogen wird (siehe resizeTabCharts() in app.js).
+    resize() {
+      this.resizeCount += 1;
+    }
   };
   window.HTMLCanvasElement.prototype.getContext = () => ({});
   try {

@@ -2164,7 +2164,11 @@ const TAB_LOADERS = {
 const TAB_INTERVALS_MS = {
   trend: 5 * 60 * 1000,
   consumption: 5 * 60 * 1000,
-  forecast: 60 * 60 * 1000,
+  // An das Backend-Cache-TTL angeglichen (siehe energy_forecast.CACHE_TTL
+  // = 30 Minuten) - eine neue Prognose auf dem Server soll ohne
+  // Seiten-Reload zuverlaessig binnen derselben Zeitspanne im Frontend
+  // ankommen, statt bis zu eine volle Stunde (vorheriger Wert) zu warten.
+  forecast: 30 * 60 * 1000,
 };
 
 function startTabInterval(tabId) {
@@ -2181,6 +2185,33 @@ function refreshLoadedTabs() {
     .filter(([id]) => state.tabsLoaded.has(id))
     .map(([, loader]) => loader());
   return Promise.allSettled(tasks);
+}
+
+// Alle Chart.js-Instanzen je Tab (unabhaengig von der gerade gewaehlten
+// Unteransicht - siehe FORECAST_SUBVIEW_SECTIONS: pro Tab-Intervall werden
+// ohnehin immer ALLE Unteransichten aktualisiert, auch die gerade nicht
+// sichtbaren). Wird gebraucht, damit ein Diagramm, das im Hintergrund
+// erzeugt wurde, waehrend sein Tab-Panel noch "display:none" war (siehe
+// init(): alle Tabs laden inzwischen schon beim Start), beim tatsaechlichen
+// Sichtbarwerden per resize() auf die richtige Groesse kommt - ohne dieses
+// Nachziehen wuerde Chart.js dauerhaft bei der 0x0-Groesse vom
+// Erzeugungszeitpunkt bleiben.
+const TAB_CHARTS = {
+  overview: () => [],
+  trend: () => [state.chart, state.dayCompare.chart],
+  consumption: () => [state.dailyTotals.chart, state.hourlyCompare.chart],
+  forecast: () => [
+    state.forecastChart,
+    state.forecastHoursTodayChart,
+    state.forecastYesterdayChart,
+    state.forecastAccuracyChart,
+  ],
+};
+
+function resizeTabCharts(tabId) {
+  for (const chart of TAB_CHARTS[tabId]?.() ?? []) {
+    if (chart && typeof chart.resize === "function") chart.resize();
+  }
 }
 
 // Setzt bei Klick auf einen Flyout-Menuepunkt (siehe HTML: data-subview
@@ -2220,11 +2251,19 @@ function setupViewTabs() {
     } catch (err) {
       // s.o. - Erinnerung ist ein Komfortfeature, kein Muss.
     }
+    // Regelfall seit dem Hintergrund-Vorladen aller Tabs beim Start (siehe
+    // init()): tabsLoaded enthaelt hier bereits alle Tab-IDs, dieser Zweig
+    // greift nur noch defensiv (z.B. falls ein neuer Tab zukuenftig nicht
+    // in die Vorlade-Liste aufgenommen wird).
     if (!state.tabsLoaded.has(tabId)) {
       state.tabsLoaded.add(tabId);
       TAB_LOADERS[tabId]().catch(console.error);
       startTabInterval(tabId);
     }
+    // Siehe TAB_CHARTS-Kommentar: unabhaengig davon, ob der Tab neu geladen
+    // oder schon im Hintergrund vorbereitet wurde, muss beim Sichtbarwerden
+    // die Diagrammgroesse aktualisiert werden.
+    resizeTabCharts(tabId);
   }
 
   // Blendet ein per Hover offenes Flyout-Menue sofort aus, auch wenn die
@@ -2396,11 +2435,18 @@ async function init() {
   setupConsumptionSubView();
   setupForecastSubView();
   setupChartInteractionToggle();
-  // "Uebersicht" ist die schnelle erste Seite - immer sofort geladen,
-  // unabhaengig davon, welcher Tab beim letzten Besuch aktiv war. Die
-  // anderen Tabs laden erst bei ihrem ersten Oeffnen (siehe setupViewTabs).
-  state.tabsLoaded.add("overview");
-  refreshOverview().catch(console.error);
+  // Alle Tabs laden jetzt schon beim Start im Hintergrund (nicht erst beim
+  // ersten Anklicken, wie frueher) - der Tab-Wechsel selbst wird dadurch
+  // spuerbar schneller, weil Daten/Diagramme meist schon bereitstehen,
+  // statt erst bei Bedarf nachgeladen zu werden. "Uebersicht" bleibt die
+  // Tab, die sofort sichtbar ist, und wird deshalb zuerst gestartet;
+  // die anderen drei folgen unmittelbar danach (parallel, da fetch() nicht
+  // blockiert - kein spuerbarer Nachteil fuer die Uebersicht).
+  for (const tabId of Object.keys(TAB_LOADERS)) {
+    state.tabsLoaded.add(tabId);
+    TAB_LOADERS[tabId]().catch(console.error);
+    startTabInterval(tabId);
+  }
   setupViewTabs();
   setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
