@@ -1,5 +1,9 @@
 # Kostal Plenticore Monitor
 
+> Dieses Projekt ist ein unabhängiges, inoffizielles Community-Tool. "Kostal"
+> und "Plenticore" sind Marken der KOSTAL Solar Electric GmbH. Es besteht
+> keine Verbindung zu und keine Unterstützung durch KOSTAL.
+
 Webanwendung zum lokalen Erfassen und Auswerten von Leistungs- und
 Energiedaten eines oder mehrerer Kostal-Plenticore-Wechselrichter.
 
