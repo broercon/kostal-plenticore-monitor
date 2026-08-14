@@ -727,7 +727,7 @@ def test_daily_report_config_put_saves_all_fields_including_recipients(client):
     res = client.put("/api/admin/daily-report/config", json={
         "enabled": True,
         "report_time": "18:45",
-        "recipients": ["betreiber1@example.com", "zweite@example.com"],
+        "recipients": ["erste@example.com", "zweite@example.com"],
         "mail_service_url": "http://192.168.178.50:8080/send",
         "mail_service_api_key": "brand-new-key",
         "mail_service_from_name": "Solaranlage",
@@ -735,13 +735,13 @@ def test_daily_report_config_put_saves_all_fields_including_recipients(client):
     assert res.status_code == 200
     body = res.json()
     assert body["report_time"] == "18:45"
-    assert body["recipients"] == ["betreiber1@example.com", "zweite@example.com"]
+    assert body["recipients"] == ["erste@example.com", "zweite@example.com"]
     assert body["mail_service_url"] == "http://192.168.178.50:8080/send"
     assert body["mail_service_api_key_set"] is True
 
     # Persistiert - erneutes Abrufen zeigt denselben Stand.
     res2 = client.get("/api/admin/daily-report/config")
-    assert res2.json()["recipients"] == ["betreiber1@example.com", "zweite@example.com"]
+    assert res2.json()["recipients"] == ["erste@example.com", "zweite@example.com"]
 
 
 def test_daily_report_config_put_rejects_invalid_time(client):
