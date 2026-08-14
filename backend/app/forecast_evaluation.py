@@ -374,9 +374,18 @@ def get_yesterday_hourly_comparison(now: datetime | None = None) -> dict:
             "actual_w": actual_w,
         }
 
+    # Ueber ALLE lokalen Stunden des Tages iterieren (nicht nur die, fuer
+    # die tatsaechlich eine gespeicherte Prognose existiert) - so bleibt die
+    # Zeitachse im Diagramm immer der komplette Tag. Fehlt fuer eine Stunde
+    # jede Prognose (z.B. wegen eines Neustarts/Ausfalls waehrend dieser
+    # Stunde), erscheint dort eine Luecke statt den ganzen Tag zu verkuerzen
+    # - iteriert wird in UTC-Einzelstunden zwischen den beiden lokalen
+    # Mitternachtsgrenzen, das behandelt auch einen 23- oder 25-Stunden-Tag
+    # bei einer Sommer-/Winterzeit-Umstellung automatisch richtig.
     hours = []
-    for target in sorted(by_hour_device):
-        per_device = by_hour_device[target]
+    target = start
+    while target < end:
+        per_device = by_hour_device.get(target, {})
         devices = [
             {
                 "device_id": device_id,
@@ -408,14 +417,19 @@ def get_yesterday_hourly_comparison(now: datetime | None = None) -> dict:
                 # ist eine simple Summe (physikalisch gueltig, siehe
                 # _aggregate_bounds/get_forecast_accuracy) - anders als eine
                 # Kombination ueber mehrere STUNDEN hinweg, die hier nicht
-                # stattfindet (jede Stunde bleibt fuer sich stehen).
-                "expected_kw": round(sum(d["expected_kw"] for d in devices), 3),
-                "low_kw": round(sum(d["low_kw"] for d in devices), 3),
-                "high_kw": round(sum(d["high_kw"] for d in devices), 3),
+                # stattfindet (jede Stunde bleibt fuer sich stehen). Ohne
+                # jegliche Geraete-Daten fuer diese Stunde bleiben die
+                # Summen None statt faelschlich 0.
+                "expected_kw": (
+                    round(sum(d["expected_kw"] for d in devices), 3) if devices else None
+                ),
+                "low_kw": round(sum(d["low_kw"] for d in devices), 3) if devices else None,
+                "high_kw": round(sum(d["high_kw"] for d in devices), 3) if devices else None,
                 "actual_kw": round(sum(actual_values), 3) if actual_values else None,
                 "devices": devices,
             }
         )
+        target += timedelta(hours=1)
 
     return {
         "available": True,

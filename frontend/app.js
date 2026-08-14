@@ -312,6 +312,58 @@ function fmtForecastTime(value) {
   });
 }
 
+// Voller, gut lesbarer Datums-Text ("Donnerstag, 13. August 2026") statt
+// des rohen "YYYY-MM-DD"-Strings vom Backend - fuer Statuszeilen, die sich
+// auf einen einzelnen, konkreten Tag beziehen (z.B. "Prognose gestern").
+function fmtFullDate(dateStr) {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("de-DE", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+// Zeichnet fuer den "Prognose"-Datensatz (Floating Bar von low_kw bis
+// high_kw, siehe refreshForecast()/refreshForecastYesterday()) zusaetzlich
+// einen kurzen, deutlich sichtbaren Strich auf Hoehe des Erwartungswerts
+// (dataset.expectedData) direkt IN den Balken ein - der Spannbereich allein
+// zeigt sonst nicht, wo innerhalb der Spanne der eigentliche Prognosewert
+// lag; im Tooltip war das zwar schon zu sehen, aber eben erst beim Hovern.
+// Wird ueber die Balken-Geometrie (BarElement: x = Mitte, width = volle
+// Breite) gezeichnet, damit der Strich exakt im richtigen Balken sitzt,
+// unabhaengig von der Anzahl gleichzeitig gruppierter Balken.
+const forecastExpectedMarkerPlugin = {
+  id: "forecastExpectedMarker",
+  afterDatasetsDraw(chart) {
+    const datasetIndex = chart.data.datasets.findIndex(
+      (dataset) => dataset.label === "Prognose"
+    );
+    if (datasetIndex === -1) return;
+    const meta = chart.getDatasetMeta(datasetIndex);
+    if (meta.hidden) return;
+    const dataset = chart.data.datasets[datasetIndex];
+    const yScale = chart.scales[meta.yAxisID];
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2;
+    meta.data.forEach((bar, index) => {
+      const expected = dataset.expectedData?.[index];
+      if (expected === null || expected === undefined) return;
+      if (!bar || !Number.isFinite(bar.x) || !Number.isFinite(bar.width)) return;
+      const y = yScale.getPixelForValue(expected);
+      const halfWidth = bar.width / 2;
+      ctx.beginPath();
+      ctx.moveTo(bar.x - halfWidth, y);
+      ctx.lineTo(bar.x + halfWidth, y);
+      ctx.stroke();
+    });
+    ctx.restore();
+  },
+};
+
 async function refreshForecast() {
   return withLoading(["#forecast-section"], async () => {
     // Prognose- und Ist-Werte werden parallel geladen: die Ist-Werte
@@ -520,6 +572,7 @@ async function refreshForecast() {
         {
           type: "bar",
           data: { labels: hourLabels, datasets: hoursTodayDatasets },
+          plugins: [forecastExpectedMarkerPlugin],
           options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -640,11 +693,16 @@ async function refreshForecastYesterday() {
       return;
     }
 
+    // Volles Datum ("Donnerstag, 13. August 2026") statt des rohen
+    // "YYYY-MM-DD"-Strings, damit klar erkennbar ist, welcher Tag gemeint
+    // ist, ohne das ISO-Format erst gedanklich uebersetzen zu muessen.
+    const fullDate = fmtFullDate(data.date);
+
     const deviceHasData =
       !deviceId ||
       data.hours.some((hour) => hour.devices.some((d) => d.device_id === deviceId));
     if (deviceId && !deviceHasData) {
-      status.textContent = `Für ${deviceName} liegen für gestern keine gespeicherten Prognosen vor.`;
+      status.textContent = `Für ${deviceName} liegen für gestern (${fullDate}) keine gespeicherten Prognosen vor.`;
       if (state.forecastYesterdayChart) {
         state.forecastYesterdayChart.destroy();
         state.forecastYesterdayChart = null;
@@ -653,8 +711,8 @@ async function refreshForecastYesterday() {
     }
 
     status.textContent = deviceId
-      ? `Stündlicher Vergleich für ${deviceName}, gestern (${data.date}).`
-      : `${data.message} (${data.date})`;
+      ? `Stündlicher Vergleich für ${deviceName}, gestern, ${fullDate}.`
+      : `${data.message} Gestern war ${fullDate}.`;
 
     const hourLabels = data.hours.map((hour) => fmtForecastTime(hour.timestamp));
     const forecastExpected = [];
@@ -662,9 +720,23 @@ async function refreshForecastYesterday() {
     const actualValues = [];
     for (const hour of data.hours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
-      forecastExpected.push(hourValues ? hourValues.expected_kw : null);
-      forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
-      actualValues.push(hourValues ? hourValues.actual_kw : null);
+      const expected = hourValues ? hourValues.expected_kw : null;
+      forecastExpected.push(expected === undefined ? null : expected);
+      // Manche Stunden haben ueberhaupt keine gespeicherte Prognose (siehe
+      // get_yesterday_hourly_comparison: die Zeitachse bleibt trotzdem
+      // vollstaendig, mit low_kw/high_kw dann als null) - in dem Fall statt
+      // eines ungueltigen [null, null]-Balkens gleich das ganze Balken-
+      // Datum auf null setzen, damit Chart.js die Stunde sauber als Luecke
+      // ueberspringt.
+      const hasRange =
+        hourValues &&
+        hourValues.low_kw !== null &&
+        hourValues.low_kw !== undefined &&
+        hourValues.high_kw !== null &&
+        hourValues.high_kw !== undefined;
+      forecastRanges.push(hasRange ? [hourValues.low_kw, hourValues.high_kw] : null);
+      const actual = hourValues ? hourValues.actual_kw : null;
+      actualValues.push(actual === undefined ? null : actual);
     }
 
     const datasets = [
@@ -699,6 +771,7 @@ async function refreshForecastYesterday() {
         {
           type: "bar",
           data: { labels: hourLabels, datasets },
+          plugins: [forecastExpectedMarkerPlugin],
           options: {
             responsive: true,
             maintainAspectRatio: false,

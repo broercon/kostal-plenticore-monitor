@@ -209,13 +209,27 @@ test("Stuendliche Prognose wird bei Geraet ohne eigene Prognose geleert", async 
   assert.equal(app.state.forecastHoursTodayChart, null);
 });
 
+test("Prognose gestern zeigt das Datum vollstaendig formatiert, nicht als rohen ISO-String", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  app.clickSubview("forecast", "yesterday");
+  await waitFor(() => app.state.forecastYesterdayChart !== null);
+
+  const status = app.document.getElementById("forecast-yesterday-status").textContent;
+  assert.match(status, /Sonntag, 12\. Juli 2026/);
+  assert.doesNotMatch(status, /2026-07-12/);
+});
+
 test("Prognose gestern zeigt die stuendlichen Werte kombiniert und filtert nach Wechselrichter", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
   await waitFor(() => app.state.forecastYesterdayChart !== null);
 
   const labels = app.state.forecastYesterdayChart.data.labels;
-  assert.equal(labels.length, 2);
+  // Der Mock liefert 3 Stunden: zwei mit Daten, eine bewusste Luecke (siehe
+  // harness.mjs) - die Zeitachse bleibt trotzdem vollstaendig (siehe
+  // get_yesterday_hourly_comparison).
+  assert.equal(labels.length, 3);
 
   function forecastDataset() {
     return app.state.forecastYesterdayChart.data.datasets.find((d) => d.label === "Prognose");
@@ -229,16 +243,44 @@ test("Prognose gestern zeigt die stuendlichen Werte kombiniert und filtert nach 
   // Kombiniert (Alle): Stunde 1 (07:00 lokal) hat expected_kw 2.0 (1.2+0.8),
   // Stunde 2 (13:00 lokal) 4.5 (3.0+1.5) - beide Stunden von gestern sind
   // komplett vorbei, daher haben BEIDE bereits einen Ist-Wert (anders als
-  // bei "heute").
-  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [2.0, 4.5]);
-  assert.deepEqual([...actualData()].sort((a, b) => a - b), [2.3, 4.0]);
+  // bei "heute"). Die dritte (Luecken-)Stunde bleibt komplett null.
+  const forecastValues = [...forecastDataset().expectedData];
+  assert.deepEqual(
+    forecastValues.filter((v) => v !== null).sort((a, b) => a - b),
+    [2.0, 4.5]
+  );
+  assert.equal(forecastValues.filter((v) => v === null).length, 1);
+
+  const actualValues = [...actualData()];
+  assert.deepEqual(
+    actualValues.filter((v) => v !== null).sort((a, b) => a - b),
+    [2.3, 4.0]
+  );
+  assert.equal(actualValues.filter((v) => v === null).length, 1);
+
+  // Fuer die Luecken-Stunde muss der Balken-Wert selbst komplett null sein
+  // (kein ungueltiges [null, null]-Array), damit Chart.js sie sauber
+  // ueberspringt statt einen kaputten Balken zu zeichnen.
+  const rangeValues = [...forecastDataset().data];
+  assert.equal(rangeValues.filter((v) => v === null).length, 1);
+  for (const range of rangeValues) {
+    if (range !== null) assert.equal(range.length, 2);
+  }
 
   app.clickTab("WR1");
   await waitFor(() => app.state.selectedDeviceId === "wr1");
   await waitFor(() => forecastDataset().expectedData.includes(1.2));
 
-  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [1.2, 3.0]);
-  assert.deepEqual([...actualData()].sort((a, b) => a - b), [1.4, 2.6]);
+  const wr1Forecast = [...forecastDataset().expectedData];
+  assert.deepEqual(
+    wr1Forecast.filter((v) => v !== null).sort((a, b) => a - b),
+    [1.2, 3.0]
+  );
+  const wr1Actual = [...actualData()];
+  assert.deepEqual(
+    wr1Actual.filter((v) => v !== null).sort((a, b) => a - b),
+    [1.4, 2.6]
+  );
 });
 
 test("Prognose gestern wird bei Geraet ohne eigene Prognose geleert", async () => {

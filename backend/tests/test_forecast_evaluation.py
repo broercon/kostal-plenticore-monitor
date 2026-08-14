@@ -380,9 +380,14 @@ def test_yesterday_hourly_comparison_combines_devices_and_keeps_hours_separate(c
     )
     assert result["available"] is True
     assert result["date"] == "2026-06-01"
-    assert len(result["hours"]) == 2
+    # Die Zeitachse bleibt der KOMPLETTE Tag (24 lokale Stunden, hier ohne
+    # Sommer-/Winterzeit-Umstellung) - auch wenn nur fuer zwei Stunden
+    # tatsaechlich eine gespeicherte Prognose existiert (siehe unten).
+    assert len(result["hours"]) == 24
 
-    hour1_entry, hour2_entry = result["hours"]
+    by_local_hour = {h["local_hour"]: h for h in result["hours"]}
+    hour1_entry = by_local_hour["2026-06-01T13:00:00"]
+    hour2_entry = by_local_hour["2026-06-01T14:00:00"]
     assert hour1_entry["expected_kw"] == 4.0  # 3.0 + 1.0
     assert hour1_entry["actual_kw"] == 4.1  # 3.2 + 0.9
     assert hour1_entry["low_kw"] == 3.3
@@ -394,6 +399,19 @@ def test_yesterday_hourly_comparison_combines_devices_and_keeps_hours_separate(c
 
     assert hour2_entry["expected_kw"] == 5.5  # 4.0 + 1.5
     assert hour2_entry["actual_kw"] == 5.5  # 3.9 + 1.6
+
+    # Alle uebrigen 22 Stunden des Tages sind Luecken (keine gespeicherte
+    # Prognose) - komplett None statt faelschlich 0, mit leerer
+    # Geraete-Liste, aber weiterhin als eigener Zeitachsen-Punkt vorhanden.
+    other_hours = [h for h in result["hours"] if h["local_hour"] not in
+                   ("2026-06-01T13:00:00", "2026-06-01T14:00:00")]
+    assert len(other_hours) == 22
+    for h in other_hours:
+        assert h["expected_kw"] is None
+        assert h["low_kw"] is None
+        assert h["high_kw"] is None
+        assert h["actual_kw"] is None
+        assert h["devices"] == []
 
 
 def test_yesterday_hourly_comparison_unavailable_without_stored_predictions(client):
@@ -418,9 +436,15 @@ def test_yesterday_hourly_comparison_keeps_actual_none_without_matching_reading(
         now=datetime(2026, 6, 2, 8, tzinfo=timezone.utc)
     )
     assert result["available"] is True
-    assert len(result["hours"]) == 1
-    assert result["hours"][0]["actual_kw"] is None
-    assert result["hours"][0]["devices"][0]["actual_kw"] is None
+    # Zeitachse bleibt komplett (24 Stunden), auch wenn nur eine einzige
+    # davon ueberhaupt eine gespeicherte Prognose hat.
+    assert len(result["hours"]) == 24
+    hour_entry = next(
+        h for h in result["hours"] if h["local_hour"] == "2026-06-01T13:00:00"
+    )
+    assert hour_entry["actual_kw"] is None
+    assert hour_entry["devices"][0]["actual_kw"] is None
+    assert hour_entry["expected_kw"] == 3.0
 
 
 def test_yesterday_endpoint_requires_login(client):
