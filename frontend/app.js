@@ -720,23 +720,9 @@ async function refreshForecastYesterday() {
     const actualValues = [];
     for (const hour of data.hours) {
       const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
-      const expected = hourValues ? hourValues.expected_kw : null;
-      forecastExpected.push(expected === undefined ? null : expected);
-      // Manche Stunden haben ueberhaupt keine gespeicherte Prognose (siehe
-      // get_yesterday_hourly_comparison: die Zeitachse bleibt trotzdem
-      // vollstaendig, mit low_kw/high_kw dann als null) - in dem Fall statt
-      // eines ungueltigen [null, null]-Balkens gleich das ganze Balken-
-      // Datum auf null setzen, damit Chart.js die Stunde sauber als Luecke
-      // ueberspringt.
-      const hasRange =
-        hourValues &&
-        hourValues.low_kw !== null &&
-        hourValues.low_kw !== undefined &&
-        hourValues.high_kw !== null &&
-        hourValues.high_kw !== undefined;
-      forecastRanges.push(hasRange ? [hourValues.low_kw, hourValues.high_kw] : null);
-      const actual = hourValues ? hourValues.actual_kw : null;
-      actualValues.push(actual === undefined ? null : actual);
+      forecastExpected.push(hourValues ? hourValues.expected_kw : null);
+      forecastRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
+      actualValues.push(hourValues ? hourValues.actual_kw : null);
     }
 
     const datasets = [

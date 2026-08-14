@@ -376,13 +376,9 @@ class ForecastYesterdayHourDeviceOut(BaseModel):
 class ForecastYesterdayHourOut(BaseModel):
     timestamp: datetime
     local_hour: str
-    # None, wenn fuer diese Stunde ueberhaupt keine gespeicherte Prognose
-    # vorliegt (z.B. Ausfall/Neustart waehrend dieser Stunde) - die Stunde
-    # bleibt trotzdem in der Liste, damit die Zeitachse im Frontend
-    # vollstaendig bleibt (siehe get_yesterday_hourly_comparison).
-    expected_kw: float | None = None
-    low_kw: float | None = None
-    high_kw: float | None = None
+    expected_kw: float
+    low_kw: float
+    high_kw: float
     actual_kw: float | None = None
     devices: list[ForecastYesterdayHourDeviceOut] = []
 
