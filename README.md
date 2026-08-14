@@ -133,4 +133,4 @@ nicht veröffentlicht werden.
 
 ## Lizenz
 
-Für dieses Repository ist derzeit keine separate Lizenzdatei hinterlegt.
+MIT-Lizenz, siehe [LICENSE](LICENSE).

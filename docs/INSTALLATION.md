@@ -161,8 +161,9 @@ automatisch zur Login-Seite um. Es gibt zwei Rollen:
 ### Erste Anmeldung
 
 Beim allerersten Start (wenn die `users`-Tabelle noch leer ist) legt die App
-automatisch drei Nutzer an: `admin` (Rolle admin), `betreiber1` und `betreiber2`
-(Rolle betreiber) – jeweils mit einem zufällig erzeugten Initial-Passwort.
+automatisch drei Nutzer an: `admin` (Rolle admin), `betreiber1` und
+`betreiber2` (Rolle betreiber) – jeweils mit einem zufällig erzeugten
+Initial-Passwort.
 Diese Passwörter werden beim ersten Start **einmalig ausgegeben**:
 
 ```bash
@@ -175,9 +176,9 @@ Dort erscheint ein Block wie:
 ======================================================================
 ERSTE ANMELDEDATEN (nur jetzt im Log sichtbar - bitte notieren
 und nach dem ersten Login ueber "Passwort aendern" ersetzen):
-  Benutzername: admin       Passwort: xxxxxxxxxxxxxx
-  Benutzername: betreiber1    Passwort: xxxxxxxxxxxxxx
-  Benutzername: betreiber2    Passwort: xxxxxxxxxxxxxx
+  Benutzername: admin        Passwort: xxxxxxxxxxxxxx
+  Benutzername: betreiber1   Passwort: xxxxxxxxxxxxxx
+  Benutzername: betreiber2   Passwort: xxxxxxxxxxxxxx
 ======================================================================
 ```
 
@@ -246,9 +247,13 @@ Dashboard:
   wie das "Tagesverbrauch"-Diagramm.
 - Aktueller Batterie-Ladestand je Gerät mit Batterie.
 
-Der Versand läuft über den separaten zentralen Mail-Service
-[broercon/Mailserver](https://github.com/broercon/Mailserver) (`POST
-/send`), nicht über einen eigenen SMTP-Versand in dieser App.
+Der Versand läuft über einen separaten, zentralen Mail-Service (`POST
+/send`), nicht über einen eigenen SMTP-Versand in dieser App. Ein Beispiel
+für einen kompatiblen Service ist
+[broercon/Mailserver](https://github.com/broercon/Mailserver); falls dieses
+Repository für dich nicht erreichbar/geeignet ist, reicht grundsätzlich
+jeder eigene HTTP-Endpunkt, der `POST /send` mit den unten genannten Feldern
+(Empfänger, Betreff/Inhalt, API-Key) entgegennimmt.
 
 ### Einrichtung über die Admin-Oberfläche (empfohlen)
 
