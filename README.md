@@ -106,6 +106,7 @@ Erklärung steht unter
 ## Aktualisieren und stoppen
 
 ```bash
+git pull --ff-only
 docker compose up -d --build
 docker compose down
 ```
