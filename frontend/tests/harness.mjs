@@ -234,6 +234,20 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
                 },
               ],
             },
+            // Luecken-Stunde: keine gespeicherte Prognose ueberhaupt (z.B.
+            // Neustart/Ausfall waehrend dieser Stunde) - die Zeitachse
+            // bleibt trotzdem vollstaendig (siehe
+            // get_yesterday_hourly_comparison), komplett null statt
+            // faelschlich [null, null] als Balken-Datum.
+            {
+              timestamp: "2026-07-12T18:00:00Z",
+              local_hour: "2026-07-12T20:00:00",
+              expected_kw: null,
+              low_kw: null,
+              high_kw: null,
+              actual_kw: null,
+              devices: [],
+            },
           ],
         };
       case "/api/forecast/accuracy":
