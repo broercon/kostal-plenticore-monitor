@@ -159,6 +159,49 @@ class DailyEnergyCache(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class WeatherHourly(Base):
+    """Lokal zwischengespeicherte historische Wetter-Stundenwerte (Open-Meteo),
+    Grundlage der Trainingsdaten in energy_forecast.py.
+
+    Ohne diesen Cache wuerde build_forecast() bei JEDEM Lauf (Cache-TTL nur
+    30 Minuten) erneut bis zu TRAINING_DAYS = 365 Tage Wetterhistorie live
+    von Open-Meteo abrufen. Das ist nicht nur unnoetig viel externer
+    Traffic, sondern vor allem ein Stabilitaetsproblem: Open-Meteos
+    "Historical Forecast API" ist kein festes Reanalyse-Archiv, sondern
+    schreibt die jeweils ersten Stunden aufeinanderfolgender Modelllaeufe
+    fort - fuer sehr junge Vergangenheit kann sich der Wert derselben
+    Stunde also noch aendern, je nachdem wann genau abgefragt wird. Ohne
+    Cache wuerde ein und dieselbe historische Stunde (mit unveraendertem
+    gemessenen PV-Ertrag) im naechsten Lauf leicht andere Wetter-Eingangs-
+    werte bekommen - die gelernten Distanzgewichte (fit_distance_weights())
+    koennten dadurch driften, ohne dass sich am eigentlichen Lernsignal
+    etwas geaendert hat.
+
+    Deshalb gilt: Stunden, die laenger als WEATHER_CACHE_MATURITY_DAYS
+    (siehe weather_cache.py) zurueckliegen, gelten als "ausgereift" und
+    werden genau einmal gespeichert und danach nie wieder ueberschrieben.
+    Juengere Stunden werden bewusst NICHT gecacht, sondern bei jedem Lauf
+    weiterhin live abgefragt, bis sie die Reifegrenze ueberschreiten.
+
+    latitude/longitude auf 4 Nachkommastellen gerundet (siehe
+    weather_cache._round_coord, ca. 11m Genauigkeit) - Teil des
+    Primaerschluessels, damit ein spaeter geaenderter Anlagenstandort nicht
+    versehentlich mit dem Cache des alten Standorts vermischt wird."""
+
+    __tablename__ = "weather_hourly"
+
+    latitude: Mapped[float] = mapped_column(Float, primary_key=True)
+    longitude: Mapped[float] = mapped_column(Float, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    shortwave_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    direct_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    diffuse_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Session(Base):
     """Angemeldete Sitzung (Cookie-Token -> Benutzer), serverseitig
     gespeichert, damit sie sich gezielt invalidieren laesst (Logout,

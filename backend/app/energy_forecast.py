@@ -14,13 +14,9 @@ from sqlalchemy import case, func, select
 from .config import settings
 from .database import SessionLocal
 from .forecast_config import get_config
-from .forecast_weather import (
-    WeatherPoint,
-    WeatherServiceError,
-    fetch_forecast_weather,
-    fetch_historical_weather,
-)
+from .forecast_weather import WeatherPoint, WeatherServiceError, fetch_forecast_weather
 from .models import Reading
+from .weather_cache import fetch_historical_weather_cached
 
 FORECAST_DAYS = 7
 TRAINING_DAYS = 365
@@ -719,11 +715,12 @@ async def build_forecast() -> dict:
         return _empty_result("Noch keine historischen PV-Daten vorhanden.")
     earliest = min(timestamp for device in history.values() for timestamp in device)
     historical_weather, forecast_weather = await asyncio.gather(
-        fetch_historical_weather(
+        fetch_historical_weather_cached(
             latitude,
             longitude,
             earliest.date(),
             (until - timedelta(days=1)).date(),
+            now=now,
         ),
         # Einen zusaetzlichen UTC-Tag abrufen, damit der letzte lokale Tag
         # auch in Zeitzonen mit UTC-Versatz vollstaendig vorliegt. Direkt
