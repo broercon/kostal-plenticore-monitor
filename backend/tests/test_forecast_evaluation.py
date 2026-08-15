@@ -16,23 +16,24 @@ from app.models import ForecastPrediction, Reading
 from .conftest import make_user
 
 
-def test_prediction_is_updated_only_until_target_hour_starts(client):
-    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
-    first_generated = target - timedelta(hours=2)
+def test_prediction_is_updated_freely_before_freeze_cutoff(client):
+    """Vor der Einfrier-Grenze (siehe FORECAST_FREEZE_TIME, Standard 22 Uhr
+    lokal am Vortag des Zieltages) darf ein neuer Modelllauf eine noch nicht
+    begonnene Zielstunde beliebig oft aktualisieren - wie schon vor der
+    Festschreibungs-Funktion."""
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)  # 14 Uhr Berlin
+    first_generated = datetime(2026, 5, 30, 8, tzinfo=timezone.utc)
     save_forecast_predictions(
         {"wr1": {target: (3000.0, 2500.0, 3500.0)}},
         {"wr1": "standard"},
         first_generated,
     )
+    # Deutlich vor der Einfrier-Grenze fuer den 2.6. (1.6., 22 Uhr Berlin =
+    # 20 Uhr UTC) - darf den Wert noch aendern.
     save_forecast_predictions(
         {"wr1": {target: (3200.0, 2700.0, 3700.0)}},
         {"wr1": "learned"},
-        target - timedelta(minutes=30),
-    )
-    save_forecast_predictions(
-        {"wr1": {target: (9999.0, 9999.0, 9999.0)}},
-        {"wr1": "learned"},
-        target,
+        datetime(2026, 5, 31, 8, tzinfo=timezone.utc),
     )
 
     session = SessionLocal()
@@ -42,6 +43,62 @@ def test_prediction_is_updated_only_until_target_hour_starts(client):
         assert rows[0].expected_w == 3200.0
         assert rows[0].model_method == "learned"
         assert rows[0].first_generated_at == first_generated.replace(tzinfo=None)
+    finally:
+        session.close()
+
+
+def test_prediction_is_locked_once_freeze_cutoff_passes(client):
+    """Sobald ein Modelllauf NACH der Einfrier-Grenze stattfindet, wird sein
+    Ergebnis fuer die betroffene Zielstunde endgueltig - auch wenn die
+    Stunde selbst noch gar nicht begonnen hat. Jeder weitere Lauf danach
+    darf den Wert nicht mehr aendern."""
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)  # 14 Uhr Berlin
+    # Einfrier-Grenze fuer den 2.6. ist der 1.6., 22 Uhr Berlin = 20 Uhr UTC.
+    save_forecast_predictions(
+        {"wr1": {target: (3000.0, 2500.0, 3500.0)}},
+        {"wr1": "standard"},
+        datetime(2026, 5, 31, 8, tzinfo=timezone.utc),
+    )
+    # Erster Lauf NACH der Einfrier-Grenze - wird noch uebernommen und ist
+    # ab jetzt die endgueltige Prognose fuer diese Stunde.
+    save_forecast_predictions(
+        {"wr1": {target: (3200.0, 2700.0, 3700.0)}},
+        {"wr1": "learned"},
+        datetime(2026, 6, 1, 21, tzinfo=timezone.utc),
+    )
+    # Weiterer Lauf, ebenfalls nach der Grenze und immer noch bevor die
+    # Zielstunde begonnen hat - darf den bereits eingefrorenen Wert NICHT
+    # mehr ueberschreiben.
+    save_forecast_predictions(
+        {"wr1": {target: (9999.0, 9999.0, 9999.0)}},
+        {"wr1": "learned"},
+        datetime(2026, 6, 2, 6, tzinfo=timezone.utc),
+    )
+
+    session = SessionLocal()
+    try:
+        rows = session.scalars(select(ForecastPrediction)).all()
+        assert len(rows) == 1
+        assert rows[0].expected_w == 3200.0
+        assert rows[0].model_method == "learned"
+    finally:
+        session.close()
+
+
+def test_prediction_is_never_saved_after_target_hour_starts(client):
+    """Unveraendert gegenueber vorher: eine bereits begonnene Zielstunde
+    wird generell nicht mehr (weder aktualisiert noch neu angelegt)."""
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    save_forecast_predictions(
+        {"wr1": {target: (9999.0, 9999.0, 9999.0)}},
+        {"wr1": "learned"},
+        target,
+    )
+
+    session = SessionLocal()
+    try:
+        rows = session.scalars(select(ForecastPrediction)).all()
+        assert rows == []
     finally:
         session.close()
 
