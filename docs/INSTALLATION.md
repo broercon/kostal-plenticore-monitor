@@ -61,6 +61,15 @@ und echte Erzeugung automatisch verglichen. Der Abschnitt
 Wechselrichter. Nach der ersten Installation benötigt diese Auswertung daher
 mindestens einen abgeschlossenen Prognosetag.
 
+Die Prognose wird laufend neu berechnet (alle 30 Minuten, siehe
+`energy_forecast.CACHE_TTL`), solange die jeweiligen Stunden noch nicht
+begonnen haben. Damit Mail-Report, Dashboard-Tagesübersicht und
+Prognosekontrolle für denselben Tag nicht je nach Abrufzeitpunkt
+unterschiedliche Werte zeigen, wird die Prognose für den Folgetag ab einer
+festen Uhrzeit (`FORECAST_FREEZE_TIME`, Standard 22:00 Uhr lokal am Vortag)
+endgültig festgeschrieben und danach nicht mehr verändert - unabhängig
+davon, ob die jeweilige Stunde selbst schon begonnen hat.
+
 Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 `inverters.json` als Startkonfiguration stehen:
 

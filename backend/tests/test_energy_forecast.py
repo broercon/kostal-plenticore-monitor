@@ -188,6 +188,76 @@ def test_summarize_day_bounds_combine_hourly_spreads_instead_of_summing_naively(
     assert day["devices"][0]["low_kwh"] == 1.72
 
 
+def test_summarize_uses_frozen_prediction_instead_of_fresh_live_value(client, monkeypatch):
+    """Regression fuer die Prognose-Festschreibung (FORECAST_FREEZE_TIME):
+    sobald eine Zielstunde bereits eingefroren ist (siehe
+    forecast_evaluation.save_forecast_predictions/load_frozen_predictions),
+    muss _summarize() den gespeicherten Wert verwenden - NICHT den frischen,
+    live vom Modell berechneten - auch wenn diese Stunde selbst noch nicht
+    begonnen hat. Das ist die Grundlage dafuer, dass Mail-Report,
+    Dashboard-Tagesuebersicht und Prognosekontrolle fuer einen bereits
+    eingefrorenen Tag denselben Wert zeigen."""
+    import app.energy_forecast as module
+    from app.forecast_evaluation import save_forecast_predictions
+
+    class Device:
+        def __init__(self, device_id, name):
+            self.id = device_id
+            self.name = name
+
+    monkeypatch.setattr(module.settings, "inverters", [Device("wr1", "Dach")])
+    # Das Modell wuerde JETZT live einen ANDEREN Wert liefern als das, was
+    # "gestern Abend" nach der Einfrier-Grenze bereits gespeichert wurde.
+    monkeypatch.setattr(
+        module,
+        "_predict_with_profile",
+        lambda training, target, profile, arrays: (5000.0, 4000.0, 6000.0),
+    )
+
+    # Zielstunde 2.6.2026, 12-13 Uhr UTC (14-15 Uhr Berlin). Die
+    # Einfrier-Grenze fuer diesen Tag ist der 1.6., 22 Uhr Berlin = 20 Uhr
+    # UTC. Der folgende Lauf liegt DANACH und friert die Stunde damit ein.
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    save_forecast_predictions(
+        {"wr1": {target: (1234.0, 1000.0, 1500.0)}},
+        {"wr1": "standard"},
+        datetime(2026, 6, 1, 21, tzinfo=timezone.utc),
+    )
+
+    training = {
+        "wr1": [
+            TrainingPoint(_weather(12, 600, day=(i % 27) + 1), 3000)
+            for i in range(MIN_TRAINING_SAMPLES)
+        ]
+    }
+    forecast_weather = [_weather(13, 600, day=2)]  # deckt genau "target" ab
+
+    # Neuer Lauf "heute Morgen", also nach der Einfrier-Grenze, aber noch
+    # deutlich vor Beginn der Zielstunde selbst.
+    result = module._summarize(
+        training,
+        forecast_weather,
+        persist=True,
+        generated_at=datetime(2026, 6, 2, 6, tzinfo=timezone.utc),
+    )
+
+    assert result["hours"][0]["expected_kw"] == 1.234
+    assert result["hours"][0]["devices"][0]["expected_kw"] == 1.234
+    assert result["days"][0]["expected_kwh"] == 1.23
+
+    # Der neue Lauf darf den eingefrorenen Wert in der DB auch nicht
+    # ueberschrieben haben.
+    from app.database import SessionLocal
+    from app.models import ForecastPrediction
+
+    session = SessionLocal()
+    try:
+        row = session.query(ForecastPrediction).filter_by(device_id="wr1").one()
+        assert row.expected_w == 1234.0
+    finally:
+        session.close()
+
+
 def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
     import app.energy_forecast as module
 

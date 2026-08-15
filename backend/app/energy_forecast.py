@@ -551,6 +551,28 @@ def _summarize(
             f"(mindestens {MIN_TRAINING_SAMPLES} Stunden je Wechselrichter)."
         )
 
+    generated_at = generated_at or datetime.now(timezone.utc)
+    if persist:
+        from .forecast_evaluation import load_frozen_predictions, save_forecast_predictions
+
+        save_forecast_predictions(
+            per_device_hour,
+            {device_id: profile.method for device_id, profile in profiles.items()},
+            generated_at,
+        )
+        # Fuer bereits eingefrorene Zielstunden (siehe FORECAST_FREEZE_TIME)
+        # den gespeicherten (nicht mehr den frischen live berechneten) Wert
+        # verwenden, BEVOR daraus combined_hours/days gebaut werden - so
+        # spiegeln Dashboard-Tagesuebersicht, Mail-Report und "Stuendliche
+        # Prognose heute" fuer einen eingefrorenen Tag exakt denselben Wert
+        # wie die Prognosekontrolle (die dieselben gespeicherten Zeilen
+        # liest), unabhaengig vom Abrufzeitpunkt.
+        frozen = load_frozen_predictions(
+            {device_id: set(hours) for device_id, hours in per_device_hour.items()}
+        )
+        for device_id, overrides in frozen.items():
+            per_device_hour[device_id].update(overrides)
+
     combined_hours = []
     for point in forecast_weather:
         interval_start = point.timestamp - timedelta(hours=1)
@@ -657,16 +679,6 @@ def _summarize(
                 "peak_kw": peak["expected_kw"],
                 "devices": devices,
             }
-        )
-
-    generated_at = generated_at or datetime.now(timezone.utc)
-    if persist:
-        from .forecast_evaluation import save_forecast_predictions
-
-        save_forecast_predictions(
-            per_device_hour,
-            {device_id: profile.method for device_id, profile in profiles.items()},
-            generated_at,
         )
 
     all_samples = [

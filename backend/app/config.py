@@ -161,6 +161,31 @@ class Settings:
             self.daily_report_hour = 19
             self.daily_report_minute = 0
 
+        # --- Prognose-Festschreibung ("Einfrieren") ---
+        # Ohne diese Grenze wuerde sich der angezeigte Prognosewert fuer
+        # einen zukuenftigen Tag laufend aendern (die Prognose wird alle 30
+        # Minuten neu berechnet, siehe energy_forecast.CACHE_TTL), solange
+        # dessen Stunden noch nicht begonnen haben - das fuehrt dazu, dass
+        # Mail-Report, Dashboard-Tagesuebersicht und Prognosekontrolle je
+        # nach Abrufzeitpunkt unterschiedliche Werte fuer denselben Tag
+        # zeigen (siehe forecast_evaluation._freeze_cutoff_utc/
+        # load_frozen_predictions). Ab dieser Uhrzeit (lokale TIMEZONE) am
+        # Vortag gilt die dann aktuelle Prognose fuer den Folgetag als
+        # endgueltig und wird nicht mehr veraendert.
+        raw_freeze_time = os.environ.get("FORECAST_FREEZE_TIME", "22:00").strip()
+        try:
+            freeze_hour_str, freeze_minute_str = raw_freeze_time.split(":", 1)
+            freeze_hour, freeze_minute = int(freeze_hour_str), int(freeze_minute_str)
+            if not (0 <= freeze_hour <= 23 and 0 <= freeze_minute <= 59):
+                raise ValueError
+            self.forecast_freeze_time = raw_freeze_time
+        except (ValueError, AttributeError):
+            logger.warning(
+                "FORECAST_FREEZE_TIME=%r ist ungültig (erwartet HH:MM), verwende 22:00.",
+                raw_freeze_time,
+            )
+            self.forecast_freeze_time = "22:00"
+
         self.daily_report_recipients = [
             addr.strip()
             for addr in os.environ.get("DAILY_REPORT_RECIPIENTS", "").split(",")

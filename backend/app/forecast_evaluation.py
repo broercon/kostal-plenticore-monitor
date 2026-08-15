@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert
 
 from .config import settings
+from .daily_report_config import InvalidReportTime, parse_report_time
 from .database import SessionLocal
 from .models import ForecastPrediction
 
@@ -19,36 +20,82 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _freeze_cutoff_utc(target_utc: datetime) -> datetime:
+    """Zeitpunkt (UTC), ab dem die Prognose fuer den Kalendertag von
+    `target_utc` (in der Anlagen-Zeitzone) als eingefroren gilt:
+    FORECAST_FREEZE_TIME (Standard 22:00) am lokalen Vortag. Ab diesem
+    Zeitpunkt darf ein neuer Wetter-/Modelllauf die betroffene Zielstunde
+    nicht mehr aendern (siehe save_forecast_predictions/
+    load_frozen_predictions) - unabhaengig davon, ob die Zielstunde selbst
+    noch nicht begonnen hat. So zeigen Mail-Report, Dashboard und
+    Prognosekontrolle fuer einen bereits eingefrorenen Tag denselben Wert,
+    egal wann/wo er abgerufen wird."""
+    tz = ZoneInfo(settings.timezone_name)
+    local_date = target_utc.astimezone(tz).date()
+    try:
+        freeze_hour, freeze_minute = parse_report_time(settings.forecast_freeze_time)
+    except InvalidReportTime:
+        # Bereits beim Einlesen der Einstellung geloggt (config.py) - hier
+        # nur der sichere Rueckfallwert, damit die Prognose nicht komplett
+        # ausfaellt.
+        freeze_hour, freeze_minute = 22, 0
+    cutoff_local = datetime.combine(
+        local_date - timedelta(days=1), time(freeze_hour, freeze_minute), tzinfo=tz
+    )
+    return cutoff_local.astimezone(timezone.utc)
+
+
 def save_forecast_predictions(
     predictions: dict[str, dict[datetime, tuple[float, float, float]]],
     methods: dict[str, str],
     generated_at: datetime,
 ) -> None:
-    """Speichert die letzte Vorhersage je noch nicht begonnener Stunde."""
+    """Speichert die letzte Vorhersage je noch nicht begonnener UND noch
+    nicht eingefrorener Stunde (siehe _freeze_cutoff_utc). Bereits
+    eingefrorene Zielstunden werden bewusst NICHT mehr angefasst, auch wenn
+    sie noch in der Zukunft liegen."""
     generated_at = _utc(generated_at)
-    rows = []
+    candidates: list[tuple[str, datetime, tuple[float, float, float]]] = []
     for device_id, device_predictions in predictions.items():
         for target, values in device_predictions.items():
             target = _utc(target)
             if target <= generated_at:
                 continue
-            rows.append(
-                {
-                    "device_id": device_id,
-                    "target_timestamp": target,
-                    "expected_w": values[0],
-                    "low_w": values[1],
-                    "high_w": values[2],
-                    "model_method": methods.get(device_id, "standard"),
-                    "first_generated_at": generated_at,
-                    "updated_at": generated_at,
-                }
-            )
-    if not rows:
+            candidates.append((device_id, target, values))
+    if not candidates:
         return
 
     session = SessionLocal()
     try:
+        targets = list({target for _device_id, target, _values in candidates})
+        already_frozen: set[tuple[str, datetime]] = set()
+        for row in session.execute(
+            select(
+                ForecastPrediction.device_id,
+                ForecastPrediction.target_timestamp,
+                ForecastPrediction.updated_at,
+            ).where(ForecastPrediction.target_timestamp.in_(targets))
+        ):
+            if _utc(row.updated_at) >= _freeze_cutoff_utc(_utc(row.target_timestamp)):
+                already_frozen.add((row.device_id, _utc(row.target_timestamp)))
+
+        rows = [
+            {
+                "device_id": device_id,
+                "target_timestamp": target,
+                "expected_w": values[0],
+                "low_w": values[1],
+                "high_w": values[2],
+                "model_method": methods.get(device_id, "standard"),
+                "first_generated_at": generated_at,
+                "updated_at": generated_at,
+            }
+            for device_id, target, values in candidates
+            if (device_id, target) not in already_frozen
+        ]
+        if not rows:
+            return
+
         statement = insert(ForecastPrediction).values(rows)
         statement = statement.on_conflict_do_update(
             index_elements=["device_id", "target_timestamp"],
@@ -64,6 +111,39 @@ def save_forecast_predictions(
         session.commit()
     finally:
         session.close()
+
+
+def load_frozen_predictions(
+    targets_by_device: dict[str, set[datetime]],
+) -> dict[str, dict[datetime, tuple[float, float, float]]]:
+    """Liest die bereits eingefrorenen (siehe _freeze_cutoff_utc)
+    gespeicherten Prognosewerte fuer die uebergebenen Ziel-Stunden - fuer
+    _summarize(), damit ein bereits eingefrorener Tag ueberall (Mail-Report,
+    Dashboard-Tagesuebersicht, Prognosekontrolle) denselben Wert zeigt,
+    statt frischer Live-Werte, die sich bei jedem neuen Modelllauf noch
+    aendern koennten."""
+    all_targets = list({target for targets in targets_by_device.values() for target in targets})
+    if not all_targets:
+        return {}
+
+    session = SessionLocal()
+    try:
+        rows = session.execute(
+            select(ForecastPrediction).where(
+                ForecastPrediction.target_timestamp.in_(all_targets)
+            )
+        ).scalars().all()
+    finally:
+        session.close()
+
+    result: dict[str, dict[datetime, tuple[float, float, float]]] = defaultdict(dict)
+    for row in rows:
+        target = _utc(row.target_timestamp)
+        if target not in targets_by_device.get(row.device_id, ()):
+            continue
+        if _utc(row.updated_at) >= _freeze_cutoff_utc(target):
+            result[row.device_id][target] = (row.expected_w, row.low_w, row.high_w)
+    return dict(result)
 
 
 def _accuracy_from_absolute_error(abs_error_kwh: float, actual_kwh: float) -> float | None:
