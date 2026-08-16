@@ -59,3 +59,16 @@ test("Prognosekontrolle-Diagramm ist ein Liniendiagramm mit dem aktuellsten Tag 
   assert.equal(chart.data.datasets.length, 1);
   assert.deepEqual([...chart.data.datasets[0].data], [20, -10, 0]);
 });
+
+test("Prognosekontrolle: Diagramm steht im Markup vor den Werten (Tages-/Heute-Karten)", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  await waitFor(() => app.state.tabsLoaded.has("forecast"));
+
+  const section = app.document.getElementById("forecast-accuracy-section");
+  const children = [...section.children].map((el) => el.id);
+  const chartIndex = children.indexOf("forecast-accuracy-chart-wrapper");
+  const daysIndex = children.indexOf("forecast-accuracy-days");
+  assert.ok(chartIndex !== -1 && daysIndex !== -1);
+  assert.ok(chartIndex < daysIndex, "Diagramm muss vor den Werten stehen");
+});
+
