@@ -70,6 +70,12 @@ festen Uhrzeit (`FORECAST_FREEZE_TIME`, Standard 22:00 Uhr lokal am Vortag)
 endgültig festgeschrieben und danach nicht mehr verändert - unabhängig
 davon, ob die jeweilige Stunde selbst schon begonnen hat.
 
+Zusätzlich zum 30-Minuten-Takt wird die Prognose garantiert kurz nach
+Mitternacht (00:01 Uhr lokal) neu berechnet, unabhängig davon, wie frisch
+der bisherige Cache-Eintrag noch ist. Damit zeigen "Heute"/"Morgen" im
+Dashboard zuverlässig den korrekten Tag, auch falls der reguläre
+30-Minuten-Takt einmal ins Stocken geraten sein sollte.
+
 Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 `inverters.json` als Startkonfiguration stehen:
 
