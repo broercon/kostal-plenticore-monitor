@@ -22,7 +22,10 @@ Unterhalb des normalen Diagramms gibt es einen zweiten Bereich
 die X-Achse zeigt immer fest 00:00–24:00 Uhr, und jeder ausgewählte Tag
 erscheint als eigene Kurve darüber gelegt, jeweils in einer eigenen, festen
 Farbe (der aktuellste Tag etwas dicker gezeichnet). Zeitraum wählbar von
-1 Tag bis 30 Tage.
+1 Tag bis 30 Tage – Standard beim Start ist bewusst "1 Tag" (nur der
+aktuellste Tag), passend zum Leistungsverlauf ("24 Std") und zum
+Wechselrichter-Vergleich ("1 Tag"); weitere Tage lassen sich jederzeit über
+die Buttons dazuwählen.
 
 Drei Kennzahlen stehen zur Auswahl:
 
