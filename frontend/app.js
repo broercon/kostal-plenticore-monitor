@@ -38,6 +38,7 @@ const state = {
   forecastAccuracyChart: null,
   forecastHoursTodayChart: null,
   forecastYesterdayChart: null,
+  forecastTomorrowChart: null,
   // Welche Ansichts-Tabs (siehe setupViewTabs) schon mindestens einmal
   // geladen wurden - nur fuer diese laeuft ein periodisches Auto-Refresh und
   // nur diese werden bei einem Wechselrichter-Wechsel neu geladen. Ein noch
@@ -337,6 +338,19 @@ function fmtFullDate(dateStr) {
   });
 }
 
+// Prueft, ob die Einfriergrenze fuer die morgige Prognose (siehe Backend:
+// config.FORECAST_FREEZE_TIME, im Regelfall 22:00 lokal - vom Server als
+// EnergyForecastOut.freeze_time mitgeliefert, siehe refreshForecast()) schon
+// erreicht ist. "now" als Parameter (statt direkt new Date() zu verwenden),
+// damit sich beide Faelle (vor/nach der Grenze) in Tests ohne globales
+// Datums-Mocking pruefen lassen.
+function isForecastFrozen(freezeTime, now = new Date()) {
+  const [freezeHour, freezeMinute] = freezeTime.split(":").map(Number);
+  const cutoff = new Date(now);
+  cutoff.setHours(freezeHour, freezeMinute, 0, 0);
+  return now.getTime() >= cutoff.getTime();
+}
+
 // Zeichnet fuer den "Prognose"-Datensatz (Floating Bar von low_kw bis
 // high_kw, siehe refreshForecast()/refreshForecastYesterday()) zusaetzlich
 // einen kurzen, deutlich sichtbaren Strich auf Hoehe des Erwartungswerts
@@ -393,10 +407,12 @@ async function refreshForecast() {
     const status = el("forecast-status");
     const dayContainer = el("forecast-days");
     const hoursTodayStatus = el("forecast-hours-today-status");
+    const tomorrowStatus = el("forecast-tomorrow-status");
     dayContainer.innerHTML = "";
     // Vor allen Rueckspruengen leeren: sonst bleiben beim Wechsel auf ein
     // Geraet ohne eigene Prognose die vorherigen Gesamtwerte sichtbar.
     hoursTodayStatus.textContent = "";
+    tomorrowStatus.textContent = "";
     if (!data.available) {
       status.textContent = data.message;
       if (state.forecastChart) {
@@ -406,6 +422,10 @@ async function refreshForecast() {
       if (state.forecastHoursTodayChart) {
         state.forecastHoursTodayChart.destroy();
         state.forecastHoursTodayChart = null;
+      }
+      if (state.forecastTomorrowChart) {
+        state.forecastTomorrowChart.destroy();
+        state.forecastTomorrowChart = null;
       }
       return;
     }
@@ -434,6 +454,10 @@ async function refreshForecast() {
       if (state.forecastHoursTodayChart) {
         state.forecastHoursTodayChart.destroy();
         state.forecastHoursTodayChart = null;
+      }
+      if (state.forecastTomorrowChart) {
+        state.forecastTomorrowChart.destroy();
+        state.forecastTomorrowChart = null;
       }
       return;
     }
@@ -621,6 +645,110 @@ async function refreshForecast() {
           },
         }
       );
+    }
+
+    // Stuendliche Prognose fuer MORGEN: data.days[1] (data.days[0] ist per
+    // Backend-Konvention immer heute, siehe Kommentar oben bei todayKey) -
+    // analog zur "Heute"-Ansicht ein Balkendiagramm mit Spannbereich, aber
+    // naturgemaess ohne "Tatsaechlich"-Balken (der Tag hat ja noch nicht
+    // stattgefunden). Ergaenzt um einen Hinweis, ab wann diese Prognose
+    // feststeht (siehe forecast_evaluation._freeze_cutoff_utc/data.freeze_time
+    // sowie isForecastFrozen() oben) - vorher kann sich der Wert mit jedem
+    // Modell-Lauf (alle 30 Minuten) noch aendern.
+    const tomorrowDay = data.days[1];
+    const tomorrowKey = tomorrowDay?.date;
+    const tomorrowHours = tomorrowKey
+      ? data.hours.filter((hour) => hour.local_date === tomorrowKey)
+      : [];
+    const tomorrowDayValues = tomorrowDay
+      ? deviceId
+        ? tomorrowDay.devices.find((d) => d.device_id === deviceId)
+        : tomorrowDay
+      : null;
+
+    if (!tomorrowDay || !tomorrowDayValues || tomorrowHours.length === 0) {
+      tomorrowStatus.textContent = deviceId
+        ? `Für ${deviceName} liegt noch keine stündliche Prognose für morgen vor.`
+        : "Für morgen liegt noch keine stündliche Prognose vor.";
+      if (state.forecastTomorrowChart) {
+        state.forecastTomorrowChart.destroy();
+        state.forecastTomorrowChart = null;
+      }
+    } else {
+      const tomorrowFullDate = fmtFullDate(tomorrowDay.date);
+      const frozen = isForecastFrozen(data.freeze_time);
+      const freezeNote = frozen
+        ? `Diese Prognose steht bereits seit ${data.freeze_time} Uhr fest.`
+        : `Diese Prognose wird bis ${data.freeze_time} Uhr heute Abend laufend ` +
+          "aktualisiert und steht erst danach endgültig fest.";
+      tomorrowStatus.textContent =
+        `${tomorrowFullDate}: ${tomorrowDayValues.expected_kwh.toFixed(1)} kWh erwartet ` +
+        `(Bereich ${tomorrowDayValues.low_kwh.toFixed(1)}–${tomorrowDayValues.high_kwh.toFixed(1)} kWh). ` +
+        freezeNote;
+
+      const tomorrowLabels = tomorrowHours.map((hour) => fmtForecastTime(hour.timestamp));
+      const tomorrowExpected = [];
+      const tomorrowRanges = [];
+      for (const hour of tomorrowHours) {
+        const hourValues = deviceId ? hour.devices.find((d) => d.device_id === deviceId) : hour;
+        tomorrowExpected.push(hourValues ? hourValues.expected_kw : null);
+        tomorrowRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
+      }
+
+      const tomorrowDatasets = [
+        {
+          label: "Prognose",
+          data: tomorrowRanges,
+          backgroundColor: "#38bdf8",
+          borderColor: "#38bdf8",
+          borderWidth: 1,
+          borderRadius: 3,
+          // Nur fuer den Tooltip mitgefuehrt, siehe hoursTodayDatasets oben.
+          expectedData: tomorrowExpected,
+        },
+      ];
+
+      if (state.forecastTomorrowChart) {
+        state.forecastTomorrowChart.data.labels = tomorrowLabels;
+        state.forecastTomorrowChart.data.datasets = tomorrowDatasets;
+        state.forecastTomorrowChart.update();
+      } else {
+        state.forecastTomorrowChart = new Chart(
+          el("forecast-tomorrow-chart").getContext("2d"),
+          {
+            type: "bar",
+            data: { labels: tomorrowLabels, datasets: tomorrowDatasets },
+            plugins: [forecastExpectedMarkerPlugin],
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              events: chartEvents(),
+              interaction: { mode: "index", intersect: false },
+              scales: {
+                x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
+                y: { beginAtZero: true, title: { display: true, text: "kWh" } },
+              },
+              plugins: {
+                tooltip: {
+                  callbacks: {
+                    label(context) {
+                      const range = context.raw;
+                      const expected = context.dataset.expectedData?.[context.dataIndex];
+                      if (!range || expected === null || expected === undefined) {
+                        return "Prognose: –";
+                      }
+                      return (
+                        `Prognose: ${expected.toFixed(1)} kWh ` +
+                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+                      );
+                    },
+                  },
+                },
+              },
+            },
+          }
+        );
+      }
     }
 
     const labels = data.hours.map((hour) =>
@@ -2337,6 +2465,7 @@ function refreshForecastTab() {
 const FORECAST_SUBVIEW_SECTIONS = {
   days: () => el("forecast-view-days"),
   "hours-today": () => el("forecast-view-hours-today"),
+  tomorrow: () => el("forecast-view-tomorrow"),
   yesterday: () => el("forecast-view-yesterday"),
   accuracy: () => el("forecast-accuracy-section"),
 };
@@ -2358,6 +2487,7 @@ function setForecastSubView(view) {
   state.forecastChart?.resize();
   state.forecastAccuracyChart?.resize();
   state.forecastHoursTodayChart?.resize();
+  state.forecastTomorrowChart?.resize();
   state.forecastYesterdayChart?.resize();
 }
 
@@ -2429,6 +2559,7 @@ const TAB_CHARTS = {
   forecast: () => [
     state.forecastChart,
     state.forecastHoursTodayChart,
+    state.forecastTomorrowChart,
     state.forecastYesterdayChart,
     state.forecastAccuracyChart,
   ],
