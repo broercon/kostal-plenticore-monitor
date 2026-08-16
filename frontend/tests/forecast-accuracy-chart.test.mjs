@@ -87,4 +87,3 @@ test("Prognosekontrolle: Punktfarbe zeigt Abweichungsrichtung (gruen/rot)", asyn
   assert.equal(colorFor(-10), "#f87171", "negative Abweichung ist rot");
   assert.equal(colorFor(null), "#94a3b8", "fehlender Wert ist neutral grau");
 });
-

@@ -2411,12 +2411,11 @@ const TAB_LOADERS = {
   forecast: refreshForecastTab,
 };
 
-// Autarkiegrad aendert sich nur langsam (Kalendertage/-monate lassen sich
-// ohnehin erst nach ihrem Abschluss endgueltig auswerten, siehe
-// daily_summary.build_autarky_monthly_summary) - taegliches statt
-// 5-minuetiges Neuladen reicht daher aus und erspart dem Backend
-// unnoetig haeufige Rohdaten-Scans fuer den laufenden Tag.
+// Die Monatsansicht aendert sich nur langsam; fuer sie reicht ein taegliches
+// Neuladen. Die heutige Uebersichtskachel entwickelt sich dagegen im Laufe
+// des Tages und wird deshalb weiterhin alle fuenf Minuten aktualisiert.
 const AUTARKY_REFRESH_MS = 24 * 60 * 60 * 1000;
+const AUTARKY_TODAY_REFRESH_MS = 5 * 60 * 1000;
 
 // Periodisches Auto-Refresh je Tab, erst gestartet, sobald der Tab zum
 // ersten Mal geoeffnet wurde (siehe setupViewTabs). "overview" hat ein
@@ -2721,9 +2720,10 @@ async function init() {
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
   setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
-  // Wie beim Autarkie-Tab (siehe AUTARKY_REFRESH_MS): "Autarkiegrad heute"
-  // muss nicht alle 5 Minuten neu berechnet werden, einmal taeglich reicht.
-  setInterval(() => refreshAutarkyToday().catch(console.error), AUTARKY_REFRESH_MS);
+  setInterval(
+    () => refreshAutarkyToday().catch(console.error),
+    AUTARKY_TODAY_REFRESH_MS
+  );
 }
 
 init();
