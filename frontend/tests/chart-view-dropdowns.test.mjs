@@ -1,12 +1,12 @@
-// Tests fuer die Ansichts-Flyouts in "Verlauf" (Leistungsverlauf,
-// Tagesvergleich, Tagesverbrauch) und "Verbrauch & Wechselrichter"
-// (Wechselrichter-Vergleich): statt mehrerer gleichzeitig sichtbarer
+// Tests fuer das Ansichts-Flyout in "Verlauf" (Leistungsverlauf,
+// Tagesvergleich, Tagesverbrauch): statt mehrerer gleichzeitig sichtbarer
 // Diagramme steht jeweils nur eines auf dem Bildschirm, gesteuert per
-// Hover-Flyout-Menue am jeweiligen Reiter oben (siehe setupViewTabs() in
-// app.js). "Tagesverbrauch" gehoerte urspruenglich zu "Verbrauch &
-// Wechselrichter" und wurde in den "Verlauf"-Tab verschoben (siehe
-// applyTrendSubView) - "Verbrauch & Wechselrichter" zeigt seither nur noch
-// den Wechselrichter-Vergleich.
+// Hover-Flyout-Menue am Reiter oben (siehe setupViewTabs() in app.js).
+// "Tagesverbrauch" gehoerte urspruenglich zum "Wechselrichter"-Tab (damals
+// "Verbrauch & Wechselrichter") und wurde in den "Verlauf"-Tab verschoben
+// (siehe applyTrendSubView) - der "Wechselrichter"-Tab zeigt seither nur
+// noch den Wechselrichter-Vergleich und hat deshalb, anders als frueher,
+// gar kein Flyout-Menue mehr (siehe zweiter Testblock unten).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";

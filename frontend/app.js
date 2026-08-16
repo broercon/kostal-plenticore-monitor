@@ -48,10 +48,6 @@ const state = {
   // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
   subView: {
     trend: "power",
-    // "Tagesverbrauch" ist seit der Verschiebung in den "Verlauf"-Tab (siehe
-    // applyTrendSubView) hier nicht mehr vorhanden - "Wechselrichter-
-    // Vergleich" ist die einzige verbleibende Unteransicht.
-    consumption: "hourly",
     forecast: "days",
   },
 };
@@ -2062,48 +2058,17 @@ function hourLabel(bucketIso, multiDay) {
 }
 
 function updateHourlyCompareVisibility() {
-  // Der Vergleich zwischen Wechselrichtern ergibt nur Sinn, wenn oben
-  // "Alle (Summe)" ausgewaehlt ist (selectedDeviceId === "") UND es
-  // ueberhaupt mehr als einen Wechselrichter gibt - bei einem einzelnen
-  // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
-  // vergleichen. state.subView.consumption ist seit der Verschiebung von
-  // "Tagesverbrauch" in den "Verlauf"-Tab (siehe applyTrendSubView) immer
-  // "hourly" - die Pruefung bleibt trotzdem bestehen (robuster, falls das
-  // wieder Unteransichten bekommt).
-  const menuWantsHourly = state.subView.consumption === "hourly";
+  // Der Wechselrichter-Vergleich (einziger Inhalt des "Wechselrichter"-Tabs,
+  // seit "Tagesverbrauch" in den "Verlauf"-Tab verschoben wurde - siehe
+  // applyTrendSubView - und das dortige Flyout-Menue deshalb entfallen ist)
+  // ergibt nur Sinn, wenn oben "Alle (Summe)" ausgewaehlt ist
+  // (selectedDeviceId === "") UND es ueberhaupt mehr als einen
+  // Wechselrichter gibt - bei einem einzelnen ausgewaehlten (oder einzigen
+  // konfigurierten) Geraet gaebe es nichts zu vergleichen.
   const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
-  el("hourly-section").classList.toggle("hidden", !menuWantsHourly);
   el("hourly-chart-content").classList.toggle("hidden", !deviceOk);
   el("hourly-chart-unavailable").classList.toggle("hidden", deviceOk);
-  return menuWantsHourly && deviceOk;
-}
-
-// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: nur noch
-// Wechselrichter-Vergleich (seit "Tagesverbrauch" in den "Verlauf"-Tab
-// verschoben wurde, siehe applyTrendSubView). ---
-
-function applyConsumptionSubView() {
-  // Seit "Tagesverbrauch" in den "Verlauf"-Tab verschoben wurde (siehe
-  // applyTrendSubView), bleibt hier nur noch "Wechselrichter-Vergleich" -
-  // dessen Sichtbarkeit haengt vom gewaehlten Wechselrichter-Tab ab, siehe
-  // updateHourlyCompareVisibility().
-  updateHourlyCompareVisibility();
-}
-
-function setConsumptionSubView(view) {
-  state.subView.consumption = view;
-  applyConsumptionSubView();
-  // Beim erstmaligen Wechsel auf "Wechselrichter-Vergleich" wurde der Chart
-  // evtl. noch nie aufgebaut (siehe refreshHourlyCompareChart()'s fruehen
-  // Abbruch, wenn die Ansicht nicht gewaehlt war) - jetzt gezielt nachladen.
-  refreshHourlyCompareChart().catch(console.error);
-}
-
-function setupConsumptionSubView() {
-  // Beim Einrichten nur die Sichtbarkeit anwenden (kein Fetch) - das
-  // eigentliche Laden uebernimmt refreshConsumptionTab() beim ersten
-  // Oeffnen des Tabs.
-  applyConsumptionSubView();
+  return deviceOk;
 }
 
 async function refreshHourlyCompareChart() {
@@ -2481,7 +2446,6 @@ function resizeTabCharts(tabId) {
 // data-subview.
 const SUBVIEW_SETTERS = {
   trend: setTrendSubView,
-  consumption: setConsumptionSubView,
   forecast: setForecastSubView,
 };
 
@@ -2694,7 +2658,7 @@ async function init() {
   setupDailyTotalsControls();
   setupAutarkyControls();
   setupHourlyCompareControls();
-  setupConsumptionSubView();
+  updateHourlyCompareVisibility();
   setupForecastSubView();
   setupChartInteractionToggle();
   // Alle Tabs laden jetzt schon beim Start im Hintergrund (nicht erst beim

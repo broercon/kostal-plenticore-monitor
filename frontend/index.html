@@ -178,14 +178,9 @@
       </div>
     </div>
 
-    <div class="view-tab-with-menu" data-tab-group="consumption">
-      <button type="button" data-tab="consumption" class="view-tab-trigger">
-        <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Verbrauch &amp; Wechselrichter
-      </button>
-      <div class="view-tab-menu">
-        <button type="button" data-subview="hourly">Wechselrichter-Vergleich</button>
-      </div>
-    </div>
+    <button type="button" data-tab="consumption">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Wechselrichter
+    </button>
 
     <button type="button" data-tab="autarky">
       <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Autarkie
@@ -360,7 +355,7 @@
   </div>
 
   <div class="tab-panel hidden" id="tab-panel-consumption" data-tab-panel="consumption">
-    <section class="chart-section hidden" id="hourly-section">
+    <section class="chart-section" id="hourly-section">
       <div class="daycompare-header">
         <h2>Wechselrichter-Vergleich</h2>
         <p class="muted">
