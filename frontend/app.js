@@ -2464,8 +2464,8 @@ function refreshForecastTab() {
 
 const FORECAST_SUBVIEW_SECTIONS = {
   days: () => el("forecast-view-days"),
-  "hours-today": () => el("forecast-view-hours-today"),
   tomorrow: () => el("forecast-view-tomorrow"),
+  "hours-today": () => el("forecast-view-hours-today"),
   yesterday: () => el("forecast-view-yesterday"),
   accuracy: () => el("forecast-accuracy-section"),
 };
