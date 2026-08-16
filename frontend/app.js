@@ -48,7 +48,10 @@ const state = {
   // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
   subView: {
     trend: "power",
-    consumption: "dailytotals",
+    // "Tagesverbrauch" ist seit der Verschiebung in den "Verlauf"-Tab (siehe
+    // applyTrendSubView) hier nicht mehr vorhanden - "Wechselrichter-
+    // Vergleich" ist die einzige verbleibende Unteransicht.
+    consumption: "hourly",
     forecast: "days",
   },
 };
@@ -811,6 +814,14 @@ async function refreshForecastYesterday() {
   });
 }
 
+// Punktfarbe fuer das Prognosekontrolle-Diagramm: gruen bei Abweichung >= 0
+// (mehr PV als prognostiziert), rot bei < 0 (weniger als prognostiziert),
+// grau bei fehlendem Wert.
+function deviationPointColor(value) {
+  if (value === null || value === undefined) return "#94a3b8";
+  return value >= 0 ? "#4ade80" : "#f87171";
+}
+
 async function refreshForecastAccuracy() {
   return withLoading(["#forecast-accuracy-section"], async () => {
     const data = await fetchJson("/api/forecast/accuracy?days=30");
@@ -936,13 +947,29 @@ async function refreshForecastAccuracy() {
       container.appendChild(card);
     }
 
-    const chronological = [...cardEntries].reverse();
+    // cardEntries liegt bereits absteigend nach Datum vor (siehe
+    // forecast_evaluation.get_forecast_accuracy: neuester abgeschlossener
+    // Tag zuerst) - fuers Diagramm bewusst NICHT umgedreht, damit der
+    // aktuellste Tag ganz links steht statt ganz rechts.
+    const chronological = cardEntries;
     chartWrapper.classList.remove("hidden");
     if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
+
+    // Wie beim Autarkiegrad-Diagramm: statt zweier Balken (Erwartet/
+    // Tatsaechlich - die eigentlich interessante Groesse, die Abweichung,
+    // muss man sich daraus erst selbst ausrechnen) eine einzelne Linie mit
+    // der Abweichung in Prozent (difference_percent: positiv = mehr PV als
+    // erwartet, negativ = weniger). Y-Achse skaliert dynamisch auf den
+    // tatsaechlichen Wertebereich, damit auch kleine Abweichungen sichtbar
+    // bleiben, statt bei einer festen Achse fast wie eine Nulllinie
+    // auszusehen.
+    const deviationValues = chronological.map((entry) => entry.values.difference_percent);
+    const yRange = dynamicYRange(deviationValues);
+
     state.forecastAccuracyChart = new Chart(
       el("forecast-accuracy-chart").getContext("2d"),
       {
-        type: "bar",
+        type: "line",
         data: {
           labels: chronological.map((entry) =>
             new Date(`${entry.date}T12:00:00`).toLocaleDateString("de-DE", {
@@ -952,14 +979,23 @@ async function refreshForecastAccuracy() {
           ),
           datasets: [
             {
-              label: "Erwartet",
-              data: chronological.map((entry) => entry.values.expected_kwh),
-              backgroundColor: "rgba(56, 189, 248, 0.55)",
-            },
-            {
-              label: "Tatsächlich",
-              data: chronological.map((entry) => entry.values.actual_kwh),
-              backgroundColor: "rgba(34, 197, 94, 0.65)",
+              label: "Abweichung",
+              data: deviationValues,
+              borderColor: "#94a3b8",
+              // Punktfarbe zeigt die Richtung der Abweichung: gruen, wenn
+              // tatsaechlich mehr PV-Ertrag da war als prognostiziert
+              // (Abweichung >= 0), rot bei weniger als prognostiziert -
+              // dieselben Akzentfarben wie sonst im Dashboard (--accent-
+              // green/--accent-red). Fehlende Werte (kein Vergleich
+              // moeglich) bleiben neutral grau.
+              pointBackgroundColor: (ctx) => deviationPointColor(ctx.raw),
+              pointBorderColor: (ctx) => deviationPointColor(ctx.raw),
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              borderWidth: 2,
+              tension: 0,
+              fill: false,
+              spanGaps: false,
             },
           ],
         },
@@ -967,7 +1003,32 @@ async function refreshForecastAccuracy() {
           responsive: true,
           maintainAspectRatio: false,
           events: chartEvents(),
-          scales: { y: { beginAtZero: true, title: { display: true, text: "kWh" } } },
+          scales: {
+            y: {
+              min: yRange.min,
+              max: yRange.max,
+              ticks: { callback: (v) => `${v} %` },
+              title: { display: true, text: "Abweichung Prognose vs. Ist (%)" },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (item) =>
+                  item.parsed.y === null
+                    ? "keine Daten"
+                    : `Abweichung: ${item.parsed.y > 0 ? "+" : ""}${item.parsed.y.toFixed(1)} %`,
+                afterLabel: (item) => {
+                  const entry = chronological[item.dataIndex];
+                  if (!entry) return "";
+                  const v = entry.values;
+                  const sign = v.difference_kwh > 0 ? "+" : "";
+                  return `Erwartet ${v.expected_kwh.toFixed(1)} kWh · tatsächlich ${v.actual_kwh.toFixed(1)} kWh (${sign}${v.difference_kwh.toFixed(1)} kWh)`;
+                },
+              },
+            },
+          },
         },
       }
     );
@@ -1673,8 +1734,15 @@ function setupDayCompareControls() {
 
 function applyTrendSubView(view) {
   const isPower = view === "power";
+  const isDailyTotals = view === "dailytotals";
   el("trend-view-power").classList.toggle("hidden", !isPower);
-  el("trend-view-daycompare").classList.toggle("hidden", isPower);
+  el("trend-view-daycompare").classList.toggle("hidden", isPower || isDailyTotals);
+  // "Tagesverbrauch" (urspruenglich im "Verbrauch & Wechselrichter"-Tab) ist
+  // jetzt eine weitere Unteransicht des "Verlauf"-Tabs, siehe HTML - dort
+  // liegt die Sektion direkt im Verlauf-Panel, das dazugehoerige Element
+  // (#consumption-view-dailytotals) hat seinen Namen aus Kompatibilitaets-
+  // gruenden (CSS/Tests/refreshDailyTotalsChart) behalten.
+  el("consumption-view-dailytotals").classList.toggle("hidden", !isDailyTotals);
 }
 
 function setTrendSubView(view) {
@@ -1683,6 +1751,11 @@ function setTrendSubView(view) {
   if (view === "power") {
     state.chart?.resize();
     refreshChart().catch(console.error);
+    return;
+  }
+  if (view === "dailytotals") {
+    state.dailyTotals.chart?.resize();
+    refreshDailyTotalsChart().catch(console.error);
     return;
   }
   state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
@@ -1837,29 +1910,37 @@ function monthLabel(monthStr) {
 
 let autarkyMonthsData = [];
 
-// Anders als bei den uebrigen Diagrammen (feste 0-100%- bzw. 0-Start-Achse)
-// wird die Y-Achse hier bewusst dynamisch aus den tatsaechlichen Werten
-// berechnet: eine feste 0-100%-Skala wuerde Unterschiede zwischen Monaten
-// bei ueblicherweise recht aehnlichen Autarkiegraden (z.B. 40-60%) kaum
-// sichtbar machen (fast eine gerade Linie am oberen Rand). Die 0 muss dafuer
-// nicht zwingend auf der Achse auftauchen. Nur fuer die Autarkie-Ansicht -
-// alle anderen Diagramme behalten ihre bisherige Achsenskalierung.
-function autarkyYRange(months) {
-  const values = months
-    .map((m) => m.autarky_percent)
-    .filter((v) => v !== null && v !== undefined);
-  if (values.length === 0) return { min: 0, max: 100 };
-  const dataMin = Math.min(...values);
-  const dataMax = Math.max(...values);
+// Anders als bei den uebrigen Diagrammen (feste 0-Start- bzw. feste
+// Prozent-Achse) wird die Y-Achse bei manchen Ansichten bewusst dynamisch
+// aus den tatsaechlichen Werten berechnet: eine feste Achse wuerde
+// Unterschiede zwischen recht aehnlichen Werten (z.B. 40-60 % Autarkiegrad,
+// oder kleine Prognoseabweichungen) kaum sichtbar machen (fast eine gerade
+// Linie am Rand). "0" muss dafuer nicht zwingend auf der Achse auftauchen.
+// `lowerBound`/`upperBound` begrenzen die Marge nach unten/oben (z.B. 0/100
+// fuer einen Prozentsatz) - weglassen, wenn der Wert (wie eine Abweichung)
+// auch negativ werden kann.
+function dynamicYRange(values, { lowerBound = null, upperBound = null } = {}) {
+  const known = values.filter((v) => v !== null && v !== undefined);
+  if (known.length === 0) return { min: lowerBound ?? 0, max: upperBound ?? 100 };
+  const dataMin = Math.min(...known);
+  const dataMax = Math.max(...known);
   const spread = dataMax - dataMin;
-  // Marge von 10 % der Spannweite, mindestens aber 2 Prozentpunkte (sonst
-  // waere bei nahezu identischen Monatswerten die Marge selbst nahe 0 und
-  // die Linie liefe wieder flach am Rand).
+  // Marge von 10 % der Spannweite, mindestens aber 2 (Prozentpunkte bzw.
+  // Prozent Abweichung) - sonst waere bei nahezu identischen Werten die
+  // Marge selbst nahe 0 und die Linie liefe wieder flach am Rand.
   const margin = Math.max(spread * 0.1, 2);
-  return {
-    min: Math.max(0, Math.floor(dataMin - margin)),
-    max: Math.min(100, Math.ceil(dataMax + margin)),
-  };
+  let min = Math.floor(dataMin - margin);
+  let max = Math.ceil(dataMax + margin);
+  if (lowerBound !== null) min = Math.max(lowerBound, min);
+  if (upperBound !== null) max = Math.min(upperBound, max);
+  return { min, max };
+}
+
+function autarkyYRange(months) {
+  return dynamicYRange(
+    months.map((m) => m.autarky_percent),
+    { lowerBound: 0, upperBound: 100 }
+  );
 }
 
 async function refreshAutarkyChart() {
@@ -1894,13 +1975,17 @@ async function refreshAutarkyChart() {
             label: "Autarkiegrad",
             data,
             borderColor: AUTARKY_COLOR,
-            backgroundColor: AUTARKY_COLOR + "33",
             pointBackgroundColor: AUTARKY_COLOR,
             pointRadius: 4,
             pointHoverRadius: 6,
             borderWidth: 2,
             tension: 0,
-            fill: true,
+            // Nur die Linie selbst, keine Flaeche darunter (fill: false) -
+            // bei einer dynamisch skalierten Y-Achse (siehe autarkyYRange)
+            // wuerde eine gefuellte Flaeche bis zum unteren Achsenrand
+            // sonst leicht den Eindruck erwecken, die Flaeche haette eine
+            // inhaltliche Bedeutung (z.B. eine Menge), was sie nicht hat.
+            fill: false,
             spanGaps: false,
           },
         ],
@@ -1981,10 +2066,10 @@ function updateHourlyCompareVisibility() {
   // "Alle (Summe)" ausgewaehlt ist (selectedDeviceId === "") UND es
   // ueberhaupt mehr als einen Wechselrichter gibt - bei einem einzelnen
   // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
-  // vergleichen. Zusaetzlich muss oben im "Verbrauch & Wechselrichter"-Tab
-  // die Ansicht "Wechselrichter-Vergleich" ausgewaehlt sein (siehe
-  // setTrendSubView/state.subView.consumption) - es ist immer nur eine der
-  // beiden Ansichten gleichzeitig sichtbar.
+  // vergleichen. state.subView.consumption ist seit der Verschiebung von
+  // "Tagesverbrauch" in den "Verlauf"-Tab (siehe applyTrendSubView) immer
+  // "hourly" - die Pruefung bleibt trotzdem bestehen (robuster, falls das
+  // wieder Unteransichten bekommt).
   const menuWantsHourly = state.subView.consumption === "hourly";
   const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
   el("hourly-section").classList.toggle("hidden", !menuWantsHourly);
@@ -1993,18 +2078,15 @@ function updateHourlyCompareVisibility() {
   return menuWantsHourly && deviceOk;
 }
 
-// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: Tagesverbrauch ODER
-// Wechselrichter-Vergleich - wie beim Verlauf-Tab immer nur ein Diagramm
-// gleichzeitig sichtbar, gesteuert ueber das Hover-Flyout-Menue am
-// "Verbrauch & Wechselrichter"-Reiter oben. ---
+// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: nur noch
+// Wechselrichter-Vergleich (seit "Tagesverbrauch" in den "Verlauf"-Tab
+// verschoben wurde, siehe applyTrendSubView). ---
 
 function applyConsumptionSubView() {
-  el("consumption-view-dailytotals").classList.toggle(
-    "hidden",
-    state.subView.consumption !== "dailytotals"
-  );
-  // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
-  // ab - updateHourlyCompareVisibility() wertet beides aus.
+  // Seit "Tagesverbrauch" in den "Verlauf"-Tab verschoben wurde (siehe
+  // applyTrendSubView), bleibt hier nur noch "Wechselrichter-Vergleich" -
+  // dessen Sichtbarkeit haengt vom gewaehlten Wechselrichter-Tab ab, siehe
+  // updateHourlyCompareVisibility().
   updateHourlyCompareVisibility();
 }
 
@@ -2262,11 +2344,13 @@ function refreshOverview() {
 }
 
 function refreshTrendTab() {
-  return Promise.allSettled([refreshChart(), refreshDayCompareChart()]);
+  // refreshDailyTotalsChart gehoert seit der Verschiebung von
+  // "Tagesverbrauch" hierher (siehe applyTrendSubView) mit zum Verlauf-Tab.
+  return Promise.allSettled([refreshChart(), refreshDayCompareChart(), refreshDailyTotalsChart()]);
 }
 
 function refreshConsumptionTab() {
-  return Promise.allSettled([refreshDailyTotalsChart(), refreshHourlyCompareChart()]);
+  return Promise.allSettled([refreshHourlyCompareChart()]);
 }
 
 function refreshForecastTab() {
@@ -2277,18 +2361,18 @@ function refreshForecastTab() {
   ]);
 }
 
-// --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
-// Prognose heute, Wochenverlauf-Diagramm oder Prognosekontrolle - wie bei
-// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar, gesteuert
-// ueber das Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile
-// (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf
-// die Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
+// --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht (Wochenverlauf-
+// Diagramm + Tageswerte in einer Ansicht, Diagramm zuerst), stuendliche
+// Prognose heute, Gestern oder Prognosekontrolle - wie bei Verlauf/Verbrauch
+// immer nur eine Ansicht gleichzeitig sichtbar, gesteuert ueber das
+// Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile (Titel +
+// Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf die
+// Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
 
 const FORECAST_SUBVIEW_SECTIONS = {
-  days: () => el("forecast-days"),
+  days: () => el("forecast-view-days"),
   "hours-today": () => el("forecast-view-hours-today"),
   yesterday: () => el("forecast-view-yesterday"),
-  "week-chart": () => el("forecast-view-week-chart"),
   accuracy: () => el("forecast-accuracy-section"),
 };
 
@@ -2327,15 +2411,19 @@ const TAB_LOADERS = {
   forecast: refreshForecastTab,
 };
 
+// Die Monatsansicht aendert sich nur langsam; fuer sie reicht ein taegliches
+// Neuladen. Die heutige Uebersichtskachel entwickelt sich dagegen im Laufe
+// des Tages und wird deshalb weiterhin alle fuenf Minuten aktualisiert.
+const AUTARKY_REFRESH_MS = 24 * 60 * 60 * 1000;
+const AUTARKY_TODAY_REFRESH_MS = 5 * 60 * 1000;
+
 // Periodisches Auto-Refresh je Tab, erst gestartet, sobald der Tab zum
 // ersten Mal geoeffnet wurde (siehe setupViewTabs). "overview" hat ein
 // eigenes, schnelleres Intervall (siehe init()) und steht daher nicht hier.
 const TAB_INTERVALS_MS = {
   trend: 5 * 60 * 1000,
   consumption: 5 * 60 * 1000,
-  // Monatswerte aendern sich kaum - der laufende Monat waechst aber mit dem
-  // heutigen Tag mit, daher dasselbe Intervall wie beim Tagesverbrauch.
-  autarky: 5 * 60 * 1000,
+  autarky: AUTARKY_REFRESH_MS,
   // An das Backend-Cache-TTL angeglichen (siehe energy_forecast.CACHE_TTL
   // = 30 Minuten) - eine neue Prognose auf dem Server soll ohne
   // Seiten-Reload zuverlaessig binnen derselben Zeitspanne im Frontend
@@ -2370,8 +2458,8 @@ function refreshLoadedTabs() {
 // Erzeugungszeitpunkt bleiben.
 const TAB_CHARTS = {
   overview: () => [],
-  trend: () => [state.chart, state.dayCompare.chart],
-  consumption: () => [state.dailyTotals.chart, state.hourlyCompare.chart],
+  trend: () => [state.chart, state.dayCompare.chart, state.dailyTotals.chart],
+  consumption: () => [state.hourlyCompare.chart],
   autarky: () => [state.autarky.chart],
   forecast: () => [
     state.forecastChart,
@@ -2631,10 +2719,11 @@ async function init() {
     refreshSummaryCards().catch(console.error);
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
-  setInterval(() => {
-    refreshPvYieldSummary().catch(console.error);
-    refreshAutarkyToday().catch(console.error);
-  }, 5 * 60 * 1000);
+  setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
+  setInterval(
+    () => refreshAutarkyToday().catch(console.error),
+    AUTARKY_TODAY_REFRESH_MS
+  );
 }
 
 init();
