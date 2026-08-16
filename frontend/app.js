@@ -2361,18 +2361,18 @@ function refreshForecastTab() {
   ]);
 }
 
-// --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht, stuendliche
-// Prognose heute, Wochenverlauf-Diagramm oder Prognosekontrolle - wie bei
-// Verlauf/Verbrauch immer nur eine Ansicht gleichzeitig sichtbar, gesteuert
-// ueber das Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile
-// (Titel + Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf
-// die Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
+// --- Ansichts-Auswahl "Prognose"-Tab: Tagesuebersicht (Wochenverlauf-
+// Diagramm + Tageswerte in einer Ansicht, Diagramm zuerst), stuendliche
+// Prognose heute, Gestern oder Prognosekontrolle - wie bei Verlauf/Verbrauch
+// immer nur eine Ansicht gleichzeitig sichtbar, gesteuert ueber das
+// Hover-Flyout-Menue am "Prognose"-Reiter oben. Die Kopfzeile (Titel +
+// Status/Modelle) bleibt bewusst immer sichtbar, da sie sich auf die
+// Prognose insgesamt bezieht, nicht nur auf eine der Unteransichten. ---
 
 const FORECAST_SUBVIEW_SECTIONS = {
-  days: () => el("forecast-days"),
+  days: () => el("forecast-view-days"),
   "hours-today": () => el("forecast-view-hours-today"),
   yesterday: () => el("forecast-view-yesterday"),
-  "week-chart": () => el("forecast-view-week-chart"),
   accuracy: () => el("forecast-accuracy-section"),
 };
 

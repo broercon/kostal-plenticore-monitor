@@ -199,7 +199,6 @@
         <button type="button" data-subview="days">Tagesübersicht</button>
         <button type="button" data-subview="hours-today">Heute</button>
         <button type="button" data-subview="yesterday">Gestern</button>
-        <button type="button" data-subview="week-chart">Wochenverlauf</button>
         <button type="button" data-subview="accuracy">Prognosekontrolle</button>
       </div>
     </div>
@@ -437,7 +436,12 @@
         <p class="muted" id="forecast-status">Wird geladen …</p>
       </div>
 
-      <div class="forecast-days" id="forecast-days"></div>
+      <div id="forecast-view-days">
+        <div class="chart-canvas-wrapper" id="forecast-chart-wrapper">
+          <canvas id="forecast-chart"></canvas>
+        </div>
+        <div class="forecast-days" id="forecast-days"></div>
+      </div>
 
       <div id="forecast-view-hours-today" class="hidden">
         <div class="forecast-hours-today-header">
@@ -459,11 +463,6 @@
         </div>
       </div>
 
-      <div id="forecast-view-week-chart" class="hidden">
-        <div class="chart-canvas-wrapper" id="forecast-chart-wrapper">
-          <canvas id="forecast-chart"></canvas>
-        </div>
-      </div>
     </section>
 
     <section class="chart-section forecast-section hidden" id="forecast-accuracy-section">
