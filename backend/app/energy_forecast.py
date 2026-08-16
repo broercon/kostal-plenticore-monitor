@@ -513,6 +513,7 @@ def _empty_result(message: str) -> dict:
         "models": [],
         "days": [],
         "hours": [],
+        "freeze_time": settings.forecast_freeze_time,
     }
 
 
@@ -708,6 +709,7 @@ def _summarize(
         ],
         "days": days,
         "hours": combined_hours,
+        "freeze_time": settings.forecast_freeze_time,
     }
 
 
