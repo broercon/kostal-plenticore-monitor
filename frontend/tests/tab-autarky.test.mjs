@@ -1,6 +1,6 @@
-// Tests fuer die neue "Autarkie"-Ansicht (Balkendiagramm, Autarkiegrad je
-// Monat, siehe app.js refreshAutarkyChart) sowie die "Autarkiegrad
-// heute"-Kachel in der Uebersicht (refreshSummaryCards).
+// Tests fuer die "Autarkie"-Ansicht (Liniendiagramm mit dynamischer
+// Y-Achse, Autarkiegrad je Monat, siehe app.js refreshAutarkyChart) sowie
+// die "Autarkiegrad heute"-Kachel in der Uebersicht (refreshSummaryCards).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -27,14 +27,43 @@ function backendWithAutarky() {
   };
 }
 
-test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Monatsverlauf", async () => {
+test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Monatsverlauf als Liniendiagramm", async () => {
   const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
 
   assert.equal(app.state.tabsLoaded.has("autarky"), true);
   assert.ok(app.state.autarky.chart, "Autarkiegrad-Chart ist schon vor dem ersten Oeffnen aufgebaut");
+  assert.equal(app.state.autarky.chart.type, "line", "Autarkiegrad ist ein Liniendiagramm, kein Balkendiagramm");
   assert.deepEqual(app.state.autarky.chart.data.labels, ["Mai 2026", "Jun 2026"]);
   assert.deepEqual(app.state.autarky.chart.data.datasets[0].data, [50.0, 75.0]);
+});
+
+test("Autarkie-Standardzeitraum ist 24 Monate, Y-Achse skaliert dynamisch statt fest 0-100", async () => {
+  const seenMonthsParams = [];
+  const backend = backendWithAutarky();
+  const app = await bootApp({
+    fetchHandler: async (url) => {
+      if (url.pathname === "/api/readings/autarky-monthly") {
+        seenMonthsParams.push(url.searchParams.get("months"));
+      }
+      return backend(url);
+    },
+  });
+  await waitFor(() => app.loadingCount() === 0);
+
+  assert.equal(app.state.autarky.months, 24);
+  assert.ok(seenMonthsParams.includes("24"), "Standardanfrage nutzt months=24");
+
+  const activeBtn = app.document.querySelector("#autarky-month-buttons button.active");
+  assert.equal(activeBtn.dataset.months, "24");
+
+  // Werte liegen bei 50/75 % - die Y-Achse darf nicht fest bei 0-100 bleiben
+  // (sonst waere der Unterschied kaum sichtbar), sondern soll sich mit
+  // Marge an den tatsaechlichen Minimal-/Maximalwert anschmiegen.
+  const { min, max } = app.state.autarky.chart.options.scales.y;
+  assert.ok(min > 0, `Y-Achsen-Minimum sollte ueber 0 liegen (war ${min})`);
+  assert.ok(max < 100, `Y-Achsen-Maximum sollte unter 100 liegen (war ${max})`);
+  assert.ok(min < 50 && max > 75, "Marge muss den vollen Wertebereich weiterhin abdecken");
 });
 
 test("Autarkie-Tab wird per Klick sichtbar (kein erneuter Request noetig)", async () => {

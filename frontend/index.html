@@ -412,9 +412,9 @@
       <div class="chart-toolbar daycompare-toolbar">
         <div class="range-buttons" id="autarky-month-buttons">
           <button data-months="12">12 Monate</button>
-          <button data-months="24">24 Monate</button>
+          <button data-months="24" class="active">24 Monate</button>
           <button data-months="36">36 Monate</button>
-          <button data-months="all" class="active">Alle</button>
+          <button data-months="all">Alle</button>
         </div>
         <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
       </div>
@@ -422,8 +422,10 @@
         <canvas id="autarky-chart"></canvas>
       </div>
       <p class="chart-hint muted">
-        Tipp: Maus über einen Balken halten, um die genauen kWh-Anteile
-        (PV/Speicher gegenüber Netzbezug) zu sehen.
+        Tipp: Maus über einen Punkt halten, um die genauen kWh-Anteile
+        (PV/Speicher gegenüber Netzbezug) zu sehen. Die Y-Achse skaliert sich
+        auf die tatsächlich vorkommenden Werte (nicht fest 0–100 %), damit
+        Unterschiede zwischen Monaten sichtbar bleiben.
       </p>
     </section>
   </div>
