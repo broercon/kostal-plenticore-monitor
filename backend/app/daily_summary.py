@@ -515,7 +515,7 @@ def _earliest_reading_date() -> date | None:
 
 # Mapping von daily_home_source_breakdown_kwh()-Schluessel auf den
 # daily_energy_cache-Feldnamen, unter dem der jeweilige Anteil
-# zwischengespeichert wird (siehe _cached_home_source_field).
+# zwischengespeichert wird (siehe _cached_home_source_breakdown).
 _HOME_SOURCE_CACHE_FIELDS = {
     "pv_kwh": "home_source_pv",
     "battery_kwh": "home_source_battery",
@@ -523,34 +523,101 @@ _HOME_SOURCE_CACHE_FIELDS = {
 }
 
 
-def _cached_home_source_field(
-    out_key: str, earliest: date, today: date
-) -> dict[str, float | None]:
-    """Wie build_energy_period_summary()/build_pv_yield_summary(): liefert
-    {date_str: kwh} fuer einen einzelnen Hausverbrauchs-Anteil (PV/Speicher/
-    Netz, siehe daily_home_source_breakdown_kwh) unter Nutzung von
-    _cached_daily_totals - abgeschlossene Tage werden also genauso im
-    daily_energy_cache zwischengespeichert wie die bestehenden PV-Ertrags-/
-    Einspeisungs-Uebersichten, nur unter einem eigenen Feldnamen je Anteil.
+def _cached_home_source_breakdown(
+    earliest: date, today: date
+) -> dict[str, dict[str, float | None]]:
+    """Liefert {date_str: {"pv_kwh": .., "battery_kwh": .., "grid_kwh": ..}}
+    fuer [earliest, today] (inklusive), unter Nutzung von daily_energy_cache
+    - abgeschlossene Tage werden dauerhaft zwischengespeichert (unter den
+    drei Feldnamen in _HOME_SOURCE_CACHE_FIELDS), "heute" wird wie bei
+    _cached_daily_totals nie gecacht, sondern bei jedem Aufruf frisch
+    berechnet.
 
-    Wird fuer die drei Anteile separat aufgerufen (siehe
-    build_autarky_monthly_summary) - bei einer Cache-Luecke werden die
-    Rohmesswerte dadurch bis zu dreimal geladen statt einmal fuer alle drei
-    Anteile gemeinsam. Das faellt in der Praxis nicht ins Gewicht: eine
-    Luecke tritt nur einmalig (erster Aufruf nach diesem Feature) oder fuer
-    einen einzelnen neuen Tag auf (der gestrige, sobald "abgeschlossen") -
-    siehe _cached_daily_totals fuer die Begruendung dieses Musters."""
+    WICHTIG: berechnet alle drei Hausverbrauchs-Anteile (PV/Speicher/Netz,
+    siehe _home_source_breakdown_with_grid) in EINEM Durchlauf ueber die
+    Rohmesswerte einer Cache-Luecke, statt _cached_daily_totals dreimal
+    (einmal je Anteil) mit je eigenem compute() aufzurufen. Eine fruehere
+    Version tat genau das und nahm den dreifachen Rohdaten-Scan bei einer
+    Luecke bewusst in Kauf ("faellt in der Praxis nicht ins Gewicht, da nur
+    einmalig") - bei groesseren Bestandsinstallationen (viele Monate/Jahre
+    an 15s-Messwerten) macht der dreifache Scan das erste Laden der
+    Autarkiegrad-Uebersicht aber spuerbar langsam, daher hier konsolidiert."""
+    session = SessionLocal()
+    try:
+        cached_rows = list(
+            session.scalars(
+                select(DailyEnergyCache).where(
+                    DailyEnergyCache.field.in_(_HOME_SOURCE_CACHE_FIELDS.values()),
+                    DailyEnergyCache.date >= earliest.strftime("%Y-%m-%d"),
+                    DailyEnergyCache.date < today.strftime("%Y-%m-%d"),
+                )
+            )
+        )
+    finally:
+        session.close()
 
-    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
-        rows = _load_readings_range(start, end_exclusive)
+    field_to_out_key = {field: out_key for out_key, field in _HOME_SOURCE_CACHE_FIELDS.items()}
+    cached: dict[str, dict[str, float | None]] = {}
+    for row in cached_rows:
+        cached.setdefault(row.date, {})[field_to_out_key[row.field]] = row.kwh
+
+    num_closed_days = (today - earliest).days
+    all_closed_dates = {
+        (earliest + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(num_closed_days)
+    }
+    # Ein Tag gilt nur als vollstaendig gecacht, wenn alle drei Anteile
+    # vorliegen - fehlt auch nur einer, wird der Tag sicherheitshalber
+    # komplett neu berechnet statt mit einer Luecke weiterverwendet zu
+    # werden (analog zu _cached_daily_totals/_cached_dates).
+    fully_cached_dates = {
+        d for d in all_closed_dates if len(cached.get(d, {})) == len(_HOME_SOURCE_CACHE_FIELDS)
+    }
+    missing_closed_dates = sorted(all_closed_dates - fully_cached_dates)
+
+    if missing_closed_dates:
+        # Wie bei _cached_daily_totals: die gesamte Luecke in EINEM Rutsch
+        # nachberechnen (ein einziger Rohdaten-Scan fuer alle drei Anteile
+        # zusammen), statt Tag fuer Tag oder Anteil fuer Anteil einzeln.
+        gap_start = datetime.strptime(missing_closed_dates[0], "%Y-%m-%d").date()
+        gap_end_exclusive = datetime.strptime(
+            missing_closed_dates[-1], "%Y-%m-%d"
+        ).date() + timedelta(days=1)
+        rows = _load_readings_range(gap_start, gap_end_exclusive)
         if len(settings.inverters) > 1:
             rows = _combined_rows(rows)
-        return {
-            d["date"]: d[out_key]
-            for d in _home_source_breakdown_with_grid(rows)
-        }
+        fresh_by_date = {d["date"]: d for d in _home_source_breakdown_with_grid(rows)}
 
-    return _cached_daily_totals(_HOME_SOURCE_CACHE_FIELDS[out_key], earliest, today, compute)
+        session = SessionLocal()
+        try:
+            now = datetime.now(timezone.utc)
+            for date_str in missing_closed_dates:
+                fresh = fresh_by_date.get(date_str, {})
+                for out_key, field_key in _HOME_SOURCE_CACHE_FIELDS.items():
+                    session.merge(
+                        DailyEnergyCache(
+                            field=field_key, date=date_str, kwh=fresh.get(out_key), computed_at=now
+                        )
+                    )
+            session.commit()
+        finally:
+            session.close()
+
+        for date_str in missing_closed_dates:
+            fresh = fresh_by_date.get(date_str, {})
+            cached[date_str] = {out_key: fresh.get(out_key) for out_key in _HOME_SOURCE_CACHE_FIELDS}
+
+    today_rows = _load_readings_range(today, today + timedelta(days=1))
+    if len(settings.inverters) > 1:
+        today_rows = _combined_rows(today_rows)
+    today_fresh = _home_source_breakdown_with_grid(today_rows)
+    today_str = today.strftime("%Y-%m-%d")
+    cached[today_str] = (
+        {out_key: today_fresh[0].get(out_key) for out_key in _HOME_SOURCE_CACHE_FIELDS}
+        if today_fresh
+        else {out_key: None for out_key in _HOME_SOURCE_CACHE_FIELDS}
+    )
+
+    return cached
 
 
 def build_autarky_monthly_summary(months: int | None = None) -> list[AutarkyMonthOut]:
@@ -576,10 +643,7 @@ def build_autarky_monthly_summary(months: int | None = None) -> list[AutarkyMont
         return []
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
-    per_day = {
-        out_key: _cached_home_source_field(out_key, earliest, today)
-        for out_key in _HOME_SOURCE_CACHE_FIELDS
-    }
+    per_day = _cached_home_source_breakdown(earliest, today)
 
     per_month: dict[str, dict[str, float]] = {}
     months_with_data: set[str] = set()
@@ -588,8 +652,9 @@ def build_autarky_monthly_summary(months: int | None = None) -> list[AutarkyMont
         date_str = day.strftime("%Y-%m-%d")
         month_key = day.strftime("%Y-%m")
         entry = per_month.setdefault(month_key, {"pv_kwh": 0.0, "battery_kwh": 0.0, "grid_kwh": 0.0})
+        day_values = per_day.get(date_str, {})
         for out_key in _HOME_SOURCE_CACHE_FIELDS:
-            value = per_day[out_key].get(date_str)
+            value = day_values.get(out_key)
             if value is not None:
                 entry[out_key] += value
                 months_with_data.add(month_key)

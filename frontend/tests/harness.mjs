@@ -325,6 +325,7 @@ export async function bootApp({ fetchHandler }) {
   // Chart.js, Canvas und location stubben.
   window.Chart = class {
     constructor(_ctx, config) {
+      this.type = config.type;
       this.data = config.data;
       this.options = config.options;
       this.resizeCount = 0;

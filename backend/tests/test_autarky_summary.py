@@ -199,3 +199,34 @@ def test_autarky_monthly_uses_daily_energy_cache(client, frozen_now):
     finally:
         db.close()
     assert today_cached == 0
+
+
+def test_autarky_monthly_loads_raw_readings_only_once_per_gap(client, frozen_now, monkeypatch):
+    """Regressionstest fuer die Performance-Korrektur: bei einer Cache-
+    Luecke duerfen die Rohmesswerte nur EINMAL geladen werden (fuer alle
+    drei Anteile PV/Speicher/Netz gemeinsam), nicht dreimal (einmal je
+    Anteil) - siehe daily_summary._cached_home_source_breakdown."""
+    import app.daily_summary as daily_summary_module
+
+    _login(client)
+    today_local = frozen_now.astimezone(TZ).date()
+    last_month_day = today_local.replace(day=1) - timedelta(days=1)
+    _seed_day("wr1", last_month_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+    _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
+
+    calls = []
+    original = daily_summary_module._load_readings_range
+
+    def counting_load_readings_range(start, end_exclusive):
+        calls.append((start, end_exclusive))
+        return original(start, end_exclusive)
+
+    monkeypatch.setattr(daily_summary_module, "_load_readings_range", counting_load_readings_range)
+
+    res = client.get("/api/readings/autarky-monthly")
+    assert res.status_code == 200
+
+    # Genau EIN Aufruf fuer die (gesamte) historische Luecke plus EIN Aufruf
+    # fuer den laufenden Tag ("heute" wird nie gecacht) - nicht sechs (drei
+    # Anteile x zwei Bereiche), wie vor der Konsolidierung.
+    assert len(calls) == 2

@@ -74,9 +74,16 @@ die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
 Der Reiter "Autarkie" zeigt den **Autarkiegrad** – welcher Anteil des
 Hausverbrauchs aus eigener Erzeugung (PV, direkt oder über die Batterie
 zwischengespeichert) statt aus dem Netz gedeckt wurde – je Kalendermonat als
-Balkendiagramm, seit dem allerersten gespeicherten Messwert. Zusätzlich zeigt
-die Übersicht oben eine Kachel "Autarkiegrad heute" mit dem Wert für den
-laufenden Tag.
+Liniendiagramm, seit dem allerersten gespeicherten Messwert (Standard: die
+letzten 24 Monate, wählbar auch 12/36/alle). Zusätzlich zeigt die Übersicht
+oben eine Kachel "Autarkiegrad heute" mit dem Wert für den laufenden Tag.
+
+Anders als die übrigen Diagramme im Dashboard (feste 0 %-/0-Start-Achse)
+skaliert die Y-Achse hier dynamisch auf die tatsächlich vorkommenden Werte
+(kleinster/größter Monatswert jeweils mit etwas Marge, die 0 muss dabei
+nicht auf der Achse auftauchen) – bei den in der Praxis meist recht nah
+beieinander liegenden Autarkiegraden (z.B. 40–60 %) würde eine feste
+0–100 %-Skala Unterschiede zwischen Monaten kaum sichtbar machen.
 
 Berechnung: `Autarkiegrad = (PV-Anteil + Speicher-Anteil) / Hausverbrauch
 gesamt`, in Prozent – dieselbe PV-/Speicher-/Netz-Aufteilung, die auch das

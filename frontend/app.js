@@ -20,11 +20,11 @@ const state = {
     chart: null,
   },
   autarky: {
-    // null = komplette Historie (Standard fuer diese Ansicht, da hier -
-    // anders als bei den Tages-Diagrammen - meist nur wenige Datenpunkte
-    // (Monate) anfallen und "alles zeigen" daher nicht unuebersichtlich
-    // wird).
-    months: null,
+    // Standard 24 Monate (2 Jahre) - genug, um saisonale Unterschiede
+    // (Sommer/Winter) zu erkennen, ohne bei sehr langer Laufzeit die
+    // Beschriftung der X-Achse zu ueberladen. Ueber "Alle" weiterhin die
+    // komplette Historie waehlbar.
+    months: 24,
     chart: null,
   },
   hourlyCompare: {
@@ -1837,6 +1837,31 @@ function monthLabel(monthStr) {
 
 let autarkyMonthsData = [];
 
+// Anders als bei den uebrigen Diagrammen (feste 0-100%- bzw. 0-Start-Achse)
+// wird die Y-Achse hier bewusst dynamisch aus den tatsaechlichen Werten
+// berechnet: eine feste 0-100%-Skala wuerde Unterschiede zwischen Monaten
+// bei ueblicherweise recht aehnlichen Autarkiegraden (z.B. 40-60%) kaum
+// sichtbar machen (fast eine gerade Linie am oberen Rand). Die 0 muss dafuer
+// nicht zwingend auf der Achse auftauchen. Nur fuer die Autarkie-Ansicht -
+// alle anderen Diagramme behalten ihre bisherige Achsenskalierung.
+function autarkyYRange(months) {
+  const values = months
+    .map((m) => m.autarky_percent)
+    .filter((v) => v !== null && v !== undefined);
+  if (values.length === 0) return { min: 0, max: 100 };
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const spread = dataMax - dataMin;
+  // Marge von 10 % der Spannweite, mindestens aber 2 Prozentpunkte (sonst
+  // waere bei nahezu identischen Monatswerten die Marge selbst nahe 0 und
+  // die Linie liefe wieder flach am Rand).
+  const margin = Math.max(spread * 0.1, 2);
+  return {
+    min: Math.max(0, Math.floor(dataMin - margin)),
+    max: Math.min(100, Math.ceil(dataMax + margin)),
+  };
+}
+
 async function refreshAutarkyChart() {
   return withLoading(["#autarky-chart-wrapper"], async () => {
     const reqMonths = state.autarky.months;
@@ -1848,26 +1873,35 @@ async function refreshAutarkyChart() {
 
     const labels = autarkyMonthsData.map((m) => monthLabel(m.month));
     const data = autarkyMonthsData.map((m) => m.autarky_percent);
+    const yRange = autarkyYRange(autarkyMonthsData);
 
     if (state.autarky.chart) {
       state.autarky.chart.data.labels = labels;
       state.autarky.chart.data.datasets[0].data = data;
+      state.autarky.chart.options.scales.y.min = yRange.min;
+      state.autarky.chart.options.scales.y.max = yRange.max;
       state.autarky.chart.update();
       return;
     }
 
     const ctx = el("autarky-chart").getContext("2d");
     state.autarky.chart = new Chart(ctx, {
-      type: "bar",
+      type: "line",
       data: {
         labels,
         datasets: [
           {
             label: "Autarkiegrad",
             data,
-            backgroundColor: AUTARKY_COLOR + "99",
             borderColor: AUTARKY_COLOR,
-            borderWidth: 1,
+            backgroundColor: AUTARKY_COLOR + "33",
+            pointBackgroundColor: AUTARKY_COLOR,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            borderWidth: 2,
+            tension: 0,
+            fill: true,
+            spanGaps: false,
           },
         ],
       },
@@ -1881,8 +1915,8 @@ async function refreshAutarkyChart() {
             grid: { display: false },
           },
           y: {
-            min: 0,
-            max: 100,
+            min: yRange.min,
+            max: yRange.max,
             ticks: { color: "#94a3b8", callback: (v) => `${v} %` },
             grid: { color: "#334155" },
             title: { display: true, text: "Autarkiegrad (%)", color: "#94a3b8" },
