@@ -44,6 +44,7 @@ from .forecast_config import (
 from .energy_forecast import forecast_service
 from .forecast_evaluation import get_forecast_accuracy, get_yesterday_hourly_comparison
 from .daily_summary import (
+    build_autarky_monthly_summary,
     build_daily_home_breakdown,
     build_daily_summaries,
     build_feed_in_summary,
@@ -56,6 +57,7 @@ from .schemas import (
     AdminResetPasswordIn,
     AdminResetPasswordOut,
     AdminUserOut,
+    AutarkyMonthlySummaryOut,
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
@@ -749,6 +751,24 @@ def get_daily_home_breakdown(
     daily_summary.build_daily_home_breakdown() - der taegliche Mail-Report
     (siehe daily_report.py) nutzt sie fuer den heutigen Tag mit."""
     return DailyHomeBreakdownOut(days=build_daily_home_breakdown(days=days))
+
+
+@app.get("/api/readings/autarky-monthly", response_model=AutarkyMonthlySummaryOut)
+def get_autarky_monthly(
+    months: int | None = Query(
+        default=None, ge=1, le=600, description="Nur die letzten N Kalendermonate (Standard: alle)"
+    ),
+    _user: User = Depends(auth.get_current_user),
+) -> AutarkyMonthlySummaryOut:
+    """Autarkiegrad (Anteil des Hausverbrauchs aus PV/Speicher statt Netz)
+    je Kalendermonat, seit dem ersten gespeicherten Messwert - fuer die
+    "Autarkie"-Ansicht im Dashboard.
+
+    Hausweite Groesse wie /api/readings/daily-home-breakdown, daher auch
+    hier kein device_id-Parameter. Die eigentliche Berechnung (inkl.
+    Zwischenspeicherung abgeschlossener Tage) steckt in
+    daily_summary.build_autarky_monthly_summary()."""
+    return AutarkyMonthlySummaryOut(months=build_autarky_monthly_summary(months=months))
 
 
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)

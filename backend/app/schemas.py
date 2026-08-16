@@ -85,10 +85,27 @@ class DailyHomeBreakdownDay(BaseModel):
     pv_kwh: float | None = None
     battery_kwh: float | None = None
     grid_kwh: float | None = None
+    # Anteil des Hausverbrauchs an diesem Tag, der aus PV/Speicher statt aus
+    # dem Netz gedeckt wurde (siehe daily_summary._autarky_percent) - None,
+    # wenn einer der drei Anteile fehlt oder der Hausverbrauch 0 war.
+    autarky_percent: float | None = None
 
 
 class DailyHomeBreakdownOut(BaseModel):
     days: list[DailyHomeBreakdownDay]
+
+
+class AutarkyMonthOut(BaseModel):
+    month: str  # "YYYY-MM"
+    pv_kwh: float
+    battery_kwh: float
+    grid_kwh: float
+    home_kwh: float
+    autarky_percent: float | None = None
+
+
+class AutarkyMonthlySummaryOut(BaseModel):
+    months: list[AutarkyMonthOut]
 
 
 class ImportDeviceResult(BaseModel):

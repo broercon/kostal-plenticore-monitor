@@ -60,7 +60,16 @@ curl -b cookies.txt http://localhost:8000/api/devices
   - `days`: Standard `30`, Bereich `1` bis `400`
 - `GET /api/readings/daily-home-breakdown`
   - `days`: Standard `30`, Bereich `1` bis `400`
-  - Liefert `pv_kwh`, `battery_kwh` und `grid_kwh` pro Tag.
+  - Liefert `pv_kwh`, `battery_kwh`, `grid_kwh` sowie den daraus berechneten
+    `autarky_percent` (Autarkiegrad) pro Tag.
+- `GET /api/readings/autarky-monthly`
+  - `months`: optional, Bereich `1` bis `600`; ohne Angabe die komplette
+    Historie seit dem ersten gespeicherten Messwert.
+  - Autarkiegrad je Kalendermonat (`pv_kwh`, `battery_kwh`, `grid_kwh`,
+    `home_kwh`, `autarky_percent`) – siehe
+    [Dashboard und Berechnungen](CALCULATIONS.md#autarkiegrad).
+  - Monate ohne verwertbare Netzmessung werden nicht als 100 % autark
+    ausgegeben, sondern bleiben ohne Monatswert.
 - `GET /api/readings/hourly-per-device`
   - `metric`: `feed_in`, `pv`, `home` oder `grid_draw`
   - `days`: Standard `1`, Bereich `1` bis `30`

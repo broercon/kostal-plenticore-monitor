@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from .aggregation import (
     aggregate_per_device,
@@ -32,7 +32,7 @@ from .config import settings
 from .database import SessionLocal
 from .models import DailyEnergyCache, Reading
 from .poller import poller
-from .schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
+from .schemas import AutarkyMonthOut, DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 from .timeutil import local_midnight_utc
 
 # Synthetische device_id für die "Alle (Summe)"-Zeile bei mehreren
@@ -46,6 +46,42 @@ def _has_grid_meter_map() -> dict[str, bool]:
 
 def _battery_inverted_map() -> dict[str, bool]:
     return {cfg.id: cfg.battery_power_inverted for cfg in settings.inverters}
+
+
+def _autarky_percent(
+    pv_kwh: float | None, battery_kwh: float | None, grid_kwh: float | None
+) -> float | None:
+    """Autarkiegrad in Prozent: welcher Anteil des Hausverbrauchs (PV +
+    Speicher + Netz) aus eigener Erzeugung/Speicher statt aus dem Netz kam.
+
+    None, wenn einer der drei Anteile unbekannt ist (siehe
+    daily_home_source_breakdown_kwh - z.B. weil fuer den betrachteten
+    Zeitraum keine Haus-/PV-Messwerte vorliegen) oder der Hausverbrauch
+    insgesamt 0 war (dann ist "Autarkiegrad" nicht sinnvoll definiert)."""
+    if pv_kwh is None or battery_kwh is None or grid_kwh is None:
+        return None
+    home_kwh = pv_kwh + battery_kwh + grid_kwh
+    if home_kwh <= 0:
+        return None
+    return round(100 * (pv_kwh + battery_kwh) / home_kwh, 1)
+
+
+def _home_source_breakdown_with_grid(rows: list[Reading]) -> list[dict]:
+    """Hausverbrauchs-Aufteilung nur aus Messpunkten mit echtem Netzwert.
+
+    ``daily_home_source_breakdown_kwh`` nimmt einen fehlenden Netzbezug
+    bewusst als 0 an, damit das bestehende Tagesverbrauchsdiagramm auch bei
+    einzelnen Messluecken eine Aufteilung anzeigen kann. Fuer den
+    Autarkiegrad waere dieselbe Annahme jedoch irrefuehrend: Historische
+    Importdaten ganz ohne Netzmessung wuerden sonst als 100 % autark gelten.
+    Deshalb werden fuer Autarkie nur Messpunkte verwendet, an denen ein
+    Netzbezugswert tatsaechlich vorhanden ist. Reichen diese Punkte nicht
+    fuer eine Integration, bleibt der Wert automatisch unbekannt.
+    """
+    return daily_home_source_breakdown_kwh(
+        [row for row in rows if row.grid_draw_power_w is not None],
+        settings.timezone_name,
+    )
 
 
 def _combined_rows(rows: list[Reading]) -> list[Reading]:
@@ -436,10 +472,146 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     if len(settings.inverters) > 1:
         rows = _combined_rows(rows)
 
+    breakdown = daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+    autarky_by_date = {
+        day["date"]: _autarky_percent(
+            day.get("pv_kwh"), day.get("battery_kwh"), day.get("grid_kwh")
+        )
+        for day in _home_source_breakdown_with_grid(rows)
+    }
+
     # In DailyHomeBreakdownDay-Objekte wandeln (statt roher Dicts), damit
     # sowohl der API-Endpunkt als auch der Mail-Report per Attribut darauf
-    # zugreifen koennen (der Report ruft z.B. .pv_kwh direkt auf).
+    # zugreifen koennen (der Report ruft z.B. .pv_kwh direkt auf). Ergaenzt
+    # um den Autarkiegrad des jeweiligen Tages (siehe _autarky_percent) -
+    # fuer die "Autarkiegrad heute"-Kachel in der Uebersicht sowie als
+    # Zusatzinfo im Tagesverbrauch-Diagramm.
     return [
-        DailyHomeBreakdownDay(**day)
-        for day in daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+        DailyHomeBreakdownDay(
+            **day,
+            autarky_percent=autarky_by_date.get(day["date"]),
+        )
+        for day in breakdown
     ]
+
+
+def _earliest_reading_date() -> date | None:
+    """Lokales Kalenderdatum des allerersten gespeicherten Messwerts (ueber
+    alle Geraete) - Startpunkt fuer die monatliche Autarkiegrad-Uebersicht
+    (siehe build_autarky_monthly_summary), da dort (anders als bei den neun
+    Zeitraeumen in _energy_period_ranges) die GESAMTE Historie seit
+    Inbetriebnahme gezeigt werden soll, nicht nur bis "letztes Jahr"."""
+    session = SessionLocal()
+    try:
+        earliest_ts = session.scalar(select(func.min(Reading.timestamp)))
+    finally:
+        session.close()
+    if earliest_ts is None:
+        return None
+    if earliest_ts.tzinfo is None:
+        earliest_ts = earliest_ts.replace(tzinfo=timezone.utc)
+    return earliest_ts.astimezone(ZoneInfo(settings.timezone_name)).date()
+
+
+# Mapping von daily_home_source_breakdown_kwh()-Schluessel auf den
+# daily_energy_cache-Feldnamen, unter dem der jeweilige Anteil
+# zwischengespeichert wird (siehe _cached_home_source_field).
+_HOME_SOURCE_CACHE_FIELDS = {
+    "pv_kwh": "home_source_pv",
+    "battery_kwh": "home_source_battery",
+    "grid_kwh": "home_source_grid",
+}
+
+
+def _cached_home_source_field(
+    out_key: str, earliest: date, today: date
+) -> dict[str, float | None]:
+    """Wie build_energy_period_summary()/build_pv_yield_summary(): liefert
+    {date_str: kwh} fuer einen einzelnen Hausverbrauchs-Anteil (PV/Speicher/
+    Netz, siehe daily_home_source_breakdown_kwh) unter Nutzung von
+    _cached_daily_totals - abgeschlossene Tage werden also genauso im
+    daily_energy_cache zwischengespeichert wie die bestehenden PV-Ertrags-/
+    Einspeisungs-Uebersichten, nur unter einem eigenen Feldnamen je Anteil.
+
+    Wird fuer die drei Anteile separat aufgerufen (siehe
+    build_autarky_monthly_summary) - bei einer Cache-Luecke werden die
+    Rohmesswerte dadurch bis zu dreimal geladen statt einmal fuer alle drei
+    Anteile gemeinsam. Das faellt in der Praxis nicht ins Gewicht: eine
+    Luecke tritt nur einmalig (erster Aufruf nach diesem Feature) oder fuer
+    einen einzelnen neuen Tag auf (der gestrige, sobald "abgeschlossen") -
+    siehe _cached_daily_totals fuer die Begruendung dieses Musters."""
+
+    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
+        rows = _load_readings_range(start, end_exclusive)
+        if len(settings.inverters) > 1:
+            rows = _combined_rows(rows)
+        return {
+            d["date"]: d[out_key]
+            for d in _home_source_breakdown_with_grid(rows)
+        }
+
+    return _cached_daily_totals(_HOME_SOURCE_CACHE_FIELDS[out_key], earliest, today, compute)
+
+
+def build_autarky_monthly_summary(months: int | None = None) -> list[AutarkyMonthOut]:
+    """Autarkiegrad je Kalendermonat, seit dem allerersten gespeicherten
+    Messwert (siehe _earliest_reading_date).
+
+    Ein Monatswert ist NICHT der Mittelwert der taeglichen Prozentsaetze,
+    sondern wird aus den ueber den Monat aufsummierten kWh-Anteilen
+    berechnet (siehe _autarky_percent) - sonst wuerden Tage mit wenig
+    Hausverbrauch (z.B. Abwesenheit) das Monatsergebnis unverhaeltnismaessig
+    verzerren, obwohl sie kaum zum tatsaechlichen Monatsverbrauch beitragen.
+
+    `months`: bei Angabe werden nur die letzten `months` Kalendermonate
+    (mit Daten) zurueckgegeben - analog zum `days`-Parameter bei
+    /api/readings/daily-home-breakdown. None (Standard) liefert die
+    komplette Historie.
+
+    Monate ganz ohne Messwerte (z.B. eine Luecke vor der Inbetriebnahme
+    aller Geraete) fehlen in der Rueckgabe, statt mit 0 kWh/undefiniertem
+    Autarkiegrad aufzutauchen."""
+    earliest = _earliest_reading_date()
+    if earliest is None:
+        return []
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+
+    per_day = {
+        out_key: _cached_home_source_field(out_key, earliest, today)
+        for out_key in _HOME_SOURCE_CACHE_FIELDS
+    }
+
+    per_month: dict[str, dict[str, float]] = {}
+    months_with_data: set[str] = set()
+    day = earliest
+    while day <= today:
+        date_str = day.strftime("%Y-%m-%d")
+        month_key = day.strftime("%Y-%m")
+        entry = per_month.setdefault(month_key, {"pv_kwh": 0.0, "battery_kwh": 0.0, "grid_kwh": 0.0})
+        for out_key in _HOME_SOURCE_CACHE_FIELDS:
+            value = per_day[out_key].get(date_str)
+            if value is not None:
+                entry[out_key] += value
+                months_with_data.add(month_key)
+        day += timedelta(days=1)
+
+    result = []
+    for month_key in sorted(months_with_data):
+        entry = per_month[month_key]
+        home_kwh = entry["pv_kwh"] + entry["battery_kwh"] + entry["grid_kwh"]
+        result.append(
+            AutarkyMonthOut(
+                month=month_key,
+                pv_kwh=round(entry["pv_kwh"], 3),
+                battery_kwh=round(entry["battery_kwh"], 3),
+                grid_kwh=round(entry["grid_kwh"], 3),
+                home_kwh=round(home_kwh, 3),
+                autarky_percent=_autarky_percent(
+                    entry["pv_kwh"], entry["battery_kwh"], entry["grid_kwh"]
+                ),
+            )
+        )
+
+    if months is not None and months > 0:
+        result = result[-months:]
+    return result

@@ -69,6 +69,35 @@ hausweite Größe (siehe [Berechnungen bei mehreren Wechselrichtern](CALCULATION
 mehreren konfigurierten Wechselrichtern zeigt dieses Diagramm daher immer
 die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
 
+## Autarkiegrad
+
+Der Reiter "Autarkie" zeigt den **Autarkiegrad** – welcher Anteil des
+Hausverbrauchs aus eigener Erzeugung (PV, direkt oder über die Batterie
+zwischengespeichert) statt aus dem Netz gedeckt wurde – je Kalendermonat als
+Balkendiagramm, seit dem allerersten gespeicherten Messwert. Zusätzlich zeigt
+die Übersicht oben eine Kachel "Autarkiegrad heute" mit dem Wert für den
+laufenden Tag.
+
+Berechnung: `Autarkiegrad = (PV-Anteil + Speicher-Anteil) / Hausverbrauch
+gesamt`, in Prozent – dieselbe PV-/Speicher-/Netz-Aufteilung, die auch das
+"Tagesverbrauch"-Diagramm verwendet (siehe oben,
+`daily_home_source_breakdown_kwh`). Ein Monatswert ist dabei **nicht** der
+Mittelwert der täglichen Prozentsätze, sondern wird aus den über den Monat
+aufsummierten kWh-Anteilen gebildet – sonst würden Tage mit wenig
+Hausverbrauch (z.B. Abwesenheit) das Monatsergebnis unverhältnismäßig
+verzerren, obwohl sie kaum zum tatsächlichen Monatsverbrauch beitragen. Wie
+beim Tagesverbrauch ist dies eine hausweite Größe, unabhängig vom oben
+gewählten Wechselrichter-Tab.
+
+Wie bei der PV-Ertrag-/Einspeisungs-Übersicht (siehe "Performance:
+Energie-Zeitraum-Cache" unten) werden abgeschlossene Tage über den
+`daily_energy_cache` zwischengespeichert – nur der laufende Monat/Tag wird
+bei jeder Anfrage frisch berechnet. Kalendermonate ganz ohne Messwerte (z.B.
+vor Inbetriebnahme) fehlen in der Übersicht, statt mit 0 % aufzutauchen.
+Für Zeiträume ohne tatsächlich gespeicherte Netzmessung wird ebenfalls kein
+Autarkiegrad ausgewiesen. Insbesondere ältere Importdaten ohne KSEM-Werte
+dürfen dadurch nicht fälschlich als 100 % autark erscheinen.
+
 ## Wechselrichter-Vergleich: PV-Ertrag pro Stunde
 
 Ganz unten zeigt ein gestapeltes Säulendiagramm den PV-Ertrag je Stunde,

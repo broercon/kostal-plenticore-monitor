@@ -187,6 +187,10 @@
       </div>
     </div>
 
+    <button type="button" data-tab="autarky">
+      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Autarkie
+    </button>
+
     <div class="view-tab-with-menu" data-tab-group="forecast">
       <button type="button" data-tab="forecast" class="view-tab-trigger">
         <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Prognose
@@ -241,6 +245,11 @@
       <div class="card small card--feedin">
         <span class="card-label">Einspeisung heute</span>
         <span class="card-value" id="summary-grid">–</span>
+        <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
+      </div>
+      <div class="card small card--autarky" id="summary-autarky-card">
+        <span class="card-label">Autarkiegrad heute</span>
+        <span class="card-value" id="summary-autarky">–</span>
         <span class="card-note hidden" data-house-note>hausweit – nicht pro WR</span>
       </div>
     </section>
@@ -385,6 +394,36 @@
       <p class="muted hidden" id="hourly-chart-unavailable">
         Der Wechselrichter-Vergleich ist nur in der Ansicht "Alle (Summe)" mit
         mehreren Wechselrichtern verfügbar.
+      </p>
+    </section>
+  </div>
+
+  <div class="tab-panel hidden" id="tab-panel-autarky" data-tab-panel="autarky">
+    <section class="chart-section" id="autarky-section">
+      <div class="daycompare-header">
+        <h2>Autarkiegrad je Monat</h2>
+        <p class="muted">
+          Welcher Anteil des Hausverbrauchs je Kalendermonat aus PV/Speicher
+          statt aus dem Netz gedeckt wurde – berechnet aus den monatlichen
+          kWh-Summen (nicht dem Mittelwert der Tageswerte), seit dem ersten
+          gespeicherten Messwert.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="autarky-month-buttons">
+          <button data-months="12">12 Monate</button>
+          <button data-months="24">24 Monate</button>
+          <button data-months="36">36 Monate</button>
+          <button data-months="all" class="active">Alle</button>
+        </div>
+        <button type="button" class="chart-interaction-toggle">Werte anzeigen: aus</button>
+      </div>
+      <div class="chart-canvas-wrapper" id="autarky-chart-wrapper">
+        <canvas id="autarky-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Maus über einen Balken halten, um die genauen kWh-Anteile
+        (PV/Speicher gegenüber Netzbezug) zu sehen.
       </p>
     </section>
   </div>
