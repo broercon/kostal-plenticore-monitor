@@ -78,3 +78,30 @@ test("Autarkiegrad heute erscheint in der Uebersicht", async () => {
   const value = app.document.getElementById("summary-autarky").textContent;
   assert.equal(value, "70 %");
 });
+
+test("Fehler beim Autarkiegrad blockiert die bestehenden Tageskacheln nicht", async () => {
+  const base = makeBackend();
+  const app = await bootApp({
+    fetchHandler: async (url) => {
+      if (url.pathname === "/api/readings/daily-home-breakdown") {
+        throw new Error("Autarkie-Endpunkt voruebergehend nicht erreichbar");
+      }
+      if (url.pathname === "/api/readings/today-summary") {
+        return [
+          {
+            device_id: "wr1",
+            device_name: "WR1",
+            yield_day_kwh: 12.3,
+            home_consumption_day_kwh: 8.4,
+            energy_grid_day_kwh: 2.1,
+          },
+        ];
+      }
+      return base(url);
+    },
+  });
+  await waitFor(() => app.document.getElementById("summary-yield").textContent !== "–");
+
+  assert.notEqual(app.document.getElementById("summary-consumption").textContent, "–");
+  assert.equal(app.document.getElementById("summary-autarky").textContent, "–");
+});

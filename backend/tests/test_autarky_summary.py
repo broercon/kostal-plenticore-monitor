@@ -72,6 +72,40 @@ def test_daily_home_breakdown_includes_autarky_percent(client, frozen_now):
     assert days[0]["autarky_percent"] == 60.0
 
 
+def test_autarky_is_unknown_without_grid_measurements(client, frozen_now):
+    """Importierte Altdaten ohne Netzmessung duerfen nicht als 100 % autark
+    erscheinen. Die bestehende Tagesaufteilung bleibt verfuegbar, aber der
+    daraus nicht verlaesslich bestimmbare Autarkiegrad ist unbekannt."""
+    _login(client)
+    today_local = frozen_now.astimezone(TZ).date()
+    noon_local = datetime(
+        today_local.year, today_local.month, today_local.day, 12, 0, tzinfo=TZ
+    )
+    _add(
+        [
+            Reading(
+                device_id="wr1",
+                device_name="Wechselrichter",
+                timestamp=(noon_local + timedelta(minutes=m)).astimezone(
+                    ZoneInfo("UTC")
+                ),
+                home_power_w=1000.0,
+                pv_power_w=600.0,
+                grid_draw_power_w=None,
+                feed_in_power_w=None,
+            )
+            for m in (0, 15)
+        ]
+    )
+
+    daily = client.get("/api/readings/daily-home-breakdown?days=1").json()["days"]
+    assert len(daily) == 1
+    assert daily[0]["autarky_percent"] is None
+
+    monthly = client.get("/api/readings/autarky-monthly").json()["months"]
+    assert monthly == []
+
+
 def test_autarky_monthly_summary_two_months(client, frozen_now):
     _login(client)
     today_local = frozen_now.astimezone(TZ).date()

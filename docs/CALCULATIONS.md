@@ -91,6 +91,9 @@ Energie-Zeitraum-Cache" unten) werden abgeschlossene Tage über den
 `daily_energy_cache` zwischengespeichert – nur der laufende Monat/Tag wird
 bei jeder Anfrage frisch berechnet. Kalendermonate ganz ohne Messwerte (z.B.
 vor Inbetriebnahme) fehlen in der Übersicht, statt mit 0 % aufzutauchen.
+Für Zeiträume ohne tatsächlich gespeicherte Netzmessung wird ebenfalls kein
+Autarkiegrad ausgewiesen. Insbesondere ältere Importdaten ohne KSEM-Werte
+dürfen dadurch nicht fälschlich als 100 % autark erscheinen.
 
 ## Wechselrichter-Vergleich: PV-Ertrag pro Stunde
 

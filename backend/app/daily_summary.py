@@ -66,6 +66,24 @@ def _autarky_percent(
     return round(100 * (pv_kwh + battery_kwh) / home_kwh, 1)
 
 
+def _home_source_breakdown_with_grid(rows: list[Reading]) -> list[dict]:
+    """Hausverbrauchs-Aufteilung nur aus Messpunkten mit echtem Netzwert.
+
+    ``daily_home_source_breakdown_kwh`` nimmt einen fehlenden Netzbezug
+    bewusst als 0 an, damit das bestehende Tagesverbrauchsdiagramm auch bei
+    einzelnen Messluecken eine Aufteilung anzeigen kann. Fuer den
+    Autarkiegrad waere dieselbe Annahme jedoch irrefuehrend: Historische
+    Importdaten ganz ohne Netzmessung wuerden sonst als 100 % autark gelten.
+    Deshalb werden fuer Autarkie nur Messpunkte verwendet, an denen ein
+    Netzbezugswert tatsaechlich vorhanden ist. Reichen diese Punkte nicht
+    fuer eine Integration, bleibt der Wert automatisch unbekannt.
+    """
+    return daily_home_source_breakdown_kwh(
+        [row for row in rows if row.grid_draw_power_w is not None],
+        settings.timezone_name,
+    )
+
+
 def _combined_rows(rows: list[Reading]) -> list[Reading]:
     """Fasst rows (mehrere Geräte) zur hausweit korrigierten Energiebilanz
     zusammen (siehe aggregation.combine_devices) - gemeinsamer Baustein für
@@ -454,6 +472,14 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     if len(settings.inverters) > 1:
         rows = _combined_rows(rows)
 
+    breakdown = daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+    autarky_by_date = {
+        day["date"]: _autarky_percent(
+            day.get("pv_kwh"), day.get("battery_kwh"), day.get("grid_kwh")
+        )
+        for day in _home_source_breakdown_with_grid(rows)
+    }
+
     # In DailyHomeBreakdownDay-Objekte wandeln (statt roher Dicts), damit
     # sowohl der API-Endpunkt als auch der Mail-Report per Attribut darauf
     # zugreifen koennen (der Report ruft z.B. .pv_kwh direkt auf). Ergaenzt
@@ -463,11 +489,9 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     return [
         DailyHomeBreakdownDay(
             **day,
-            autarky_percent=_autarky_percent(
-                day.get("pv_kwh"), day.get("battery_kwh"), day.get("grid_kwh")
-            ),
+            autarky_percent=autarky_by_date.get(day["date"]),
         )
-        for day in daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+        for day in breakdown
     ]
 
 
@@ -523,7 +547,7 @@ def _cached_home_source_field(
             rows = _combined_rows(rows)
         return {
             d["date"]: d[out_key]
-            for d in daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+            for d in _home_source_breakdown_with_grid(rows)
         }
 
     return _cached_daily_totals(_HOME_SOURCE_CACHE_FIELDS[out_key], earliest, today, compute)

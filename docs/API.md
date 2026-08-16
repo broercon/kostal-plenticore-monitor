@@ -68,6 +68,8 @@ curl -b cookies.txt http://localhost:8000/api/devices
   - Autarkiegrad je Kalendermonat (`pv_kwh`, `battery_kwh`, `grid_kwh`,
     `home_kwh`, `autarky_percent`) – siehe
     [Dashboard und Berechnungen](CALCULATIONS.md#autarkiegrad).
+  - Monate ohne verwertbare Netzmessung werden nicht als 100 % autark
+    ausgegeben, sondern bleiben ohne Monatswert.
 - `GET /api/readings/hourly-per-device`
   - `metric`: `feed_in`, `pv`, `home` oder `grid_draw`
   - `days`: Standard `1`, Bereich `1` bis `30`

@@ -1257,14 +1257,7 @@ async function refreshLiveCards() {
 async function refreshSummaryCards() {
   return withLoading(["#summary-cards"], async () => {
     const dev = state.selectedDeviceId;
-    const [summaries, breakdown] = await Promise.all([
-      fetchJson("/api/readings/today-summary"),
-      // Autarkiegrad heute: hausweite Groesse wie Verbrauch/Einspeisung
-      // heute unten - dieselbe Energiebilanz-Aufteilung (PV/Speicher/Netz),
-      // die auch das Tagesverbrauch-Diagramm nutzt (siehe
-      // refreshDailyTotalsChart), hier nur fuer genau den heutigen Tag.
-      fetchJson("/api/readings/daily-home-breakdown?days=1"),
-    ]);
+    const summaries = await fetchJson("/api/readings/today-summary");
     if (state.selectedDeviceId !== dev) return;
     const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
     const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
@@ -1285,11 +1278,22 @@ async function refreshSummaryCards() {
     );
     el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
 
-    const today = breakdown.days[breakdown.days.length - 1];
-    el("summary-autarky").textContent = today ? fmtPercent(today.autarky_percent) : "–";
-
     updateHouseWideNotes();
 
+  });
+}
+
+// Autarkiegrad heute ist hausweit und deutlich teurer zu berechnen als die
+// vorhandenen Tageszaehler: das Backend integriert dafuer die heutigen
+// Rohmessungen. Deshalb getrennt von refreshSummaryCards(), das alle 20
+// Sekunden laeuft. So genuegt fuer diese langsam veraenderliche Kennzahl der
+// 5-Minuten-Takt und ein Fehler des Zusatzendpunkts blockiert nicht die drei
+// bewaehrten Tageskacheln.
+async function refreshAutarkyToday() {
+  return withLoading(["#summary-autarky-card"], async () => {
+    const breakdown = await fetchJson("/api/readings/daily-home-breakdown?days=1");
+    const today = breakdown.days[breakdown.days.length - 1];
+    el("summary-autarky").textContent = today ? fmtPercent(today.autarky_percent) : "–";
   });
 }
 
@@ -2213,6 +2217,7 @@ function refreshOverview() {
   return Promise.allSettled([
     refreshLiveCards(),
     refreshSummaryCards(),
+    refreshAutarkyToday(),
     refreshPvYieldSummary(),
   ]);
 }
@@ -2587,7 +2592,10 @@ async function init() {
     refreshSummaryCards().catch(console.error);
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
-  setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => {
+    refreshPvYieldSummary().catch(console.error);
+    refreshAutarkyToday().catch(console.error);
+  }, 5 * 60 * 1000);
 }
 
 init();
