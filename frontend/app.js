@@ -7,7 +7,12 @@ const state = {
   chartMode: null, // "day" (feste 00:00-24:00 Achse) | "range" (rollierend, Datumslabels)
   dayCompare: {
     metric: "pv", // "pv" | "solar_battery" | "grid"
-    days: 7,
+    // Standard bewusst auf 1 Tag (nicht mehrere ueberlagerte Tage) - passend
+    // zu den anderen Zeitraum-Diagrammen (Leistungsverlauf: 24 Std,
+    // Wechselrichter-Vergleich: 1 Tag), damit die Seite beim Start ueberall
+    // zunaechst nur den aktuellsten Tag zeigt. Weitere Tage bleiben ueber
+    // die Buttons oben weiterhin waehlbar.
+    days: 1,
     chart: null,
   },
   dailyTotals: {
