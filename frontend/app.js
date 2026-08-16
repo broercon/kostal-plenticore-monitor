@@ -1894,13 +1894,17 @@ async function refreshAutarkyChart() {
             label: "Autarkiegrad",
             data,
             borderColor: AUTARKY_COLOR,
-            backgroundColor: AUTARKY_COLOR + "33",
             pointBackgroundColor: AUTARKY_COLOR,
             pointRadius: 4,
             pointHoverRadius: 6,
             borderWidth: 2,
             tension: 0,
-            fill: true,
+            // Nur die Linie selbst, keine Flaeche darunter (fill: false) -
+            // bei einer dynamisch skalierten Y-Achse (siehe autarkyYRange)
+            // wuerde eine gefuellte Flaeche bis zum unteren Achsenrand
+            // sonst leicht den Eindruck erwecken, die Flaeche haette eine
+            // inhaltliche Bedeutung (z.B. eine Menge), was sie nicht hat.
+            fill: false,
             spanGaps: false,
           },
         ],
