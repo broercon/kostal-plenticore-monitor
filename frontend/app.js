@@ -936,7 +936,11 @@ async function refreshForecastAccuracy() {
       container.appendChild(card);
     }
 
-    const chronological = [...cardEntries].reverse();
+    // cardEntries liegt bereits absteigend nach Datum vor (siehe
+    // forecast_evaluation.get_forecast_accuracy: neuester abgeschlossener
+    // Tag zuerst) - fuers Diagramm bewusst NICHT umgedreht, damit der
+    // aktuellste Tag ganz links steht statt ganz rechts.
+    const chronological = cardEntries;
     chartWrapper.classList.remove("hidden");
     if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
     state.forecastAccuracyChart = new Chart(
