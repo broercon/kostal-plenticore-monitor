@@ -9,6 +9,7 @@
   --accent-red: #f87171;
   --accent-blue: #60a5fa;
   --accent-purple: #c084fc;
+  --accent-teal: #2dd4bf;
   --panel-hover: #24324a;
   --border-hover: #475569;
 }
@@ -153,12 +154,14 @@ main {
 .card--grid { --card-accent: var(--accent-yellow); }
 .card--pv { --card-accent: var(--accent-blue); }
 .card--battery { --card-accent: var(--accent-purple); }
+.card--autarky { --card-accent: var(--accent-teal); }
 
 .card--home .card-value { color: var(--accent-red); }
 .card--feedin .card-value { color: var(--accent-green); }
 .card--grid .card-value { color: var(--accent-yellow); }
 .card--pv .card-value { color: var(--accent-blue); }
 .card--battery .card-value { color: var(--accent-purple); }
+.card--autarky .card-value { color: var(--accent-teal); }
 
 .card.small {
   padding: 12px 16px;

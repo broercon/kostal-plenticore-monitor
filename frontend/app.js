@@ -14,6 +14,14 @@ const state = {
     days: 30,
     chart: null,
   },
+  autarky: {
+    // null = komplette Historie (Standard fuer diese Ansicht, da hier -
+    // anders als bei den Tages-Diagrammen - meist nur wenige Datenpunkte
+    // (Monate) anfallen und "alles zeigen" daher nicht unuebersichtlich
+    // wird).
+    months: null,
+    chart: null,
+  },
   hourlyCompare: {
     days: 1,
     chart: null,
@@ -1249,7 +1257,14 @@ async function refreshLiveCards() {
 async function refreshSummaryCards() {
   return withLoading(["#summary-cards"], async () => {
     const dev = state.selectedDeviceId;
-    const summaries = await fetchJson("/api/readings/today-summary");
+    const [summaries, breakdown] = await Promise.all([
+      fetchJson("/api/readings/today-summary"),
+      // Autarkiegrad heute: hausweite Groesse wie Verbrauch/Einspeisung
+      // heute unten - dieselbe Energiebilanz-Aufteilung (PV/Speicher/Netz),
+      // die auch das Tagesverbrauch-Diagramm nutzt (siehe
+      // refreshDailyTotalsChart), hier nur fuer genau den heutigen Tag.
+      fetchJson("/api/readings/daily-home-breakdown?days=1"),
+    ]);
     if (state.selectedDeviceId !== dev) return;
     const combined = summaries.find((s) => s.device_id === COMBINED_DEVICE_ID);
     const perDevice = summaries.filter((s) => s.device_id !== COMBINED_DEVICE_ID);
@@ -1269,6 +1284,9 @@ async function refreshSummaryCards() {
       sumField(houseWideSource, "home_consumption_day_kwh")
     );
     el("summary-grid").textContent = fmtKwh(sumField(houseWideSource, "energy_grid_day_kwh"));
+
+    const today = breakdown.days[breakdown.days.length - 1];
+    el("summary-autarky").textContent = today ? fmtPercent(today.autarky_percent) : "–";
 
     updateHouseWideNotes();
 
@@ -1790,6 +1808,112 @@ function setupDailyTotalsControls() {
   });
 }
 
+// --- Autarkiegrad je Monat: Balkendiagramm, wie hoch der Anteil des
+// Hausverbrauchs war, der aus PV/Speicher statt aus dem Netz gedeckt wurde
+// (siehe daily_summary.build_autarky_monthly_summary). Hausweite Groesse -
+// unabhaengig vom oben gewaehlten Wechselrichter-Tab, wie beim
+// Tagesverbrauch-Diagramm. ---
+
+const AUTARKY_COLOR = "#2dd4bf";
+const MONTH_NAMES_SHORT = [
+  "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
+  "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
+];
+
+function monthLabel(monthStr) {
+  // "2026-01" -> "Jan 2026"
+  const [year, month] = monthStr.split("-");
+  return `${MONTH_NAMES_SHORT[Number(month) - 1]} ${year}`;
+}
+
+let autarkyMonthsData = [];
+
+async function refreshAutarkyChart() {
+  return withLoading(["#autarky-chart-wrapper"], async () => {
+    const reqMonths = state.autarky.months;
+    const params = new URLSearchParams();
+    if (reqMonths) params.set("months", String(reqMonths));
+    const result = await fetchJson(`/api/readings/autarky-monthly?${params.toString()}`);
+    if (state.autarky.months !== reqMonths) return;
+    autarkyMonthsData = result.months;
+
+    const labels = autarkyMonthsData.map((m) => monthLabel(m.month));
+    const data = autarkyMonthsData.map((m) => m.autarky_percent);
+
+    if (state.autarky.chart) {
+      state.autarky.chart.data.labels = labels;
+      state.autarky.chart.data.datasets[0].data = data;
+      state.autarky.chart.update();
+      return;
+    }
+
+    const ctx = el("autarky-chart").getContext("2d");
+    state.autarky.chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Autarkiegrad",
+            data,
+            backgroundColor: AUTARKY_COLOR + "99",
+            borderColor: AUTARKY_COLOR,
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        scales: {
+          x: {
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
+            grid: { display: false },
+          },
+          y: {
+            min: 0,
+            max: 100,
+            ticks: { color: "#94a3b8", callback: (v) => `${v} %` },
+            grid: { color: "#334155" },
+            title: { display: true, text: "Autarkiegrad (%)", color: "#94a3b8" },
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (item) =>
+                item.parsed.y === null
+                  ? "keine Daten"
+                  : `Autarkiegrad: ${item.parsed.y.toFixed(1)} %`,
+              afterLabel: (item) => {
+                const m = autarkyMonthsData[item.dataIndex];
+                if (!m) return "";
+                const ownKwh = (m.pv_kwh + m.battery_kwh).toFixed(1);
+                return `PV + Speicher: ${ownKwh} kWh · Netz: ${m.grid_kwh.toFixed(1)} kWh`;
+              },
+            },
+          },
+        },
+      },
+    });
+
+  });
+}
+
+function setupAutarkyControls() {
+  const container = el("autarky-month-buttons");
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-months]");
+    if (!btn) return;
+    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.autarky.months = btn.dataset.months === "all" ? null : Number(btn.dataset.months);
+    refreshAutarkyChart().catch(console.error);
+  });
+}
+
 // --- Wechselrichter-Vergleich: gestapeltes Saeulendiagramm, PV-Ertrag pro
 // Stunde je Wechselrichter (nicht summiert), damit sich die Geraete direkt
 // farblich vergleichen lassen. Nutzt die Metrik "pv" (gesamte erzeugte
@@ -2155,6 +2279,7 @@ const TAB_LOADERS = {
   overview: refreshOverview,
   trend: refreshTrendTab,
   consumption: refreshConsumptionTab,
+  autarky: refreshAutarkyChart,
   forecast: refreshForecastTab,
 };
 
@@ -2164,6 +2289,9 @@ const TAB_LOADERS = {
 const TAB_INTERVALS_MS = {
   trend: 5 * 60 * 1000,
   consumption: 5 * 60 * 1000,
+  // Monatswerte aendern sich kaum - der laufende Monat waechst aber mit dem
+  // heutigen Tag mit, daher dasselbe Intervall wie beim Tagesverbrauch.
+  autarky: 5 * 60 * 1000,
   // An das Backend-Cache-TTL angeglichen (siehe energy_forecast.CACHE_TTL
   // = 30 Minuten) - eine neue Prognose auf dem Server soll ohne
   // Seiten-Reload zuverlaessig binnen derselben Zeitspanne im Frontend
@@ -2200,6 +2328,7 @@ const TAB_CHARTS = {
   overview: () => [],
   trend: () => [state.chart, state.dayCompare.chart],
   consumption: () => [state.dailyTotals.chart, state.hourlyCompare.chart],
+  autarky: () => [state.autarky.chart],
   forecast: () => [
     state.forecastChart,
     state.forecastHoursTodayChart,
@@ -2431,6 +2560,7 @@ async function init() {
   setupTrendSubView();
   setupDayCompareControls();
   setupDailyTotalsControls();
+  setupAutarkyControls();
   setupHourlyCompareControls();
   setupConsumptionSubView();
   setupForecastSubView();

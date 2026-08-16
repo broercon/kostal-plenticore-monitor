@@ -81,6 +81,8 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
         return { periods: [] };
+      case "/api/readings/autarky-monthly":
+        return { months: [] };
       case "/api/forecast":
         return {
           available: true,
