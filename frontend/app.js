@@ -48,7 +48,10 @@ const state = {
   // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
   subView: {
     trend: "power",
-    consumption: "dailytotals",
+    // "Tagesverbrauch" ist seit der Verschiebung in den "Verlauf"-Tab (siehe
+    // applyTrendSubView) hier nicht mehr vorhanden - "Wechselrichter-
+    // Vergleich" ist die einzige verbleibende Unteransicht.
+    consumption: "hourly",
     forecast: "days",
   },
 };
@@ -1731,8 +1734,15 @@ function setupDayCompareControls() {
 
 function applyTrendSubView(view) {
   const isPower = view === "power";
+  const isDailyTotals = view === "dailytotals";
   el("trend-view-power").classList.toggle("hidden", !isPower);
-  el("trend-view-daycompare").classList.toggle("hidden", isPower);
+  el("trend-view-daycompare").classList.toggle("hidden", isPower || isDailyTotals);
+  // "Tagesverbrauch" (urspruenglich im "Verbrauch & Wechselrichter"-Tab) ist
+  // jetzt eine weitere Unteransicht des "Verlauf"-Tabs, siehe HTML - dort
+  // liegt die Sektion direkt im Verlauf-Panel, das dazugehoerige Element
+  // (#consumption-view-dailytotals) hat seinen Namen aus Kompatibilitaets-
+  // gruenden (CSS/Tests/refreshDailyTotalsChart) behalten.
+  el("consumption-view-dailytotals").classList.toggle("hidden", !isDailyTotals);
 }
 
 function setTrendSubView(view) {
@@ -1741,6 +1751,11 @@ function setTrendSubView(view) {
   if (view === "power") {
     state.chart?.resize();
     refreshChart().catch(console.error);
+    return;
+  }
+  if (view === "dailytotals") {
+    state.dailyTotals.chart?.resize();
+    refreshDailyTotalsChart().catch(console.error);
     return;
   }
   state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
@@ -2051,10 +2066,10 @@ function updateHourlyCompareVisibility() {
   // "Alle (Summe)" ausgewaehlt ist (selectedDeviceId === "") UND es
   // ueberhaupt mehr als einen Wechselrichter gibt - bei einem einzelnen
   // ausgewaehlten (oder einzigen konfigurierten) Geraet gaebe es nichts zu
-  // vergleichen. Zusaetzlich muss oben im "Verbrauch & Wechselrichter"-Tab
-  // die Ansicht "Wechselrichter-Vergleich" ausgewaehlt sein (siehe
-  // setTrendSubView/state.subView.consumption) - es ist immer nur eine der
-  // beiden Ansichten gleichzeitig sichtbar.
+  // vergleichen. state.subView.consumption ist seit der Verschiebung von
+  // "Tagesverbrauch" in den "Verlauf"-Tab (siehe applyTrendSubView) immer
+  // "hourly" - die Pruefung bleibt trotzdem bestehen (robuster, falls das
+  // wieder Unteransichten bekommt).
   const menuWantsHourly = state.subView.consumption === "hourly";
   const deviceOk = state.selectedDeviceId === "" && state.devices.length > 1;
   el("hourly-section").classList.toggle("hidden", !menuWantsHourly);
@@ -2063,18 +2078,15 @@ function updateHourlyCompareVisibility() {
   return menuWantsHourly && deviceOk;
 }
 
-// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: Tagesverbrauch ODER
-// Wechselrichter-Vergleich - wie beim Verlauf-Tab immer nur ein Diagramm
-// gleichzeitig sichtbar, gesteuert ueber das Hover-Flyout-Menue am
-// "Verbrauch & Wechselrichter"-Reiter oben. ---
+// --- Ansichts-Auswahl "Verbrauch & Wechselrichter"-Tab: nur noch
+// Wechselrichter-Vergleich (seit "Tagesverbrauch" in den "Verlauf"-Tab
+// verschoben wurde, siehe applyTrendSubView). ---
 
 function applyConsumptionSubView() {
-  el("consumption-view-dailytotals").classList.toggle(
-    "hidden",
-    state.subView.consumption !== "dailytotals"
-  );
-  // #hourly-section haengt zusaetzlich vom gewaehlten Wechselrichter-Tab
-  // ab - updateHourlyCompareVisibility() wertet beides aus.
+  // Seit "Tagesverbrauch" in den "Verlauf"-Tab verschoben wurde (siehe
+  // applyTrendSubView), bleibt hier nur noch "Wechselrichter-Vergleich" -
+  // dessen Sichtbarkeit haengt vom gewaehlten Wechselrichter-Tab ab, siehe
+  // updateHourlyCompareVisibility().
   updateHourlyCompareVisibility();
 }
 
@@ -2332,11 +2344,13 @@ function refreshOverview() {
 }
 
 function refreshTrendTab() {
-  return Promise.allSettled([refreshChart(), refreshDayCompareChart()]);
+  // refreshDailyTotalsChart gehoert seit der Verschiebung von
+  // "Tagesverbrauch" hierher (siehe applyTrendSubView) mit zum Verlauf-Tab.
+  return Promise.allSettled([refreshChart(), refreshDayCompareChart(), refreshDailyTotalsChart()]);
 }
 
 function refreshConsumptionTab() {
-  return Promise.allSettled([refreshDailyTotalsChart(), refreshHourlyCompareChart()]);
+  return Promise.allSettled([refreshHourlyCompareChart()]);
 }
 
 function refreshForecastTab() {
@@ -2445,8 +2459,8 @@ function refreshLoadedTabs() {
 // Erzeugungszeitpunkt bleiben.
 const TAB_CHARTS = {
   overview: () => [],
-  trend: () => [state.chart, state.dayCompare.chart],
-  consumption: () => [state.dailyTotals.chart, state.hourlyCompare.chart],
+  trend: () => [state.chart, state.dayCompare.chart, state.dailyTotals.chart],
+  consumption: () => [state.hourlyCompare.chart],
   autarky: () => [state.autarky.chart],
   forecast: () => [
     state.forecastChart,
