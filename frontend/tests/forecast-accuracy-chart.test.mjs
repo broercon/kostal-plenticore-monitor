@@ -72,3 +72,19 @@ test("Prognosekontrolle: Diagramm steht im Markup vor den Werten (Tages-/Heute-K
   assert.ok(chartIndex < daysIndex, "Diagramm muss vor den Werten stehen");
 });
 
+test("Prognosekontrolle: Punktfarbe zeigt Abweichungsrichtung (gruen/rot)", async () => {
+  const days = [
+    dayEntry("2026-07-14", { expected: 10, actual: 12 }), // +20% -> gruen
+    dayEntry("2026-07-13", { expected: 10, actual: 9 }), // -10% -> rot
+  ];
+  const app = await bootApp({ fetchHandler: backendWithAccuracyDays(days) });
+  await waitFor(() => app.state.tabsLoaded.has("forecast"));
+  await waitFor(() => !!app.state.forecastAccuracyChart);
+
+  const dataset = app.state.forecastAccuracyChart.data.datasets[0];
+  const colorFor = (value) => dataset.pointBackgroundColor({ raw: value });
+  assert.equal(colorFor(20), "#4ade80", "positive Abweichung ist gruen");
+  assert.equal(colorFor(-10), "#f87171", "negative Abweichung ist rot");
+  assert.equal(colorFor(null), "#94a3b8", "fehlender Wert ist neutral grau");
+});
+

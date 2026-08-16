@@ -811,6 +811,14 @@ async function refreshForecastYesterday() {
   });
 }
 
+// Punktfarbe fuer das Prognosekontrolle-Diagramm: gruen bei Abweichung >= 0
+// (mehr PV als prognostiziert), rot bei < 0 (weniger als prognostiziert),
+// grau bei fehlendem Wert.
+function deviationPointColor(value) {
+  if (value === null || value === undefined) return "#94a3b8";
+  return value >= 0 ? "#4ade80" : "#f87171";
+}
+
 async function refreshForecastAccuracy() {
   return withLoading(["#forecast-accuracy-section"], async () => {
     const data = await fetchJson("/api/forecast/accuracy?days=30");
@@ -971,6 +979,14 @@ async function refreshForecastAccuracy() {
               label: "Abweichung",
               data: deviationValues,
               borderColor: "#94a3b8",
+              // Punktfarbe zeigt die Richtung der Abweichung: gruen, wenn
+              // tatsaechlich mehr PV-Ertrag da war als prognostiziert
+              // (Abweichung >= 0), rot bei weniger als prognostiziert -
+              // dieselben Akzentfarben wie sonst im Dashboard (--accent-
+              // green/--accent-red). Fehlende Werte (kein Vergleich
+              // moeglich) bleiben neutral grau.
+              pointBackgroundColor: (ctx) => deviationPointColor(ctx.raw),
+              pointBorderColor: (ctx) => deviationPointColor(ctx.raw),
               pointRadius: 5,
               pointHoverRadius: 7,
               borderWidth: 2,
