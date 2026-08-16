@@ -357,6 +357,12 @@ class EnergyForecastOut(BaseModel):
     models: list[ForecastModelOut] = []
     days: list[ForecastDayOut]
     hours: list[ForecastHourOut]
+    # Lokale Uhrzeit (HH:MM, siehe config.FORECAST_FREEZE_TIME), ab der die
+    # Prognose fuer den jeweiligen Folgetag als endgueltig gilt (siehe
+    # forecast_evaluation._freeze_cutoff_utc) - dem Frontend fuer den
+    # Hinweistext in der "Morgen"-Ansicht mitgegeben, statt die Uhrzeit dort
+    # hart zu codieren. Default deckt Alt-Fixtures/Tests ohne dieses Feld ab.
+    freeze_time: str = "22:00"
 
 
 class ForecastAccuracyDeviceOut(BaseModel):

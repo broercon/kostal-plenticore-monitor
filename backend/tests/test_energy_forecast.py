@@ -14,6 +14,7 @@ from app.energy_forecast import (
     ModelProfile,
     TrainingPoint,
     _aggregate_bounds,
+    _empty_result,
     _predict_with_profile,
     _prepare_training_arrays,
     _summarize,
@@ -313,6 +314,29 @@ def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
     assert hour_wr1["expected_kw"] == 3.0
     assert hour_wr2["expected_kw"] == 1.0
     assert round(hour_wr1["expected_kw"] + hour_wr2["expected_kw"], 3) == hour["expected_kw"]
+
+
+def test_summarize_and_empty_result_report_configured_freeze_time(monkeypatch):
+    """Das Frontend zeigt in der "Morgen"-Ansicht einen Hinweis, ab welcher
+    Uhrzeit die Prognose fuer den Folgetag feststeht (siehe
+    config.FORECAST_FREEZE_TIME) - dafuer muss sowohl der normale Erfolgsfall
+    (_summarize) als auch der Fehlerfall ohne Trainingsdaten (_empty_result,
+    z.B. direkt nach Inbetriebnahme) die konfigurierte Uhrzeit mitliefern,
+    statt sie im Frontend hart zu codieren."""
+    import app.energy_forecast as module
+
+    monkeypatch.setattr(module.settings, "forecast_freeze_time", "21:30")
+
+    training = {
+        "wr1": [
+            TrainingPoint(_weather(12, 600, day=(i % 27) + 1), 3000)
+            for i in range(MIN_TRAINING_SAMPLES)
+        ],
+    }
+    result = _summarize(training, [_weather(12, 600)])
+    assert result["freeze_time"] == "21:30"
+
+    assert _empty_result("keine Daten")["freeze_time"] == "21:30"
 
 
 def test_forecast_endpoint_requires_login_and_returns_service_result(client, monkeypatch):
