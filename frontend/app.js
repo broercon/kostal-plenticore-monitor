@@ -943,10 +943,22 @@ async function refreshForecastAccuracy() {
     const chronological = cardEntries;
     chartWrapper.classList.remove("hidden");
     if (state.forecastAccuracyChart) state.forecastAccuracyChart.destroy();
+
+    // Wie beim Autarkiegrad-Diagramm: statt zweier Balken (Erwartet/
+    // Tatsaechlich - die eigentlich interessante Groesse, die Abweichung,
+    // muss man sich daraus erst selbst ausrechnen) eine einzelne Linie mit
+    // der Abweichung in Prozent (difference_percent: positiv = mehr PV als
+    // erwartet, negativ = weniger). Y-Achse skaliert dynamisch auf den
+    // tatsaechlichen Wertebereich, damit auch kleine Abweichungen sichtbar
+    // bleiben, statt bei einer festen Achse fast wie eine Nulllinie
+    // auszusehen.
+    const deviationValues = chronological.map((entry) => entry.values.difference_percent);
+    const yRange = dynamicYRange(deviationValues);
+
     state.forecastAccuracyChart = new Chart(
       el("forecast-accuracy-chart").getContext("2d"),
       {
-        type: "bar",
+        type: "line",
         data: {
           labels: chronological.map((entry) =>
             new Date(`${entry.date}T12:00:00`).toLocaleDateString("de-DE", {
@@ -956,14 +968,15 @@ async function refreshForecastAccuracy() {
           ),
           datasets: [
             {
-              label: "Erwartet",
-              data: chronological.map((entry) => entry.values.expected_kwh),
-              backgroundColor: "rgba(56, 189, 248, 0.55)",
-            },
-            {
-              label: "Tatsächlich",
-              data: chronological.map((entry) => entry.values.actual_kwh),
-              backgroundColor: "rgba(34, 197, 94, 0.65)",
+              label: "Abweichung",
+              data: deviationValues,
+              borderColor: "#94a3b8",
+              pointRadius: 5,
+              pointHoverRadius: 7,
+              borderWidth: 2,
+              tension: 0,
+              fill: false,
+              spanGaps: false,
             },
           ],
         },
@@ -971,7 +984,32 @@ async function refreshForecastAccuracy() {
           responsive: true,
           maintainAspectRatio: false,
           events: chartEvents(),
-          scales: { y: { beginAtZero: true, title: { display: true, text: "kWh" } } },
+          scales: {
+            y: {
+              min: yRange.min,
+              max: yRange.max,
+              ticks: { callback: (v) => `${v} %` },
+              title: { display: true, text: "Abweichung Prognose vs. Ist (%)" },
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (item) =>
+                  item.parsed.y === null
+                    ? "keine Daten"
+                    : `Abweichung: ${item.parsed.y > 0 ? "+" : ""}${item.parsed.y.toFixed(1)} %`,
+                afterLabel: (item) => {
+                  const entry = chronological[item.dataIndex];
+                  if (!entry) return "";
+                  const v = entry.values;
+                  const sign = v.difference_kwh > 0 ? "+" : "";
+                  return `Erwartet ${v.expected_kwh.toFixed(1)} kWh · tatsächlich ${v.actual_kwh.toFixed(1)} kWh (${sign}${v.difference_kwh.toFixed(1)} kWh)`;
+                },
+              },
+            },
+          },
         },
       }
     );
@@ -1841,29 +1879,37 @@ function monthLabel(monthStr) {
 
 let autarkyMonthsData = [];
 
-// Anders als bei den uebrigen Diagrammen (feste 0-100%- bzw. 0-Start-Achse)
-// wird die Y-Achse hier bewusst dynamisch aus den tatsaechlichen Werten
-// berechnet: eine feste 0-100%-Skala wuerde Unterschiede zwischen Monaten
-// bei ueblicherweise recht aehnlichen Autarkiegraden (z.B. 40-60%) kaum
-// sichtbar machen (fast eine gerade Linie am oberen Rand). Die 0 muss dafuer
-// nicht zwingend auf der Achse auftauchen. Nur fuer die Autarkie-Ansicht -
-// alle anderen Diagramme behalten ihre bisherige Achsenskalierung.
-function autarkyYRange(months) {
-  const values = months
-    .map((m) => m.autarky_percent)
-    .filter((v) => v !== null && v !== undefined);
-  if (values.length === 0) return { min: 0, max: 100 };
-  const dataMin = Math.min(...values);
-  const dataMax = Math.max(...values);
+// Anders als bei den uebrigen Diagrammen (feste 0-Start- bzw. feste
+// Prozent-Achse) wird die Y-Achse bei manchen Ansichten bewusst dynamisch
+// aus den tatsaechlichen Werten berechnet: eine feste Achse wuerde
+// Unterschiede zwischen recht aehnlichen Werten (z.B. 40-60 % Autarkiegrad,
+// oder kleine Prognoseabweichungen) kaum sichtbar machen (fast eine gerade
+// Linie am Rand). "0" muss dafuer nicht zwingend auf der Achse auftauchen.
+// `lowerBound`/`upperBound` begrenzen die Marge nach unten/oben (z.B. 0/100
+// fuer einen Prozentsatz) - weglassen, wenn der Wert (wie eine Abweichung)
+// auch negativ werden kann.
+function dynamicYRange(values, { lowerBound = null, upperBound = null } = {}) {
+  const known = values.filter((v) => v !== null && v !== undefined);
+  if (known.length === 0) return { min: lowerBound ?? 0, max: upperBound ?? 100 };
+  const dataMin = Math.min(...known);
+  const dataMax = Math.max(...known);
   const spread = dataMax - dataMin;
-  // Marge von 10 % der Spannweite, mindestens aber 2 Prozentpunkte (sonst
-  // waere bei nahezu identischen Monatswerten die Marge selbst nahe 0 und
-  // die Linie liefe wieder flach am Rand).
+  // Marge von 10 % der Spannweite, mindestens aber 2 (Prozentpunkte bzw.
+  // Prozent Abweichung) - sonst waere bei nahezu identischen Werten die
+  // Marge selbst nahe 0 und die Linie liefe wieder flach am Rand.
   const margin = Math.max(spread * 0.1, 2);
-  return {
-    min: Math.max(0, Math.floor(dataMin - margin)),
-    max: Math.min(100, Math.ceil(dataMax + margin)),
-  };
+  let min = Math.floor(dataMin - margin);
+  let max = Math.ceil(dataMax + margin);
+  if (lowerBound !== null) min = Math.max(lowerBound, min);
+  if (upperBound !== null) max = Math.min(upperBound, max);
+  return { min, max };
+}
+
+function autarkyYRange(months) {
+  return dynamicYRange(
+    months.map((m) => m.autarky_percent),
+    { lowerBound: 0, upperBound: 100 }
+  );
 }
 
 async function refreshAutarkyChart() {
