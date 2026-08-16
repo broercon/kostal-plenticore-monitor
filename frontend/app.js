@@ -2327,15 +2327,20 @@ const TAB_LOADERS = {
   forecast: refreshForecastTab,
 };
 
+// Autarkiegrad aendert sich nur langsam (Kalendertage/-monate lassen sich
+// ohnehin erst nach ihrem Abschluss endgueltig auswerten, siehe
+// daily_summary.build_autarky_monthly_summary) - taegliches statt
+// 5-minuetiges Neuladen reicht daher aus und erspart dem Backend
+// unnoetig haeufige Rohdaten-Scans fuer den laufenden Tag.
+const AUTARKY_REFRESH_MS = 24 * 60 * 60 * 1000;
+
 // Periodisches Auto-Refresh je Tab, erst gestartet, sobald der Tab zum
 // ersten Mal geoeffnet wurde (siehe setupViewTabs). "overview" hat ein
 // eigenes, schnelleres Intervall (siehe init()) und steht daher nicht hier.
 const TAB_INTERVALS_MS = {
   trend: 5 * 60 * 1000,
   consumption: 5 * 60 * 1000,
-  // Monatswerte aendern sich kaum - der laufende Monat waechst aber mit dem
-  // heutigen Tag mit, daher dasselbe Intervall wie beim Tagesverbrauch.
-  autarky: 5 * 60 * 1000,
+  autarky: AUTARKY_REFRESH_MS,
   // An das Backend-Cache-TTL angeglichen (siehe energy_forecast.CACHE_TTL
   // = 30 Minuten) - eine neue Prognose auf dem Server soll ohne
   // Seiten-Reload zuverlaessig binnen derselben Zeitspanne im Frontend
@@ -2631,10 +2636,10 @@ async function init() {
     refreshSummaryCards().catch(console.error);
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
-  setInterval(() => {
-    refreshPvYieldSummary().catch(console.error);
-    refreshAutarkyToday().catch(console.error);
-  }, 5 * 60 * 1000);
+  setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
+  // Wie beim Autarkie-Tab (siehe AUTARKY_REFRESH_MS): "Autarkiegrad heute"
+  // muss nicht alle 5 Minuten neu berechnet werden, einmal taeglich reicht.
+  setInterval(() => refreshAutarkyToday().catch(console.error), AUTARKY_REFRESH_MS);
 }
 
 init();
