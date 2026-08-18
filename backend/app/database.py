@@ -50,6 +50,7 @@ def init_db() -> None:
     _simplify_forecast_settings()
     _ensure_ac_power_column()
     _ensure_readings_timestamp_index()
+    _ensure_weather_hourly_extra_columns()
 
 
 def _simplify_forecast_settings() -> None:
@@ -128,4 +129,45 @@ def _ensure_readings_timestamp_index() -> None:
         conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_readings_timestamp ON readings (timestamp)"
         )
+
+
+def _ensure_weather_hourly_extra_columns() -> None:
+    """Ergaenzt die Spalten fuer die zusaetzlichen Prognose-Wetterwerte
+    (Bewoelkungsgrad, Wind, Luftfeuchtigkeit, Schneehoehe, Luftdruck - siehe
+    forecast_weather.WeatherPoint) in bestehenden Datenbanken.
+
+    Anders als bei _ensure_ac_power_column() werden hier zusaetzlich ALLE
+    bereits gecachten Zeilen geloescht, statt sie mit NULL fuer die neuen
+    Spalten stehen zu lassen: models.WeatherHourly-Zeilen gelten ab einem
+    bestimmten Alter als "ausgereift" und werden NIE wieder ueberschrieben
+    (siehe dortiger Docstring) - wuerden alte Zeilen dauerhaft ohne diese
+    Werte im Trainingsfenster (TRAINING_DAYS = 365 Tage) verbleiben, wuerde
+    das die gelernten Distanzgewichte (fit_distance_weights()) fuer die
+    neuen Merkmale noch ueber ein volles Jahr hinweg verfaelschen. Die
+    geloeschten Stunden werden beim naechsten Prognoselauf einfach mit
+    vollstaendigen Werten neu von Open-Meteo geholt (siehe weather_cache.py)
+    - einmaliger Mehraufwand, der die Korrektheit des Trainings sicherstellt."""
+    with engine.connect() as conn:
+        columns = {
+            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(weather_hourly)")
+        }
+        new_columns = {
+            "cloud_cover_percent": "FLOAT",
+            "wind_speed_ms": "FLOAT",
+            "humidity_percent": "FLOAT",
+            "snow_depth_m": "FLOAT",
+            "pressure_hpa": "FLOAT",
+        }
+        missing = [name for name in new_columns if name not in columns]
+        # Nur handeln, wenn die Tabelle schon (mit altem Schema) existierte -
+        # bei einer frisch angelegten Tabelle (ueber create_all() oben) sind
+        # die Spalten bereits vorhanden, "columns" waere dann nicht leer und
+        # "missing" leer.
+        if not columns or not missing:
+            return
+        for name, sql_type in new_columns.items():
+            if name in missing:
+                conn.exec_driver_sql(f"ALTER TABLE weather_hourly ADD COLUMN {name} {sql_type}")
+        conn.exec_driver_sql("DELETE FROM weather_hourly")
+        conn.commit()
         conn.commit()

@@ -126,3 +126,65 @@ def test_init_db_adds_missing_ac_power_column_without_losing_data():
     # Erneuter Aufruf (z.B. naechster Container-Neustart) darf nicht erneut
     # versuchen, die Spalte hinzuzufuegen (waere ein SQL-Fehler).
     init_db()
+
+
+def test_init_db_adds_weather_hourly_columns_and_clears_stale_cache():
+    """Simuliert eine Bestandsdatenbank von VOR den zusaetzlichen
+    Prognose-Wetterwerten (Bewoelkung/Wind/Feuchte/Schneehoehe/Luftdruck):
+    weather_hourly existiert bereits, aber nur mit den urspruenglichen vier
+    Spalten. init_db() muss die fehlenden Spalten ergaenzen UND die
+    bestehenden (unvollstaendigen) Zeilen loeschen, statt sie mit NULL fuer
+    die neuen Spalten stehen zu lassen - sonst wuerden sie das Training
+    dauerhaft verfaelschen (siehe database._ensure_weather_hourly_extra_columns)."""
+    Base.metadata.drop_all(bind=engine)
+    with engine.connect() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE weather_hourly (
+                latitude FLOAT NOT NULL,
+                longitude FLOAT NOT NULL,
+                timestamp DATETIME NOT NULL,
+                shortwave_w_m2 FLOAT NOT NULL,
+                direct_w_m2 FLOAT NOT NULL,
+                diffuse_w_m2 FLOAT NOT NULL,
+                temperature_c FLOAT NOT NULL,
+                fetched_at DATETIME NOT NULL,
+                PRIMARY KEY (latitude, longitude, timestamp)
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO weather_hourly "
+            "(latitude, longitude, timestamp, shortwave_w_m2, direct_w_m2, "
+            "diffuse_w_m2, temperature_c, fetched_at) VALUES "
+            "(52.52, 13.41, '2026-01-01 12:00:00', 500.0, 350.0, 150.0, 20.0, "
+            "'2026-01-01 12:30:00')"
+        )
+        conn.commit()
+
+    columns_before = {
+        row[1] for row in engine.connect().exec_driver_sql("PRAGMA table_info(weather_hourly)")
+    }
+    assert "cloud_cover_percent" not in columns_before
+
+    init_db()
+
+    columns_after = {
+        row[1] for row in engine.connect().exec_driver_sql("PRAGMA table_info(weather_hourly)")
+    }
+    assert {
+        "cloud_cover_percent",
+        "wind_speed_ms",
+        "humidity_percent",
+        "snow_depth_m",
+        "pressure_hpa",
+    } <= columns_after
+
+    with engine.connect() as conn:
+        remaining = conn.exec_driver_sql("SELECT COUNT(*) FROM weather_hourly").scalar()
+    assert remaining == 0, "alte, unvollstaendige Zeilen muessen geloescht werden"
+
+    # Erneuter Aufruf (z.B. naechster Container-Neustart) darf nicht erneut
+    # versuchen, die Spalten hinzuzufuegen (waere ein SQL-Fehler) und auch
+    # keine (inzwischen ja vollstaendigen) Zeilen mehr loeschen.
+    init_db()
