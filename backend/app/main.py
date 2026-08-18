@@ -30,6 +30,7 @@ from .daily_report import (
     daily_report_scheduler,
     generate_and_send_daily_report,
     get_daily_report_status,
+    next_run_at,
 )
 from .daily_report_config import (
     InvalidReportTime,
@@ -41,7 +42,7 @@ from .forecast_config import (
     get_config as get_forecast_config,
     update_config as update_forecast_config,
 )
-from .energy_forecast import forecast_service
+from .energy_forecast import forecast_service, refresh_forecast_for_new_day
 from .forecast_evaluation import get_forecast_accuracy, get_yesterday_hourly_comparison
 from .daily_summary import (
     build_autarky_monthly_summary,
@@ -137,10 +138,14 @@ async def lifespan(app: FastAPI):
     daily_report_scheduler.start()
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
     forecast_task = asyncio.create_task(_refresh_forecast_periodically())
+    forecast_midnight_task = asyncio.create_task(_refresh_forecast_at_midnight())
     yield
     auto_import_task.cancel()
     forecast_task.cancel()
-    await asyncio.gather(auto_import_task, forecast_task, return_exceptions=True)
+    forecast_midnight_task.cancel()
+    await asyncio.gather(
+        auto_import_task, forecast_task, forecast_midnight_task, return_exceptions=True
+    )
     await poller.stop()
     await daily_report_scheduler.stop()
 
@@ -155,6 +160,32 @@ async def _refresh_forecast_periodically() -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Automatische PV-Prognose fehlgeschlagen")
         await asyncio.sleep(30 * 60)
+
+
+async def _refresh_forecast_at_midnight() -> None:
+    """Zusaetzlich zum 30-Minuten-Takt (_refresh_forecast_periodically) wird
+    die Prognose garantiert kurz nach Mitternacht (00:01 lokale Zeit, siehe
+    settings.timezone_name) neu berechnet - ueber refresh_forecast_for_new_day(),
+    die den Cache explizit invalidiert statt auf dessen normalen Ablauf zu
+    warten. Hintergrund: im Betrieb blieb "heute"/"morgen" im Dashboard nach
+    einem Tageswechsel einmal laenger auf dem Vortag stehen, als es allein
+    durch den 30-Minuten-Takt zu erklaeren war - dieser explizite,
+    tageswechselbezogene Trigger ist ein zusaetzliches Sicherheitsnetz dafuer,
+    unabhaengig von der genauen Ursache."""
+    while True:
+        now = datetime.now(timezone.utc)
+        target = next_run_at(now, 0, 1, settings.timezone_name)
+        wait_seconds = max(0.0, (target - now).total_seconds())
+        try:
+            await asyncio.sleep(wait_seconds)
+        except asyncio.CancelledError:
+            raise
+        try:
+            await refresh_forecast_for_new_day()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Mitternaechtliche PV-Prognose-Aktualisierung fehlgeschlagen")
 
 
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)

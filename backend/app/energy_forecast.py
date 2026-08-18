@@ -784,3 +784,16 @@ class ForecastService:
 
 
 forecast_service = ForecastService()
+
+
+async def refresh_forecast_for_new_day() -> dict:
+    """Erzwingt eine sofortige Neuberechnung der Prognose, unabhaengig davon,
+    wie frisch der aktuelle Cache-Eintrag noch ist (siehe ForecastService.get()/
+    CACHE_TTL = 30 Minuten). Fuer main.py's taeglichen Mitternachts-Trigger
+    (_refresh_forecast_at_midnight) gedacht: ohne invalidate() wuerde ein
+    kurz vor Mitternacht erfolgreich gecachter Stand bis zu 30 Minuten in den
+    neuen Tag hinein weiterverwendet, sodass "heute"/"morgen" im Dashboard
+    (siehe frontend refreshForecast()) noch den Vortag zeigen wuerden - genau
+    dieses Verhalten wurde nach einem Cache-Haenger im Betrieb beobachtet."""
+    forecast_service.invalidate()
+    return await forecast_service.get()

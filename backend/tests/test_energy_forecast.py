@@ -1,6 +1,7 @@
 """Tests fuer das datengetriebene PV-Prognosemodell."""
 from __future__ import annotations
 
+import asyncio
 import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -23,6 +24,7 @@ from app.energy_forecast import (
     forecast_weather_for_local_days,
     load_hourly_pv_history,
     predict_power,
+    refresh_forecast_for_new_day,
     select_model,
 )
 from app.database import SessionLocal
@@ -337,6 +339,51 @@ def test_summarize_and_empty_result_report_configured_freeze_time(monkeypatch):
     assert result["freeze_time"] == "21:30"
 
     assert _empty_result("keine Daten")["freeze_time"] == "21:30"
+
+
+def test_refresh_forecast_for_new_day_forces_recompute_despite_fresh_cache(monkeypatch):
+    """Nach einem im Betrieb beobachteten Cache-Haenger (das Dashboard zeigte
+    ueber einen Tageswechsel hinweg weiter den Vortag) gibt es in main.py
+    einen taeglichen 00:01-Trigger (_refresh_forecast_at_midnight), der
+    ueber diese Funktion die Prognose garantiert neu berechnet - anders als
+    ein normaler forecast_service.get()-Aufruf, der einen noch frischen
+    Cache-Eintrag (siehe CACHE_TTL = 30 Minuten) unveraendert zurueckgeben
+    wuerde."""
+    import app.energy_forecast as module
+
+    call_count = {"n": 0}
+
+    async def fake_build_forecast():
+        call_count["n"] += 1
+        return {
+            "available": False,
+            "message": f"lauf {call_count['n']}",
+            "generated_at": datetime.now(timezone.utc),
+            "training_start": None,
+            "training_end": None,
+            "training_samples": 0,
+            "weather_source": "Open-Meteo",
+            "days": [],
+            "hours": [],
+            "freeze_time": "22:00",
+        }
+
+    monkeypatch.setattr(module, "build_forecast", fake_build_forecast)
+    # Einen gerade erst gecachten (also noch frischen) Stand simulieren -
+    # ein normaler .get()-Aufruf wuerde diesen fuer die naechsten 30 Minuten
+    # unveraendert weiterreichen, siehe ForecastService.get().
+    monkeypatch.setattr(
+        module.forecast_service, "_cached", {"available": False, "message": "alt"}
+    )
+    monkeypatch.setattr(module.forecast_service, "_cached_at", datetime.now(timezone.utc))
+
+    unchanged = asyncio.run(module.forecast_service.get())
+    assert unchanged["message"] == "alt", "frischer Cache wird normalerweise nicht neu berechnet"
+    assert call_count["n"] == 0
+
+    result = asyncio.run(refresh_forecast_for_new_day())
+    assert call_count["n"] == 1, "refresh_forecast_for_new_day() muss den Cache-Ablauf erzwingen"
+    assert result["message"] == "lauf 1"
 
 
 def test_forecast_endpoint_requires_login_and_returns_service_result(client, monkeypatch):
