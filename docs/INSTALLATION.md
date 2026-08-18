@@ -52,7 +52,14 @@ nicht als Zeichenketten.
 Die Standortkoordinaten lassen sich im Dashboard unter **Admin →
 PV-Prognose** pflegen. Weitere technische Anlagendaten sind nicht nötig: Die
 App lernt die Leistung und den zeitlichen Verlauf jedes Wechselrichters aus
-seinen historischen PV-Messwerten und den historischen Wetterdaten.
+seinen historischen PV-Messwerten und den historischen Wetterdaten (Open-
+Meteo, `energy_forecast.py`). Dabei fließen neun stündliche Wetterwerte
+ein: Global-, Direkt- und Diffusstrahlung, Lufttemperatur, Bewölkungsgrad,
+Windgeschwindigkeit (nur indirekt über eine geschätzte Modultemperatur,
+siehe `_estimate_cell_temperature_c`), Luftfeuchte, Schneehöhe und
+Luftdruck. Die relative Gewichtung dieser Werte in der Vorhersage wird bei
+ausreichender Historie automatisch je Wechselrichter gelernt (siehe
+`fit_distance_weights`), statt fest vorgegeben zu sein.
 
 Die Anwendung erzeugt die Prognose auch ohne geöffnetes Dashboard regelmäßig
 im Hintergrund. Sobald die jeweiligen Stunden vorbei sind, werden Prognose

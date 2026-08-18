@@ -6,6 +6,8 @@ import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.aggregation import pure_pv_power_w
 from app.energy_forecast import (
     BACKTEST_MIN_SAMPLES,
@@ -525,6 +527,84 @@ def test_fit_distance_weights_prioritizes_the_feature_that_predicts_power():
         samples.append(TrainingPoint(weather, radiation * 5.0))
 
     weights = fit_distance_weights(samples)
+    radiation_weight = weights.ghi + weights.direct + weights.diffuse
+    assert radiation_weight > weights.hour * 3
+    assert radiation_weight > weights.day * 3
+    assert radiation_weight > weights.temperature * 3
+
+
+def test_estimate_cell_temperature_matches_faiman_model():
+    """Faiman-Modell: T_zelle = T_luft + G / (U0 + U1 * Wind). Direkter
+    Nachrechnung mit den in energy_forecast.py verwendeten Standard-
+    koeffizienten (U0=25.0, U1=6.84), um Tippfehler in der Formel selbst
+    aufzudecken."""
+    import app.energy_forecast as module
+
+    point = WeatherPoint(
+        timestamp=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+        shortwave_w_m2=800.0,
+        direct_w_m2=560.0,
+        diffuse_w_m2=240.0,
+        temperature_c=25.0,
+        wind_speed_ms=2.0,
+    )
+    expected = 25.0 + 800.0 / (25.0 + 6.84 * 2.0)
+    assert module._estimate_cell_temperature_c(point) == pytest.approx(expected)
+
+
+def test_estimate_cell_temperature_is_cooled_by_wind():
+    """Mehr Wind muss (bei sonst gleichen Werten) zu einer niedrigeren
+    geschaetzten Zelltemperatur fuehren - der eigentliche physikalische Sinn
+    dieses Merkmals (siehe DistanceWeights.cell_temperature)."""
+    import app.energy_forecast as module
+
+    calm = WeatherPoint(
+        timestamp=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+        shortwave_w_m2=800.0,
+        direct_w_m2=560.0,
+        diffuse_w_m2=240.0,
+        temperature_c=25.0,
+        wind_speed_ms=0.0,
+    )
+    windy = WeatherPoint(
+        timestamp=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
+        shortwave_w_m2=800.0,
+        direct_w_m2=560.0,
+        diffuse_w_m2=240.0,
+        temperature_c=25.0,
+        wind_speed_ms=8.0,
+    )
+    assert module._estimate_cell_temperature_c(windy) < module._estimate_cell_temperature_c(calm)
+
+
+def test_fit_distance_weights_still_learns_when_one_new_feature_is_constant():
+    """Praxisfall: an vielen Standorten/in vielen Zeitraeumen gibt es gar
+    keinen Schnee - snow_depth_m ist dann ueber die GESAMTE Trainingshistorie
+    konstant 0. Das darf (anders als vor der Umstellung auf spaltenweises
+    Maskieren) nicht mehr dazu fuehren, dass ueberhaupt nichts gelernt wird -
+    die weiterhin streuende Strahlung soll trotzdem klar staerker gewichtet
+    werden als Stunde/Tag/Temperatur, genau wie im Test ohne die neuen,
+    teils konstanten Merkmale."""
+    rng = random.Random(7)
+    samples = []
+    for _ in range(80):
+        radiation = rng.uniform(50, 900)
+        hour = rng.uniform(5, 19)
+        day_offset = rng.randint(0, 300)
+        temperature = rng.uniform(-10, 35)
+        weather = WeatherPoint(
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc)
+            + timedelta(days=day_offset, hours=hour),
+            shortwave_w_m2=radiation,
+            direct_w_m2=radiation * 0.7 + rng.uniform(-5, 5),
+            diffuse_w_m2=radiation * 0.3 + rng.uniform(-5, 5),
+            temperature_c=temperature,
+            snow_depth_m=0.0,  # ueberall und immer schneefrei
+        )
+        samples.append(TrainingPoint(weather, radiation * 5.0))
+
+    weights = fit_distance_weights(samples)
+    assert weights.snow_depth == 0.0, "konstantes Merkmal darf keine Wichtigkeit lernen"
     radiation_weight = weights.ghi + weights.direct + weights.diffuse
     assert radiation_weight > weights.hour * 3
     assert radiation_weight > weights.day * 3
