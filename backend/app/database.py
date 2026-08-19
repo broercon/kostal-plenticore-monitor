@@ -1,7 +1,8 @@
 """SQLite-Anbindung ueber SQLAlchemy."""
 from __future__ import annotations
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import settings
@@ -37,6 +38,38 @@ class Base(DeclarativeBase):
     pass
 
 
+def _table_columns(conn: Connection, table_name: str) -> set[str]:
+    """Spaltennamen einer Tabelle - dialektunabhaengig ueber SQLAlchemys
+    eigene Inspector-API statt des SQLite-spezifischen "PRAGMA
+    table_info(...)". Funktioniert unveraendert unter SQLite, PostgreSQL,
+    SQL Server etc., falls die App irgendwann auf eine andere Datenbank
+    umzieht - dann muessten nur noch die CREATE/ALTER-Statements selbst
+    dialektspezifisch angepasst werden, nicht mehr die Existenzpruefungen.
+    Liefert ein leeres Set, wenn die Tabelle noch gar nicht existiert."""
+    inspector = inspect(conn)
+    if not inspector.has_table(table_name):
+        return set()
+    return {column["name"] for column in inspector.get_columns(table_name)}
+
+
+def _table_exists(conn: Connection, table_name: str) -> bool:
+    """Dialektunabhaengige Alternative zu "SELECT name FROM sqlite_master
+    WHERE type='table'" (siehe _table_columns)."""
+    return inspect(conn).has_table(table_name)
+
+
+def _index_exists(conn: Connection, table_name: str, index_name: str) -> bool:
+    """Dialektunabhaengige Alternative zu "CREATE INDEX IF NOT EXISTS":
+    SQLite und PostgreSQL kennen dieses IF-NOT-EXISTS-Suffix zwar beide,
+    SQL Server (T-SQL) jedoch nicht - dort muesste man den Index ueber
+    sys.indexes abfragen. inspect(conn).get_indexes(...) funktioniert
+    ueberall gleich."""
+    if not inspect(conn).has_table(table_name):
+        return False
+    existing = {index["name"] for index in inspect(conn).get_indexes(table_name)}
+    return index_name in existing
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  (registriert die Modelle an Base)
 
@@ -63,9 +96,7 @@ def _simplify_forecast_settings() -> None:
     unter Erhalt dieser drei Werte neu aufgebaut.
     """
     with engine.connect() as conn:
-        columns = {
-            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(forecast_settings)")
-        }
+        columns = _table_columns(conn, "forecast_settings")
         legacy = {"location_name", "forecast_days", "system_loss_percent"}
         if columns & legacy:
             conn.exec_driver_sql("DROP TABLE IF EXISTS forecast_settings_v2")
@@ -93,13 +124,7 @@ def _simplify_forecast_settings() -> None:
                 "ALTER TABLE forecast_settings_v2 RENAME TO forecast_settings"
             )
 
-        tables = {
-            row[0]
-            for row in conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-        if "pv_array_settings" in tables:
+        if _table_exists(conn, "pv_array_settings"):
             conn.exec_driver_sql("DROP TABLE pv_array_settings")
         conn.commit()
 
@@ -112,7 +137,7 @@ def _ensure_ac_power_column() -> None:
     Tabelle neu anlegen zu muessen; bestehende Zeilen bekommen NULL fuer die
     neue Spalte (siehe README fuer die Auswirkung auf die Berechnung)."""
     with engine.connect() as conn:
-        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(readings)")}
+        columns = _table_columns(conn, "readings")
         if "ac_power_w" not in columns:
             conn.exec_driver_sql("ALTER TABLE readings ADD COLUMN ac_power_w FLOAT")
             conn.commit()
@@ -122,13 +147,13 @@ def _ensure_readings_timestamp_index() -> None:
     """Ergaenzt einen Index rein auf readings.timestamp (ohne device_id),
     falls er noch fehlt - fuer Bestandsdatenbanken von vor dieser Aenderung
     (bei einer frisch angelegten Tabelle ist er bereits ueber
-    models.Reading.__table_args__ vorhanden). CREATE INDEX IF NOT EXISTS ist
-    in SQLite direkt idempotent, eine eigene Existenzpruefung wie bei
-    _ensure_ac_power_column ist hier nicht noetig."""
+    models.Reading.__table_args__ vorhanden)."""
     with engine.connect() as conn:
-        conn.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_readings_timestamp ON readings (timestamp)"
-        )
+        if not _index_exists(conn, "readings", "ix_readings_timestamp"):
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_readings_timestamp ON readings (timestamp)"
+            )
+            conn.commit()
 
 
 def _ensure_weather_hourly_extra_columns() -> None:
@@ -148,9 +173,7 @@ def _ensure_weather_hourly_extra_columns() -> None:
     vollstaendigen Werten neu von Open-Meteo geholt (siehe weather_cache.py)
     - einmaliger Mehraufwand, der die Korrektheit des Trainings sicherstellt."""
     with engine.connect() as conn:
-        columns = {
-            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(weather_hourly)")
-        }
+        columns = _table_columns(conn, "weather_hourly")
         new_columns = {
             "cloud_cover_percent": "FLOAT",
             "wind_speed_ms": "FLOAT",
@@ -169,5 +192,4 @@ def _ensure_weather_hourly_extra_columns() -> None:
             if name in missing:
                 conn.exec_driver_sql(f"ALTER TABLE weather_hourly ADD COLUMN {name} {sql_type}")
         conn.exec_driver_sql("DELETE FROM weather_hourly")
-        conn.commit()
         conn.commit()
