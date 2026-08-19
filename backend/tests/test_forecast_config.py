@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from app.config import InverterConfig, settings
-from app.database import _simplify_forecast_settings, engine
 from app.forecast_config import get_config, update_config
 
 from .conftest import make_user
@@ -116,39 +115,3 @@ def test_active_forecast_requires_coordinates(client):
     assert response.status_code == 400
     assert "Breiten- und Laengengrad" in response.json()["detail"]
 
-
-def test_old_technical_columns_and_array_table_are_removed(client):
-    with engine.connect() as connection:
-        connection.exec_driver_sql(
-            "ALTER TABLE forecast_settings ADD COLUMN location_name VARCHAR(128)"
-        )
-        connection.exec_driver_sql(
-            "ALTER TABLE forecast_settings ADD COLUMN forecast_days INTEGER"
-        )
-        connection.exec_driver_sql(
-            "ALTER TABLE forecast_settings ADD COLUMN system_loss_percent FLOAT"
-        )
-        connection.exec_driver_sql(
-            "CREATE TABLE pv_array_settings (id INTEGER PRIMARY KEY)"
-        )
-        connection.commit()
-
-    update_config({"enabled": True, "latitude": 50.0, "longitude": 8.0})
-    _simplify_forecast_settings()
-
-    with engine.connect() as connection:
-        columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(forecast_settings)"
-            )
-        }
-        tables = {
-            row[0]
-            for row in connection.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-    assert columns == {"id", "enabled", "latitude", "longitude", "updated_at"}
-    assert "pv_array_settings" not in tables
-    assert get_config()["latitude"] == 50.0

@@ -52,12 +52,6 @@ def _table_columns(conn: Connection, table_name: str) -> set[str]:
     return {column["name"] for column in inspector.get_columns(table_name)}
 
 
-def _table_exists(conn: Connection, table_name: str) -> bool:
-    """Dialektunabhaengige Alternative zu "SELECT name FROM sqlite_master
-    WHERE type='table'" (siehe _table_columns)."""
-    return inspect(conn).has_table(table_name)
-
-
 def _index_exists(conn: Connection, table_name: str, index_name: str) -> bool:
     """Dialektunabhaengige Alternative zu "CREATE INDEX IF NOT EXISTS":
     SQLite und PostgreSQL kennen dieses IF-NOT-EXISTS-Suffix zwar beide,
@@ -80,57 +74,23 @@ def init_db() -> None:
     # Aufwand dafuer (noch) nicht, deshalb kleine manuelle Migrationen direkt
     # hier (siehe _ensure_ac_power_column).
     Base.metadata.create_all(bind=engine)
-    _simplify_forecast_settings()
     _ensure_ac_power_column()
     _ensure_readings_timestamp_index()
     _ensure_weather_hourly_extra_columns()
 
 
-def _simplify_forecast_settings() -> None:
-    """Entfernt die verworfenen technischen Prognosefelder aus alten DBs.
-
-    Fruehe Versionen des Feature-Branches speicherten Moduldaten, kWp,
-    Neigung und pauschale Verluste. Die datengetriebene Prognose braucht nur
-    Aktivierung und Koordinaten. SQLite kann Spalten nicht portabel einzeln
-    entfernen, deshalb wird nur bei erkanntem Altschema die kleine Tabelle
-    unter Erhalt dieser drei Werte neu aufgebaut.
-    """
-    with engine.connect() as conn:
-        columns = _table_columns(conn, "forecast_settings")
-        legacy = {"location_name", "forecast_days", "system_loss_percent"}
-        if columns & legacy:
-            conn.exec_driver_sql("DROP TABLE IF EXISTS forecast_settings_v2")
-            conn.exec_driver_sql(
-                """
-                CREATE TABLE forecast_settings_v2 (
-                    id INTEGER NOT NULL PRIMARY KEY,
-                    enabled BOOLEAN NOT NULL,
-                    latitude FLOAT,
-                    longitude FLOAT,
-                    updated_at DATETIME NOT NULL
-                )
-                """
-            )
-            conn.exec_driver_sql(
-                """
-                INSERT INTO forecast_settings_v2
-                    (id, enabled, latitude, longitude, updated_at)
-                SELECT id, enabled, latitude, longitude, updated_at
-                FROM forecast_settings
-                """
-            )
-            conn.exec_driver_sql("DROP TABLE forecast_settings")
-            conn.exec_driver_sql(
-                "ALTER TABLE forecast_settings_v2 RENAME TO forecast_settings"
-            )
-
-        if _table_exists(conn, "pv_array_settings"):
-            conn.exec_driver_sql("DROP TABLE pv_array_settings")
-        conn.commit()
+# Aufraeumregel fuer die Funktionen unten: eine Migration ist hier nur so
+# lange noetig, wie es realistischerweise noch eine Bestandsdatenbank ohne
+# das jeweilige Schema-Merkmal geben kann. Bei dieser Einzelplatz-App reicht
+# dafuer die eigene Update-Historie als Anhaltspunkt - etwa 6 Monate nach
+# Einfuehrung (also lange nach dem naechsten "docker compose up -d --build")
+# kann die zugehoerige Migration entfernt werden. Siehe docs/DEVELOPMENT.md
+# fuer die ausfuehrliche Begruendung. Einfuehrungsdatum je Migration steht
+# im jeweiligen Docstring.
 
 
 def _ensure_ac_power_column() -> None:
-    """Ergaenzt die Spalte readings.ac_power_w, falls sie noch fehlt (z.B.
+    """Eingefuehrt: 2026-07-13. Ergaenzt die Spalte readings.ac_power_w, falls sie noch fehlt (z.B.
     Bestandsdatenbank von vor diesem Update). Bei einer frisch angelegten
     Tabelle (ueber create_all() oben) ist die Spalte bereits vorhanden - dann
     passiert hier nichts. SQLite unterstuetzt ADD COLUMN direkt, ohne die
@@ -144,7 +104,7 @@ def _ensure_ac_power_column() -> None:
 
 
 def _ensure_readings_timestamp_index() -> None:
-    """Ergaenzt einen Index rein auf readings.timestamp (ohne device_id),
+    """Eingefuehrt: 2026-07-19. Ergaenzt einen Index rein auf readings.timestamp (ohne device_id),
     falls er noch fehlt - fuer Bestandsdatenbanken von vor dieser Aenderung
     (bei einer frisch angelegten Tabelle ist er bereits ueber
     models.Reading.__table_args__ vorhanden)."""
@@ -157,7 +117,7 @@ def _ensure_readings_timestamp_index() -> None:
 
 
 def _ensure_weather_hourly_extra_columns() -> None:
-    """Ergaenzt die Spalten fuer die zusaetzlichen Prognose-Wetterwerte
+    """Eingefuehrt: 2026-08-19. Ergaenzt die Spalten fuer die zusaetzlichen Prognose-Wetterwerte
     (Bewoelkungsgrad, Wind, Luftfeuchtigkeit, Schneehoehe, Luftdruck - siehe
     forecast_weather.WeatherPoint) in bestehenden Datenbanken.
 

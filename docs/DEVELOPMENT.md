@@ -12,6 +12,38 @@
 - **Datenbank**: SQLite-Datei, per Docker-Volume persistiert.
 - Alles läuft in einem einzigen Container über Docker Compose.
 
+## Datenbank-Migrationen
+
+`init_db()` (`backend/app/database.py`) legt über `Base.metadata.create_all()`
+fehlende Tabellen an, ändert aber **keine** bestehenden Tabellen ab. Kommt mit
+einem Update ein neues Feld zu einem bestehenden Modell hinzu (z.B.
+`readings.ac_power_w`), übernimmt das eine kleine, manuell geschriebene
+Migrationsfunktion direkt in `database.py` (`_ensure_ac_power_column()` als
+Vorlage). Ein Werkzeug wie Alembic lohnt sich für dieses Einzelplatz-Projekt
+(noch) nicht.
+
+Für die Existenzprüfungen ("hat die Tabelle/Spalte/der Index das schon?")
+verwenden diese Funktionen SQLAlchemys eigene, dialektunabhängige
+`sqlalchemy.inspect(conn)`-API (`get_columns()`, `get_indexes()`,
+`has_table()`) statt der SQLite-spezifischen `PRAGMA table_info(...)`. Damit
+liefe die reine Prüfung unverändert mit, falls die App irgendwann auf
+PostgreSQL oder SQL Server umzieht – nur die eigentlichen `CREATE`/`ALTER`-
+Statements müssten dann dialektspezifisch angepasst werden.
+
+**Migrationen werden nicht für immer mitgeschleppt.** Jede Migrationsfunktion
+trägt in ihrem Docstring das Einführungsdatum. Etwa 6 Monate nach diesem
+Datum kann man davon ausgehen, dass die eine (oder wenigen) betriebenen
+Instanz(en) dieser App längst darüber gelaufen sind – die Migration kann
+dann ersatzlos entfernt werden, statt unbegrenzt Code für ein Altschema zu
+pflegen, das niemand mehr hat. Bei einem Update, das eine Migrationsfunktion
+entfernt, immer auch den zugehörigen Test in `backend/tests/` mit entfernen.
+Ausnahme: Migrationen, die eine Tabelle bereits vor ihrer ersten
+Veröffentlichung (Merge nach `master`) wieder geändert haben, können sofort
+entfernt werden – dann gab es nie eine reale Installation mit dem Altschema
+(siehe `_simplify_forecast_settings`, entfernt im selben Zug wie diese
+Dokumentation, weil das betroffene Schema nur für wenige Stunden vor dem
+ersten Release existierte).
+
 ## Tests
 
 Das Projekt hat zwei getrennte, unabhängig lauffähige Test-Suites: die
