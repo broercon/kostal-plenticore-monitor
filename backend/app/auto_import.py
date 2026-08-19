@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 from .config import InverterConfig, settings
 from .daily_summary import invalidate_energy_cache
+from .energy_forecast import invalidate_hourly_pv_cache
 from .import_logdata import _download, import_rows, parse_logdata
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,16 @@ async def _run_import_body() -> None:
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "Konnte Energie-Zeitraum-Cache nach Import fuer %s nicht invalidieren",
+                        cfg.name,
+                    )
+                try:
+                    invalidate_hourly_pv_cache(
+                        date.fromisoformat(result["range_begin"]),
+                        date.fromisoformat(result["range_end"]),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Konnte stuendlichen PV-Historie-Cache nach Import fuer %s nicht invalidieren",
                         cfg.name,
                     )
         _state["results"] = results

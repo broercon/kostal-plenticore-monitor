@@ -24,6 +24,7 @@ from app.energy_forecast import (
     build_training_data,
     fit_distance_weights,
     forecast_weather_for_local_days,
+    invalidate_hourly_pv_cache,
     load_hourly_pv_history,
     predict_power,
     refresh_forecast_for_new_day,
@@ -31,7 +32,7 @@ from app.energy_forecast import (
 )
 from app.database import SessionLocal
 from app.forecast_weather import WeatherPoint
-from app.models import Reading
+from app.models import HourlyPvCache, Reading
 
 from .conftest import make_user
 
@@ -111,6 +112,132 @@ def test_hourly_history_uses_pure_pv_per_inverter(client):
 
     result = load_hourly_pv_history(start, start + timedelta(hours=1))
     assert result["wr1"][start + timedelta(hours=1)] == 3500.0
+
+
+def test_hourly_history_caches_closed_hours_and_ignores_later_raw_changes(client):
+    """Eine ABGESCHLOSSENE Stunde (weit in der Vergangenheit) wird beim
+    ersten Aufruf in hourly_pv_cache abgelegt (siehe HourlyPvCache) und bei
+    jedem weiteren Aufruf aus dem Cache bedient - eine nachtraegliche
+    Aenderung an den Rohmesswerten OHNE expliziten invalidate_hourly_pv_cache()
+    -Aufruf darf sich deshalb (bewusst) nicht mehr auswirken."""
+    start = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add(
+            Reading(
+                device_id="wr1",
+                device_name="WR 1",
+                timestamp=start + timedelta(minutes=10),
+                pv_power_w=4000.0,
+                battery_power_w=0.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    target_hour = start + timedelta(hours=1)
+    result = load_hourly_pv_history(start, target_hour)
+    assert result["wr1"][target_hour] == 4000.0
+
+    db = SessionLocal()
+    try:
+        cached = db.get(HourlyPvCache, ("wr1", target_hour))
+        assert cached is not None
+        assert cached.avg_power_w == 4000.0
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        row = db.query(Reading).filter_by(device_id="wr1").one()
+        row.pv_power_w = 9999.0
+        db.commit()
+    finally:
+        db.close()
+
+    result_again = load_hourly_pv_history(start, target_hour)
+    assert result_again["wr1"][target_hour] == 4000.0
+
+
+def test_invalidate_hourly_pv_cache_forces_recompute(client):
+    start = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add(
+            Reading(
+                device_id="wr1",
+                device_name="WR 1",
+                timestamp=start + timedelta(minutes=10),
+                pv_power_w=4000.0,
+                battery_power_w=0.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    target_hour = start + timedelta(hours=1)
+    load_hourly_pv_history(start, target_hour)
+
+    db = SessionLocal()
+    try:
+        row = db.query(Reading).filter_by(device_id="wr1").one()
+        row.pv_power_w = 9999.0
+        db.commit()
+    finally:
+        db.close()
+
+    invalidate_hourly_pv_cache(start.date(), start.date())
+
+    result = load_hourly_pv_history(start, target_hour)
+    assert result["wr1"][target_hour] == 9999.0
+
+
+def test_hourly_history_does_not_cache_the_still_running_hour(client, monkeypatch):
+    """Die aktuell noch laufende Stunde (und alles danach) darf NIE in
+    hourly_pv_cache landen - ihr Wert kann sich noch aendern, solange
+    weitere Messwerte innerhalb dieser Stunde eintreffen."""
+    import app.energy_forecast as energy_forecast_module
+
+    frozen_now = datetime(2026, 6, 1, 12, 30, tzinfo=timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return frozen_now.replace(tzinfo=None)
+            return frozen_now.astimezone(tz)
+
+    monkeypatch.setattr(energy_forecast_module, "datetime", _FrozenDatetime)
+
+    start = frozen_now.replace(minute=0, second=0, microsecond=0)
+    db = SessionLocal()
+    try:
+        db.add(
+            Reading(
+                device_id="wr1",
+                device_name="WR 1",
+                timestamp=start + timedelta(minutes=5),
+                pv_power_w=4000.0,
+                battery_power_w=0.0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    result = load_hourly_pv_history(start, start + timedelta(hours=1))
+    # Die laufende Stunde (12:00-13:00, Bucket-Label 13:00) hat schon einen
+    # Teil-Messwert und wird deshalb ganz normal im Rueckgabewert geliefert -
+    # nur eben NICHT dauerhaft gecacht (naechster Test-Teil).
+    assert result["wr1"][start + timedelta(hours=1)] == 4000.0
+
+    db = SessionLocal()
+    try:
+        assert db.get(HourlyPvCache, ("wr1", start + timedelta(hours=1))) is None
+    finally:
+        db.close()
 
 
 def test_prediction_learns_output_without_technical_plant_data():

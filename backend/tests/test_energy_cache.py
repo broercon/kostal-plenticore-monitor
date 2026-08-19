@@ -219,6 +219,17 @@ def test_import_invalidates_cache_only_when_rows_actually_changed(client, monkey
     monkeypatch.setattr(
         auto_import, "invalidate_energy_cache", lambda start, end: invalidated.append((start, end))
     )
+    # Derselbe Import muss auch den stuendlichen PV-Historie-Cache (siehe
+    # energy_forecast.HourlyPvCache) fuer denselben Bereich invalidieren -
+    # sonst wuerden /api/forecast/accuracy und /api/forecast/yesterday nach
+    # einem rueckwirkenden Logdaten-Import weiterhin die (jetzt veralteten)
+    # gecachten Stundenwerte liefern.
+    hourly_invalidated: list[tuple] = []
+    monkeypatch.setattr(
+        auto_import,
+        "invalidate_hourly_pv_cache",
+        lambda start, end: hourly_invalidated.append((start, end)),
+    )
 
     class _Cfg:
         id = "wr1"
@@ -243,6 +254,7 @@ def test_import_invalidates_cache_only_when_rows_actually_changed(client, monkey
     auto_import._state["running"] = True
     asyncio.run(auto_import._run_import_body())
     assert invalidated == []  # nichts geaendert -> Cache bleibt unangetastet
+    assert hourly_invalidated == []
 
     async def fake_import_with_new_rows(cfg):
         return {
@@ -261,3 +273,4 @@ def test_import_invalidates_cache_only_when_rows_actually_changed(client, monkey
     auto_import._state["running"] = True
     asyncio.run(auto_import._run_import_body())
     assert invalidated == [(date(2026, 2, 1), date(2026, 2, 5))]
+    assert hourly_invalidated == [(date(2026, 2, 1), date(2026, 2, 5))]
