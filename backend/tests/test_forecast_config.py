@@ -114,4 +114,3 @@ def test_active_forecast_requires_coordinates(client):
     )
     assert response.status_code == 400
     assert "Breiten- und Laengengrad" in response.json()["detail"]
-
