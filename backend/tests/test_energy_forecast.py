@@ -194,6 +194,34 @@ def test_invalidate_hourly_pv_cache_forces_recompute(client):
     assert result["wr1"][target_hour] == 9999.0
 
 
+def test_invalidate_hourly_pv_cache_uses_local_day_boundaries(client):
+    """Ein lokaler Importtag beginnt in Europe/Berlin bereits am Vorabend
+    in UTC. Auch dessen erste Cache-Stunde muss invalidiert werden."""
+    local_day = date(2026, 6, 1)
+    first_local_hour_end_utc = datetime(2026, 5, 31, 23, tzinfo=timezone.utc)
+    db = SessionLocal()
+    try:
+        db.add(
+            HourlyPvCache(
+                device_id="wr1",
+                hour_timestamp=first_local_hour_end_utc,
+                avg_power_w=4000.0,
+                computed_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    invalidate_hourly_pv_cache(local_day, local_day)
+
+    db = SessionLocal()
+    try:
+        assert db.get(HourlyPvCache, ("wr1", first_local_hour_end_utc)) is None
+    finally:
+        db.close()
+
+
 def test_hourly_history_does_not_cache_the_still_running_hour(client, monkeypatch):
     """Die aktuell noch laufende Stunde (und alles danach) darf NIE in
     hourly_pv_cache landen - ihr Wert kann sich noch aendern, solange

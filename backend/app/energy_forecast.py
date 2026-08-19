@@ -171,15 +171,21 @@ def _raw_hourly_pv_average(
 
 def invalidate_hourly_pv_cache(start_date: date, end_date: date) -> None:
     """Loescht gecachte Stundenwerte (siehe hourly_pv_cache/HourlyPvCache) im
-    angegebenen Datumsbereich (inklusive beider Enden, UTC-Kalendertage) -
-    aufgerufen nach einem Logdaten-Import (auto_import.py), der rueckwirkend
-    Messwerte fuer diese Tage ergaenzt/veraendert haben koennte. Analog zu
+    angegebenen Bereich lokaler Kalendertage (inklusive beider Enden) -
+    aufgerufen nach einem Logdaten-Import, der rueckwirkend Messwerte fuer
+    diese Tage ergaenzt/veraendert haben koennte. Die Grenzen muessen in die
+    UTC-Zeitleiste der Cache-Buckets umgerechnet werden: Der Import liefert
+    lokale Datumswerte, sodass eine Interpretation als UTC-Tag gerade an der
+    ersten Tagesgrenze Stunden uebersehen wuerde. Analog zu
     daily_summary.invalidate_energy_cache, nur fuer die stuendliche PV-
     Historie statt der taeglichen Energie-Zeitraum-Uebersichten."""
-    start = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+    local_tz = ZoneInfo(settings.timezone_name)
+    start = datetime.combine(start_date, datetime.min.time(), tzinfo=local_tz).astimezone(
+        timezone.utc
+    )
     end_exclusive = datetime.combine(
-        end_date, datetime.min.time(), tzinfo=timezone.utc
-    ) + timedelta(days=1)
+        end_date + timedelta(days=1), datetime.min.time(), tzinfo=local_tz
+    ).astimezone(timezone.utc)
     session = SessionLocal()
     try:
         session.execute(

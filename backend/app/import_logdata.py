@@ -42,6 +42,7 @@ import csv
 import io
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from pykoplenti import ApiClient
@@ -345,6 +346,27 @@ def main() -> None:
     inserted, updated, skipped = import_rows(
         args.device_id, args.device_name or args.device_id, rows
     )
+    if inserted > 0 or updated > 0:
+        # Der automatische Import invalidiert beide abgeleiteten Caches in
+        # auto_import.py. Der hier dokumentierte manuelle --commit-Pfad muss
+        # dasselbe tun, sonst bleiben bereits berechnete Tages- bzw.
+        # Stundenwerte trotz der gerade importierten Rohdaten unveraendert.
+        from .config import settings
+        from .daily_summary import invalidate_energy_cache
+        from .energy_forecast import invalidate_hourly_pv_cache
+
+        local_tz = ZoneInfo(settings.timezone_name)
+        imported_dates = [row["timestamp"].astimezone(local_tz).date() for row in rows]
+        start_date = min(imported_dates)
+        end_date = max(imported_dates)
+        try:
+            invalidate_energy_cache(start_date, end_date)
+        except Exception:  # noqa: BLE001
+            logger.exception("Konnte Energie-Zeitraum-Cache nach Import nicht invalidieren")
+        try:
+            invalidate_hourly_pv_cache(start_date, end_date)
+        except Exception:  # noqa: BLE001
+            logger.exception("Konnte stuendlichen PV-Historie-Cache nach Import nicht invalidieren")
     logger.info(
         "Import fertig: %d neue Zeilen gespeichert, %d bestehende Zeilen "
         "nachtraeglich befuellt, %d unveraendert.",
