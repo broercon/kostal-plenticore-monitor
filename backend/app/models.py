@@ -159,6 +159,44 @@ class DailyEnergyCache(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class HourlyPvCache(Base):
+    """Cache für abgeschlossene (vergangene) UTC-Stunden der gemittelten
+    reinen PV-Leistung je Wechselrichter (siehe
+    energy_forecast.load_hourly_pv_history). Genau wie DailyEnergyCache
+    (siehe dort) für die Energie-Zeitraum-Übersichten: eine abgeschlossene
+    Stunde ändert sich nicht mehr, außer ein nachträglicher Logdaten-Import
+    ergänzt rückwirkend genau diese Stunde - dann wird der betroffene
+    Eintrag gelöscht (siehe energy_forecast.invalidate_hourly_pv_cache,
+    aufgerufen aus auto_import.py).
+
+    Ohne diesen Cache würde z.B. /api/forecast/accuracy bei jedem Aufruf
+    (das Dashboard lädt den Prognose-Tab bei jedem Reload vor, danach alle
+    30 Minuten weiter) erneut bis zu 30 Tage Rohmesswerte je Wechselrichter
+    per GROUP BY zu Stundenmittelwerten aggregieren, obwohl die weit
+    überwiegende Zahl dieser Stunden längst abgeschlossen und unveränderlich
+    ist - dieselbe Situation, die daily_energy_cache für die Tagesansichten
+    bereits löst.
+
+    "hour_timestamp" ist wie bei load_hourly_pv_history() der ENDE-Zeitpunkt
+    der jeweiligen Stunde (z.B. 13:00 für das Intervall 12:00-13:00), nicht
+    der Anfang - Open-Meteo kennzeichnet Strahlung ebenso als Mittel der
+    VORANGEGANGENEN Stunde, beide Seiten (Wetter/Prognose und Ist-Messung)
+    verwenden also durchgängig dieselbe Konvention."""
+
+    __tablename__ = "hourly_pv_cache"
+
+    device_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    hour_timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    # NULL bedeutet "diese Stunde wurde bereits geprueft, es gab aber keine
+    # Messwerte" (z.B. Geraet zu diesem Zeitpunkt offline) - bewusst
+    # unterscheidbar vom Fehlen einer Zeile ("noch nicht geprueft"), siehe
+    # energy_forecast.load_hourly_pv_history.
+    avg_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class WeatherHourly(Base):
     """Lokal zwischengespeicherte historische Wetter-Stundenwerte (Open-Meteo),
     Grundlage der Trainingsdaten in energy_forecast.py.

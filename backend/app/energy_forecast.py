@@ -9,13 +9,13 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import numpy as np
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select
 
 from .config import settings
 from .database import SessionLocal
 from .forecast_config import get_config
 from .forecast_weather import WeatherPoint, WeatherServiceError, fetch_forecast_weather
-from .models import Reading
+from .models import HourlyPvCache, Reading
 from .weather_cache import fetch_historical_weather_cached
 
 FORECAST_DAYS = 7
@@ -134,10 +134,13 @@ def _pure_pv_sql_expression():
     )
 
 
-def load_hourly_pv_history(
+def _raw_hourly_pv_average(
     since: datetime, until: datetime
 ) -> dict[str, dict[datetime, float]]:
-    """Mittlere reine PV-Leistung je UTC-Stunde direkt in SQLite bilden."""
+    """Mittlere reine PV-Leistung je UTC-Stunde direkt per SQL-GROUP BY -
+    der eigentliche (fuer einen groesseren Zeitraum teure) Rechenschritt
+    hinter load_hourly_pv_history(), das die abgeschlossenen Stunden davon
+    ueber hourly_pv_cache zwischenspeichert (siehe dort)."""
     # Open-Meteo kennzeichnet Strahlung als Mittel der vorangegangenen Stunde.
     # Daher bekommt z.B. die Messstunde 12:00-13:00 den Endzeitpunkt 13:00.
     bucket = func.strftime("%Y-%m-%dT%H:00:00", Reading.timestamp, "+1 hour")
@@ -163,6 +166,148 @@ def load_hourly_pv_history(
             continue
         timestamp = datetime.fromisoformat(raw_bucket).replace(tzinfo=timezone.utc)
         result[device_id][timestamp] = max(0.0, float(power_w))
+    return dict(result)
+
+
+def invalidate_hourly_pv_cache(start_date: date, end_date: date) -> None:
+    """Loescht gecachte Stundenwerte (siehe hourly_pv_cache/HourlyPvCache) im
+    angegebenen Bereich lokaler Kalendertage (inklusive beider Enden) -
+    aufgerufen nach einem Logdaten-Import, der rueckwirkend Messwerte fuer
+    diese Tage ergaenzt/veraendert haben koennte. Die Grenzen muessen in die
+    UTC-Zeitleiste der Cache-Buckets umgerechnet werden: Der Import liefert
+    lokale Datumswerte, sodass eine Interpretation als UTC-Tag gerade an der
+    ersten Tagesgrenze Stunden uebersehen wuerde. Analog zu
+    daily_summary.invalidate_energy_cache, nur fuer die stuendliche PV-
+    Historie statt der taeglichen Energie-Zeitraum-Uebersichten."""
+    local_tz = ZoneInfo(settings.timezone_name)
+    start = datetime.combine(start_date, datetime.min.time(), tzinfo=local_tz).astimezone(
+        timezone.utc
+    )
+    end_exclusive = datetime.combine(
+        end_date + timedelta(days=1), datetime.min.time(), tzinfo=local_tz
+    ).astimezone(timezone.utc)
+    session = SessionLocal()
+    try:
+        session.execute(
+            delete(HourlyPvCache).where(
+                HourlyPvCache.hour_timestamp > start,
+                HourlyPvCache.hour_timestamp <= end_exclusive,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
+def load_hourly_pv_history(
+    since: datetime, until: datetime
+) -> dict[str, dict[datetime, float]]:
+    """Mittlere reine PV-Leistung je UTC-Stunde.
+
+    Abgeschlossene (vollstaendig vergangene) Stunden werden ueber
+    hourly_pv_cache zwischengespeichert (siehe Modell-Docstring in
+    models.py): einmal berechnet, aendert sich der Wert einer
+    abgeschlossenen Stunde nicht mehr (ausser ein nachtraeglicher
+    Logdaten-Import ruft invalidate_hourly_pv_cache() auf). Nur die aktuell
+    noch laufende Stunde sowie alles danach wird bei jedem Aufruf frisch
+    berechnet - analog zu daily_summary._cached_daily_totals, nur auf
+    Stundenebene statt Kalendertagen, weil /api/forecast/accuracy und
+    /api/forecast/yesterday genau diese Granularitaet fuer den
+    Prognose-vs-Ist-Vergleich brauchen und sonst bei jedem Dashboard-Reload
+    erneut bis zu 30 Tage Rohmesswerte aggregieren wuerden."""
+    now = datetime.now(timezone.utc)
+    closed_until = min(until, now)
+    last_closed_hour = closed_until.replace(minute=0, second=0, microsecond=0)
+
+    result: dict[str, dict[datetime, float]] = defaultdict(dict)
+
+    # Welche Stundenbuckets die Rohdaten-Abfrage im GESCHLOSSENEN Bereich
+    # ueberhaupt erzeugen KOENNTE (siehe Kommentar in _raw_hourly_pv_average:
+    # Bucket-Label = naechste volle Stunde NACH dem Messwert-Zeitstempel).
+    expected_hours: list[datetime] = []
+    if since < last_closed_hour:
+        hour = since.replace(minute=0, second=0, microsecond=0)
+        if hour <= since:
+            hour += timedelta(hours=1)
+        while hour <= last_closed_hour:
+            expected_hours.append(hour)
+            hour += timedelta(hours=1)
+
+    cached_by_device: dict[str, dict[datetime, float | None]] = defaultdict(dict)
+    if expected_hours:
+        session = SessionLocal()
+        try:
+            rows = session.execute(
+                select(
+                    HourlyPvCache.device_id,
+                    HourlyPvCache.hour_timestamp,
+                    HourlyPvCache.avg_power_w,
+                ).where(
+                    HourlyPvCache.hour_timestamp >= expected_hours[0],
+                    HourlyPvCache.hour_timestamp <= expected_hours[-1],
+                )
+            ).all()
+        finally:
+            session.close()
+        for device_id, hour_timestamp, avg_power_w in rows:
+            ts = (
+                hour_timestamp
+                if hour_timestamp.tzinfo is not None
+                else hour_timestamp.replace(tzinfo=timezone.utc)
+            )
+            cached_by_device[device_id][ts] = avg_power_w
+
+    # Aelteste erwartete Stunde OHNE JEDEN Cache-Eintrag (irgendeines
+    # Geraets) - ab dort gilt alles Nachfolgende als "noch nicht gecacht"
+    # und wird in einem Rutsch neu berechnet, statt Stunde fuer Stunde
+    # einzeln (gleiche Praxis-Abwaegung wie bei _cached_daily_totals: nach
+    # dem ersten Aufwaermen betrifft das ueblicherweise nur die juengste
+    # neu abgeschlossene Stunde, ausser nach einem rueckwirkenden Import).
+    gap_start: datetime | None = None
+    for hour in expected_hours:
+        if not any(hour in device_hours for device_hours in cached_by_device.values()):
+            gap_start = hour - timedelta(hours=1)
+            break
+
+    for device_id, device_hours in cached_by_device.items():
+        for hour, power_w in device_hours.items():
+            if power_w is not None:
+                result[device_id][hour] = power_w
+
+    fresh_from: datetime | None = gap_start
+    if last_closed_hour < until:
+        fresh_from = last_closed_hour if fresh_from is None else min(fresh_from, last_closed_hour)
+    if fresh_from is not None:
+        fresh_from = max(fresh_from, since)
+
+    if fresh_from is not None:
+        fresh = _raw_hourly_pv_average(fresh_from, until)
+
+        hours_to_persist = [h for h in expected_hours if gap_start is not None and h > gap_start]
+        if hours_to_persist:
+            all_device_ids = set(cached_by_device.keys()) | set(fresh.keys())
+            now_write = datetime.now(timezone.utc)
+            session = SessionLocal()
+            try:
+                for device_id in all_device_ids:
+                    device_fresh = fresh.get(device_id, {})
+                    for hour in hours_to_persist:
+                        session.merge(
+                            HourlyPvCache(
+                                device_id=device_id,
+                                hour_timestamp=hour,
+                                avg_power_w=device_fresh.get(hour),
+                                computed_at=now_write,
+                            )
+                        )
+                session.commit()
+            finally:
+                session.close()
+
+        for device_id, device_fresh in fresh.items():
+            for hour, power_w in device_fresh.items():
+                result[device_id][hour] = power_w
+
     return dict(result)
 
 

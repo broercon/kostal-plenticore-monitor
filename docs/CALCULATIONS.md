@@ -360,3 +360,20 @@ bestehende zusammengesetzte Index beginnt mit `device_id` und hilft
 Abfragen ohne Geräte-Filter kaum). Beide Änderungen wirken automatisch
 auch auf Bestandsdatenbanken (siehe `app/database.py`), ein manueller
 Migrationsschritt ist nicht nötig.
+
+### Performance: Stündlicher PV-Historie-Cache (Prognosekontrolle)
+
+Analog zum Energie-Zeitraum-Cache oben, nur auf Stundenebene statt
+Kalendertagen: `/api/forecast/accuracy` und `/api/forecast/yesterday`
+(Prognosekontrolle) vergleichen gespeicherte Stundenprognosen mit der
+tatsächlichen PV-Leistung je Wechselrichter. Ohne Cache müsste dafür bei
+jedem Dashboard-Reload (der Prognose-Tab wird im Hintergrund vorgeladen,
+danach alle 30 Minuten erneut) das komplette Vergleichsfenster (Standard 30
+Tage) erneut aus den Rohmesswerten zu Stundenmittelwerten aggregiert
+werden. Abgeschlossene (vollständig vergangene) Stunden werden deshalb in
+der Tabelle `hourly_pv_cache` zwischengespeichert (siehe
+`energy_forecast.load_hourly_pv_history`); nur die gerade laufende Stunde
+wird weiterhin bei jedem Aufruf frisch berechnet. Ein nachträglicher
+[Logdaten-Import](DATA_IMPORT.md) invalidiert auch diesen Cache automatisch
+für den betroffenen Zeitraum (`energy_forecast.invalidate_hourly_pv_cache`,
+aufgerufen aus `app/auto_import.py`).
