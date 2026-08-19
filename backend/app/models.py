@@ -199,6 +199,18 @@ class WeatherHourly(Base):
     direct_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
     diffuse_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
     temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
+    # Nullable, obwohl forecast_weather.WeatherPoint diese Felder als
+    # Pflichtwerte fuehrt: bestehende Datenbanken bekommen diese Spalten erst
+    # nachtraeglich per ALTER TABLE (siehe database.init_db) und dabei werden
+    # alte Zeilen bewusst geloescht statt mit Platzhaltern aufgefuellt (siehe
+    # dortiger Kommentar) - "nullable" ist hier nur ein technisches
+    # Zugestaendnis an SQLite, im laufenden Betrieb sind neu geschriebene
+    # Zeilen immer vollstaendig befuellt.
+    cloud_cover_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    wind_speed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    humidity_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    snow_depth_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pressure_hpa: Mapped[float | None] = mapped_column(Float, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

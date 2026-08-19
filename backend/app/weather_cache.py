@@ -65,8 +65,20 @@ def _load_cached_points(
             direct_w_m2=row.direct_w_m2,
             diffuse_w_m2=row.diffuse_w_m2,
             temperature_c=row.temperature_c,
+            cloud_cover_percent=row.cloud_cover_percent,
+            wind_speed_ms=row.wind_speed_ms,
+            humidity_percent=row.humidity_percent,
+            snow_depth_m=row.snow_depth_m,
+            pressure_hpa=row.pressure_hpa,
         )
         for row in rows
+        # Zeilen aus einer Zeit vor den zusaetzlichen Wetterwerten (siehe
+        # database._ensure_weather_hourly_extra_columns) haben fuer die
+        # neuen Spalten NULL - die Migration loescht solche Zeilen zwar
+        # bereits beim Start, dieser Filter ist nur ein zusaetzliches
+        # Sicherheitsnetz, damit WeatherPoint nie mit None-Werten gebaut
+        # wird (die Felder sind dort als float, nicht float | None, typisiert).
+        if row.cloud_cover_percent is not None
     ]
 
 
@@ -115,6 +127,11 @@ def _store_points(latitude: float, longitude: float, points: list[WeatherPoint])
                     direct_w_m2=point.direct_w_m2,
                     diffuse_w_m2=point.diffuse_w_m2,
                     temperature_c=point.temperature_c,
+                    cloud_cover_percent=point.cloud_cover_percent,
+                    wind_speed_ms=point.wind_speed_ms,
+                    humidity_percent=point.humidity_percent,
+                    snow_depth_m=point.snow_depth_m,
+                    pressure_hpa=point.pressure_hpa,
                     fetched_at=now,
                 )
             )

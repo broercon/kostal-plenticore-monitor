@@ -22,6 +22,11 @@ def _points_for_day(day: date) -> list[WeatherPoint]:
             direct_w_m2=70.0 + hour,
             diffuse_w_m2=30.0 + hour,
             temperature_c=15.0,
+            cloud_cover_percent=45.0 + hour,
+            wind_speed_ms=2.0 + hour * 0.1,
+            humidity_percent=60.0 + hour,
+            snow_depth_m=0.02,
+            pressure_hpa=1013.0 + hour * 0.1,
         )
         for hour in range(24)
     ]
@@ -55,6 +60,17 @@ def test_mature_range_is_fetched_once_and_then_served_from_cache(client, monkeyp
     assert len(result_2) == 48
     assert calls == [(day1, day2)]  # unveraendert, kein zweiter Fetch
     assert [p.shortwave_w_m2 for p in result_2] == [p.shortwave_w_m2 for p in result_1]
+    # Auch die zusaetzlichen Wetterwerte (Bewoelkung/Wind/Feuchte/
+    # Schneehoehe/Luftdruck) muessen den Cache-Roundtrip (Schreiben in
+    # weather_hourly, spaeteres Auslesen als WeatherPoint) unveraendert
+    # ueberstehen, nicht nur die urspruenglichen vier Felder.
+    assert [p.cloud_cover_percent for p in result_2] == [p.cloud_cover_percent for p in result_1]
+    assert [p.wind_speed_ms for p in result_2] == [p.wind_speed_ms for p in result_1]
+    assert [p.humidity_percent for p in result_2] == [p.humidity_percent for p in result_1]
+    assert [p.snow_depth_m for p in result_2] == [p.snow_depth_m for p in result_1]
+    assert [p.pressure_hpa for p in result_2] == [p.pressure_hpa for p in result_1]
+    assert result_2[5].cloud_cover_percent == 45.0 + 5
+    assert result_2[5].pressure_hpa == 1013.0 + 5 * 0.1
 
 
 def test_recent_immature_hours_are_always_fetched_live(client, monkeypatch):

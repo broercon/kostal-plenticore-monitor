@@ -51,6 +51,21 @@ class DistanceWeights:
     direct: float
     diffuse: float
     temperature: float
+    # Geschaetzte Modul-/Zelltemperatur (siehe _estimate_cell_temperature_c)
+    # statt roher Windgeschwindigkeit - Wind wirkt physikalisch ueber die
+    # Kuehlung der Module, nicht als eigenstaendiger Effekt. Defaults
+    # entsprechen DEFAULT_DISTANCE_WEIGHTS weiter unten - vor allem, damit
+    # bestehender Testcode, der DistanceWeights positionell mit nur den
+    # urspruenglichen sechs Werten konstruiert, unveraendert weiterlaeuft.
+    cell_temperature: float = 0.5
+    # Teilweise redundant zu ghi/direct/diffuse (Bewoelkung ist deren
+    # Ursache), kann aber z.B. Dunst von echtem Klarhimmel unterscheiden.
+    cloud: float = 0.5
+    humidity: float = 0.15
+    # Ueberwiegend 0 (kein Schnee) - relevant vor allem als Signal fuer
+    # evtl. schneebedeckte Module.
+    snow_depth: float = 0.15
+    pressure: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -69,7 +84,24 @@ class ModelProfile:
 # Ob gelernte Gewichte tatsaechlich genutzt werden, entscheidet zusaetzlich
 # der zeitlich getrennte Rueckvergleich in select_model().
 DEFAULT_DISTANCE_WEIGHTS = DistanceWeights(
-    hour=1.8, day=1.0, ghi=2.5, direct=1.0, diffuse=1.0, temperature=0.25
+    hour=1.8,
+    day=1.0,
+    ghi=2.5,
+    direct=1.0,
+    diffuse=1.0,
+    temperature=0.25,
+    # Niedriger als die direkten Strahlungswerte angesetzt: die
+    # Zelltemperatur verfeinert die Vorhersage (Temperaturderating), ersetzt
+    # aber nicht die Haupttreiber ghi/direct/diffuse.
+    cell_temperature=0.5,
+    # Trotz Redundanz zu den Strahlungswerten ein moderates Gewicht, kein
+    # sehr kleines - siehe DistanceWeights-Kommentar.
+    cloud=0.5,
+    # Nur feiner Nebeneffekt (Luftfeuchte/Luftdruck haben allenfalls sehr
+    # indirekten Einfluss auf den PV-Ertrag).
+    humidity=0.15,
+    snow_depth=0.15,
+    pressure=0.1,
 )
 
 
@@ -174,11 +206,36 @@ def forecast_weather_for_local_days(
     ]
 
 
+# Faiman-Modell (siehe z.B. pvlib.temperature.faiman) zur Schaetzung der
+# Modul-/Zelltemperatur aus Lufttemperatur, Einstrahlung und Windgeschwin-
+# digkeit: T_zelle = T_luft + G / (U0 + U1 * wind). U0/U1 sind die ueblichen
+# Standardkoeffizienten fuer freistehend montierte Module (W/(m^2*K) bzw.
+# (W/(m^2*K))/(m/s)) - eine Kalibrierung auf die tatsaechliche Montageart
+# waere praeziser, ist hier aber bewusst nicht Ziel: es geht nur um ein
+# zusaetzliches, physikalisch plausibles Merkmal fuer die Distanzmetrik,
+# nicht um eine exakte Temperatursimulation.
+_FAIMAN_U0 = 25.0
+_FAIMAN_U1 = 6.84
+
+
+def _estimate_cell_temperature_c(point: WeatherPoint) -> float:
+    """Geschaetzte Modultemperatur statt roher Windgeschwindigkeit als
+    Merkmal (siehe DistanceWeights.cell_temperature) - Wind wirkt auf den
+    PV-Ertrag nicht direkt, sondern nur ueber die Kuehlung der Module, die
+    wiederum deren Wirkungsgrad beeinflusst (waermere Zellen -> geringerer
+    Wirkungsgrad). Diese Kombination aus Lufttemperatur, Einstrahlung und
+    Wind bildet das deutlich praeziser ab als Windgeschwindigkeit oder
+    Lufttemperatur je fuer sich alleine."""
+    denominator = _FAIMAN_U0 + _FAIMAN_U1 * point.wind_speed_ms
+    return point.temperature_c + point.shortwave_w_m2 / denominator
+
+
 def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
-    """8 Merkmale je Messpunkt fuer fit_distance_weights(): Tageszeit und
+    """13 Merkmale je Messpunkt fuer fit_distance_weights(): Tageszeit und
     Jahrestag als Sinus/Kosinus (damit der Jahres-/Tageswechsel fuer die
-    lineare Regression keinen kuenstlichen Sprung erzeugt), plus Strahlung
-    und Temperatur direkt.
+    lineare Regression keinen kuenstlichen Sprung erzeugt), Strahlung und
+    Temperatur direkt, sowie die zusaetzlichen Wetterwerte (Zelltemperatur,
+    Bewoelkung, Luftfeuchte, Schneehoehe, Luftdruck - siehe DistanceWeights).
     """
     hour_angle = 2 * math.pi * (point.timestamp.hour + point.timestamp.minute / 60) / 24
     day_angle = 2 * math.pi * point.timestamp.timetuple().tm_yday / 366
@@ -191,6 +248,11 @@ def _forecast_feature_vector(point: WeatherPoint) -> list[float]:
         point.direct_w_m2,
         point.diffuse_w_m2,
         point.temperature_c,
+        _estimate_cell_temperature_c(point),
+        point.cloud_cover_percent,
+        point.humidity_percent,
+        point.snow_depth_m,
+        point.pressure_hpa,
     ]
 
 
@@ -211,39 +273,63 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
 
     Der eigentliche Vorhersage-Mechanismus (Analogie-Suche + physikalisch
     begrenzte Strahlungs-Skalierung in predict_power) bleibt unveraendert.
-    Reicht die Historie nicht (weniger als MIN_TRAINING_SAMPLES) oder ist ein
-    Merkmal darin konstant (z.B. noch keine Temperaturstreuung) bzw. das
+    Reicht die Historie nicht (weniger als MIN_TRAINING_SAMPLES) oder ist das
     Gleichungssystem trotz Regularisierung singulaer, wird auf die
     bisherigen Standardgewichte zurueckgefallen.
+
+    Einzelne (nahezu) konstante Merkmalsspalten - z.B. snow_depth_m bei einem
+    Standort/Zeitraum ganz ohne Schnee, oder ein frisch um neue Wetterwerte
+    erweiterter Cache mit noch kaum Streuung in humidity/pressure - werden
+    NICHT wie frueher zum kompletten Verwerfen des Lernvorgangs fuehren:
+    stattdessen fliessen nur die tatsaechlich streuenden Spalten in die
+    Regression ein (sonst Division durch Std=0 beim Standardisieren), die
+    konstanten Merkmale bekommen Wichtigkeit 0 (siehe Kommentar unten, warum
+    das fuer die Distanzberechnung unschaedlich ist).
     """
     if len(training) < MIN_TRAINING_SAMPLES:
         return DEFAULT_DISTANCE_WEIGHTS
 
     rows = np.array([_forecast_feature_vector(sample.weather) for sample in training])
     targets = np.array([sample.power_w for sample in training])
-    n_features = rows.shape[1]
 
     stds = rows.std(axis=0)
-    if np.any(stds < 1e-9):
+    variable_mask = stds >= 1e-9
+    if not np.any(variable_mask):
         return DEFAULT_DISTANCE_WEIGHTS
-    standardized = (rows - rows.mean(axis=0)) / stds
+
+    variable_rows = rows[:, variable_mask]
+    standardized = (variable_rows - variable_rows.mean(axis=0)) / variable_rows.std(axis=0)
 
     # Bias-Spalte fuer den Achsenabschnitt; bleibt unten unregularisiert.
     design = np.hstack([standardized, np.ones((len(training), 1))])
-    penalty = np.eye(n_features + 1) * RIDGE_LAMBDA
+    n_variable = int(variable_mask.sum())
+    penalty = np.eye(n_variable + 1) * RIDGE_LAMBDA
     penalty[-1, -1] = 0.0
 
     try:
-        coefficients = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
+        solved = np.linalg.solve(design.T @ design + penalty, design.T @ targets)
     except np.linalg.LinAlgError:
         return DEFAULT_DISTANCE_WEIGHTS
 
-    hour_importance = float(np.hypot(coefficients[0], coefficients[1]))
-    day_importance = float(np.hypot(coefficients[2], coefficients[3]))
-    ghi_importance = float(abs(coefficients[4]))
-    direct_importance = float(abs(coefficients[5]))
-    diffuse_importance = float(abs(coefficients[6]))
-    temperature_importance = float(abs(coefficients[7]))
+    # Rohe (unskalierte) Wichtigkeit je der 13 _forecast_feature_vector()-
+    # Spalten, ausserhalb der Regression ausgeschlossene (konstante) Spalten
+    # bleiben bei 0.0 - siehe Docstring, warum das fuer eine Spalte ohne
+    # jegliche Streuung in der Trainingshistorie die korrekte (weil einzig
+    # belegbare) Aussage ist.
+    raw_importance = np.zeros(rows.shape[1])
+    raw_importance[variable_mask] = np.abs(solved[:-1])
+
+    hour_importance = float(np.hypot(raw_importance[0], raw_importance[1]))
+    day_importance = float(np.hypot(raw_importance[2], raw_importance[3]))
+    ghi_importance = float(raw_importance[4])
+    direct_importance = float(raw_importance[5])
+    diffuse_importance = float(raw_importance[6])
+    temperature_importance = float(raw_importance[7])
+    cell_temperature_importance = float(raw_importance[8])
+    cloud_importance = float(raw_importance[9])
+    humidity_importance = float(raw_importance[10])
+    snow_depth_importance = float(raw_importance[11])
+    pressure_importance = float(raw_importance[12])
     total_importance = (
         hour_importance
         + day_importance
@@ -251,6 +337,11 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
         + direct_importance
         + diffuse_importance
         + temperature_importance
+        + cell_temperature_importance
+        + cloud_importance
+        + humidity_importance
+        + snow_depth_importance
+        + pressure_importance
     )
     if total_importance < 1e-9:
         return DEFAULT_DISTANCE_WEIGHTS
@@ -262,6 +353,11 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
         + DEFAULT_DISTANCE_WEIGHTS.direct
         + DEFAULT_DISTANCE_WEIGHTS.diffuse
         + DEFAULT_DISTANCE_WEIGHTS.temperature
+        + DEFAULT_DISTANCE_WEIGHTS.cell_temperature
+        + DEFAULT_DISTANCE_WEIGHTS.cloud
+        + DEFAULT_DISTANCE_WEIGHTS.humidity
+        + DEFAULT_DISTANCE_WEIGHTS.snow_depth
+        + DEFAULT_DISTANCE_WEIGHTS.pressure
     )
     scale = default_total / total_importance
     return DistanceWeights(
@@ -271,6 +367,11 @@ def fit_distance_weights(training: list[TrainingPoint]) -> DistanceWeights:
         direct=direct_importance * scale,
         diffuse=diffuse_importance * scale,
         temperature=temperature_importance * scale,
+        cell_temperature=cell_temperature_importance * scale,
+        cloud=cloud_importance * scale,
+        humidity=humidity_importance * scale,
+        snow_depth=snow_depth_importance * scale,
+        pressure=pressure_importance * scale,
     )
 
 
@@ -291,6 +392,11 @@ class _TrainingArrays:
     direct: np.ndarray
     diffuse: np.ndarray
     temperature: np.ndarray
+    cell_temperature: np.ndarray
+    cloud: np.ndarray
+    humidity: np.ndarray
+    snow_depth: np.ndarray
+    pressure: np.ndarray
     power: np.ndarray
 
 
@@ -304,6 +410,13 @@ def _prepare_training_arrays(training: list[TrainingPoint]) -> _TrainingArrays:
         direct=np.array([s.weather.direct_w_m2 for s in training]),
         diffuse=np.array([s.weather.diffuse_w_m2 for s in training]),
         temperature=np.array([s.weather.temperature_c for s in training]),
+        cell_temperature=np.array(
+            [_estimate_cell_temperature_c(s.weather) for s in training]
+        ),
+        cloud=np.array([s.weather.cloud_cover_percent for s in training]),
+        humidity=np.array([s.weather.humidity_percent for s in training]),
+        snow_depth=np.array([s.weather.snow_depth_m for s in training]),
+        pressure=np.array([s.weather.pressure_hpa for s in training]),
         power=np.array([s.power_w for s in training]),
     )
 
@@ -331,6 +444,19 @@ def _sample_distances(
     direct_distance = np.abs(arrays.direct - target.direct_w_m2) / 180
     diffuse_distance = np.abs(arrays.diffuse - target.diffuse_w_m2) / 140
     temperature_distance = np.abs(arrays.temperature - target.temperature_c) / 20
+    # Divisoren fuer die fuenf zusaetzlichen Merkmale, nach demselben Prinzip
+    # wie oben grob auf eine typische Schwankungsbreite skaliert (kein aus
+    # Daten gelernter Wert, nur eine Groessenordnungs-Abschaetzung):
+    # Zelltemperatur aehnlich der Lufttemperatur (evtl. etwas hoehere Spanne
+    # durch Aufheizung), Bewoelkung/Luftfeuchte in vollen Prozentpunkten,
+    # Schneehoehe in Metern (meist 0, schon wenige Zentimeter sind relevant),
+    # Luftdruck in hPa (typische Tagesschwankung ca. 10-20 hPa).
+    target_cell_temperature = _estimate_cell_temperature_c(target)
+    cell_temperature_distance = np.abs(arrays.cell_temperature - target_cell_temperature) / 25
+    cloud_distance = np.abs(arrays.cloud - target.cloud_cover_percent) / 40
+    humidity_distance = np.abs(arrays.humidity - target.humidity_percent) / 30
+    snow_depth_distance = np.abs(arrays.snow_depth - target.snow_depth_m) / 0.1
+    pressure_distance = np.abs(arrays.pressure - target.pressure_hpa) / 15
     return (
         weights.hour * hour_distance
         + weights.day * day_distance
@@ -338,6 +464,11 @@ def _sample_distances(
         + weights.direct * direct_distance
         + weights.diffuse * diffuse_distance
         + weights.temperature * temperature_distance
+        + weights.cell_temperature * cell_temperature_distance
+        + weights.cloud * cloud_distance
+        + weights.humidity * humidity_distance
+        + weights.snow_depth * snow_depth_distance
+        + weights.pressure * pressure_distance
     )
 
 
