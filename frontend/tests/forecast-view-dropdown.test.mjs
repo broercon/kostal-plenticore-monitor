@@ -65,6 +65,42 @@ test("Prognose-Tab: Tagesuebersicht zeigt zuerst das Wochenverlauf-Diagramm, dan
   );
 });
 
+test("Prognose-Tab: Flyout laesst sich auf einem Touch-Geraet nach Auswahl einer Unteransicht erneut oeffnen", async () => {
+  // Regression fuer einen Bug auf dem Handy: suppressMenuUntilLeave()
+  // (app.js) blendet das Flyout nach Auswahl einer Unteransicht per
+  // .menu-suppress aus und verlaesst sich darauf, dass ein "mouseleave"
+  // dieses Flag wieder entfernt - auf einem Touch-Geraet feuert dieses
+  // Event nie, .menu-suppress blieb also (per !important staerker als
+  // .menu-open) dauerhaft bestehen und das Flyout liess sich danach nie
+  // wieder oeffnen, egal wie oft man auf den Reiter tippte.
+  const app = await bootApp({ fetchHandler: makeBackend(), touch: true });
+  const wrapper = app.document.querySelector(
+    '.view-tab-with-menu[data-tab-group="forecast"]'
+  );
+
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.tabsLoaded.has("forecast"));
+  assert.ok(wrapper.classList.contains("menu-open"), "Tap auf den Reiter oeffnet das Flyout");
+
+  app.clickSubview("forecast", "yesterday");
+  assert.ok(!wrapper.classList.contains("menu-open"));
+  assert.ok(
+    wrapper.classList.contains("menu-suppress"),
+    "Auswahl einer Unteransicht setzt menu-suppress"
+  );
+
+  app.clickViewTab("forecast");
+  assert.ok(
+    wrapper.classList.contains("menu-open"),
+    "Erneuter Tap auf den Reiter muss das Flyout wieder oeffnen"
+  );
+  assert.ok(
+    !wrapper.classList.contains("menu-suppress"),
+    "menu-suppress darf ein erneutes Oeffnen per Tap nicht mehr blockieren"
+  );
+});
+
+
 test("Kopfzeile (Titel + Status) im Prognose-Tab bleibt unabhaengig von der gewaehlten Ansicht sichtbar", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
