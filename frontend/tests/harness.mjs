@@ -314,13 +314,22 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
   };
 }
 
-export async function bootApp({ fetchHandler }) {
+export async function bootApp({ fetchHandler, touch = false }) {
   const html = readFileSync(join(FRONTEND_DIR, "index.html"), "utf8");
   const appjs = readFileSync(join(FRONTEND_DIR, "app.js"), "utf8");
 
   const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true });
   const { window } = dom;
   const { document } = window;
+
+  // jsdom implementiert window.matchMedia von sich aus nicht. Fuer Tests, die
+  // das Touch-/Handy-Verhalten pruefen wollen (siehe isTouchDevice() in
+  // app.js, Abfrage von "(hover: none), (pointer: coarse)"), simuliert
+  // { touch: true } ein Geraet ohne Hover/mit grobem Zeiger - alle anderen
+  // Tests laufen weiterhin ohne matchMedia (== Desktop-Zweig), wie bisher.
+  if (touch) {
+    window.matchMedia = () => ({ matches: true });
+  }
 
   // Chart.js, Canvas und location stubben.
   window.Chart = class {

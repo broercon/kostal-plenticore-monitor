@@ -2731,6 +2731,14 @@ function setupViewTabs() {
     // es zusaetzlich zum Tab-Wechsel ein bzw. wieder aus.
     const wrapper = tabBtn.closest(".view-tab-with-menu");
     if (wrapper && isTouchDevice()) {
+      // .menu-suppress (siehe suppressMenuUntilLeave) wird normalerweise
+      // erst per "mouseleave" wieder entfernt - auf einem Touch-Geraet
+      // feuert dieses Event nie, weil es keinen echten Mauszeiger gibt.
+      // Ohne dieses Zuruecksetzen hier wuerde .menu-suppress ab der ersten
+      // per Tap ausgewaehlten Unteransicht dauerhaft bestehen bleiben (per
+      // !important starker als .menu-open) und das Flyout liesse sich auf
+      // dem Handy nie wieder oeffnen.
+      wrapper.classList.remove("menu-suppress");
       wrapper.classList.toggle("menu-open");
     }
   });
