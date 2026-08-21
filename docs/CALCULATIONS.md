@@ -377,3 +377,32 @@ wird weiterhin bei jedem Aufruf frisch berechnet. Ein nachträglicher
 [Logdaten-Import](DATA_IMPORT.md) invalidiert auch diesen Cache automatisch
 für den betroffenen Zeitraum (`energy_forecast.invalidate_hourly_pv_cache`,
 aufgerufen aus `app/auto_import.py`).
+
+### Prognose-Balkendiagramme (Heute/Morgen/Gestern): Aufschlüsselung je Wechselrichter
+
+Die stündlichen Prognose-Balkendiagramme (Tab "Prognose", Ansichten "Heute",
+"Morgen" und "Gestern") zeigen im Gesamt-Tab ("Alle") nicht mehr nur einen
+einzigen kombinierten Prognose- bzw. Tatsächlich-Balken je Stunde, sondern
+einen eigenen, gestapelten Balken je Wechselrichter - analog zur
+bestehenden Aufschlüsselung im Wechselrichter-Vergleich
+(`refreshHourlyCompareChart()`). So lässt sich direkt ablesen, welches
+Gerät wie viel zur jeweiligen Stunde beigetragen hat, ohne erst manuell
+zwischen den Wechselrichter-Tabs wechseln zu müssen.
+
+Grundlage dafür sind die pro Gerät bereits vorhandenen Felder in
+`ForecastHourOut.devices[]` bzw. `ForecastYesterdayHourOut.devices[]`
+(Backend liefert diese Aufschlüsselung längst mit, siehe
+`backend/app/schemas.py`) sowie - für "heute" - die Ist-Werte aus
+`/api/readings/hourly-per-device` je Gerät und Stundenbucket. Die
+Balken je Gerät werden über `dataset.stack` in zwei Gruppen gestapelt
+("expected" für die Prognose, "actual" für den gemessenen Ertrag), der
+Tooltip-Footer nennt zusätzlich die jeweilige Gesamtsumme über alle Geräte
+(siehe `buildForecastDeviceDatasets()`/`forecastStackFooter()` in
+`frontend/app.js`). Für "morgen" entfällt der "actual"-Stapel naturgemäß,
+da dieser Tag noch nicht stattgefunden hat.
+
+Ist dagegen ein einzelner Wechselrichter über die Tabs ausgewählt, bleibt
+es unverändert beim bisherigen, einzelnen Floating-Bar-Balken (Prognose
+inkl. gelerntem Spannbereich) plus einem "Tatsächlich"-Balken - die
+Pro-Geräte-Aufschlüsselung wäre dort redundant, da schon auf ein Gerät
+gefiltert ist.

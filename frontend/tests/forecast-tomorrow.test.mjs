@@ -76,7 +76,7 @@ test("Prognose morgen: Statuszeile nennt Erwartungswert, Bereich und Hinweis auf
   );
 });
 
-test("Prognose morgen: Diagramm zeigt nur den Prognose-Balken, keinen 'Tatsächlich'-Balken", async () => {
+test("Prognose morgen: Diagramm zeigt im Gesamt-Tab die Aufschluesselung je Wechselrichter, keinen 'Tatsächlich'-Balken", async () => {
   const app = await bootApp({ fetchHandler: backendWithTomorrow() });
   app.clickViewTab("forecast");
   await waitFor(() => app.state.tabsLoaded.has("forecast"));
@@ -84,8 +84,15 @@ test("Prognose morgen: Diagramm zeigt nur den Prognose-Balken, keinen 'Tatsächl
 
   const chart = app.state.forecastTomorrowChart;
   assert.equal(chart.type, "bar");
-  assert.equal(chart.data.datasets.length, 1);
-  assert.equal(chart.data.datasets[0].label, "Prognose");
+  // Im Gesamt-Tab ("Alle") zeigt das Diagramm seit der Pro-Geraet-
+  // Aufschluesselung (analog zum Wechselrichter-Vergleich) je Wechselrichter
+  // einen eigenen Prognose-Balken statt eines einzelnen kombinierten -
+  // "Tatsächlich" gibt es fuer morgen weiterhin nicht (Tag liegt in der
+  // Zukunft, siehe buildForecastDeviceDatasets(hours, null)).
+  assert.equal(chart.data.datasets.length, 2);
+  assert.ok(chart.data.datasets.every((d) => d.label.startsWith("Prognose ")));
+  assert.ok(chart.data.datasets.every((d) => d.stack === "expected"));
+  assert.equal(chart.data.datasets.some((d) => d.label.startsWith("Tatsächlich")), false);
 });
 
 test("Prognose morgen: ohne Folgetag-Daten erscheint ein Hinweis statt eines Diagramms", async () => {
