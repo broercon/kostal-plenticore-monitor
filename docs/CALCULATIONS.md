@@ -318,6 +318,21 @@ werden roh gespeichert, die Subtraktion ist damit vorzeichensicher
 0. Der Gesamtwert („Alle (Summe)") ist die Summe der Wechselrichter, da PV
 additiv ist.
 
+### Einspeisung im Leistungsverlauf (Tagesansicht): kumuliert statt Momentanwert
+
+Alle Kurven im Leistungsverlauf zeigen die Momentanleistung (Watt) - außer
+der Einspeisung in der **Tagesansicht** ("24 Std"): dort wächst sie
+kumulativ seit Mitternacht (kWh, eigene rechte Achse), damit man z.B. um
+13:30 Uhr direkt ablesen kann, wie viel an diesem Tag bereits insgesamt
+eingespeist wurde, statt nur die aktuelle Momentanleistung zu sehen. Die
+Kumulation läuft im Frontend per Trapezregel (`cumulativeKwhSeries()` in
+`app.js`) und folgt derselben 30-Minuten-Lückenregel wie
+`aggregation.integrate_kwh()` im Backend: ein Intervall zwischen zwei
+Messpunkten, das länger als 30 Minuten auseinanderliegt, wird nicht
+überbrückt, die Summe bleibt dort einfach stehen. In der Wochen-/Monats-/
+Jahresansicht bleibt die Einspeisungskurve unverändert eine Momentanleistung
+wie die übrigen Kurven.
+
 ### Gerätezähler vs. Integration
 
 Für Hausverbrauch (`Statistic:EnergyHome:Day`) und Einspeisung/Netz wird der
