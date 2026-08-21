@@ -417,6 +417,16 @@ function buildForecastDeviceDatasets(hours, getActual) {
     data: hours.map(
       (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.expected_kw ?? null
     ),
+    // Der gestapelte Balken selbst zeigt den Erwartungswert. Die Grenzen
+    // bleiben separat am Dataset erhalten, damit der bislang vorhandene
+    // Prognose-Spannbereich in der Pro-Geraet-Ansicht nicht verloren geht
+    // und weiterhin im Tooltip ausgewiesen werden kann.
+    lowData: hours.map(
+      (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.low_kw ?? null
+    ),
+    highData: hours.map(
+      (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.high_kw ?? null
+    ),
     backgroundColor: dayColor(i) + "80",
     borderColor: dayColor(i),
     borderWidth: 1,
@@ -438,6 +448,40 @@ function buildForecastDeviceDatasets(hours, getActual) {
     });
   }
   return datasets;
+}
+
+// Gemeinsame Tooltip-Zeile fuer alle drei Stundenprognose-Diagramme. In der
+// Einzelgeraet-Ansicht ist die Prognose weiterhin ein Floating Bar [low,
+// high]; im Gesamt-Tab ist sie ein gestapelter Erwartungswert je Geraet und
+// der zugehoerige Spannbereich liegt in lowData/highData (siehe oben).
+function forecastBarTooltipLabel(context) {
+  if (context.dataset.label === "Prognose") {
+    const range = context.raw;
+    const expected = context.dataset.expectedData?.[context.dataIndex];
+    if (!range || expected === null || expected === undefined) {
+      return "Prognose: –";
+    }
+    return (
+      `Prognose: ${expected.toFixed(1)} kWh ` +
+      `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+    );
+  }
+
+  const value = context.parsed.y;
+  if (value === null || value === undefined) {
+    return `${context.dataset.label}: –`;
+  }
+  if (context.dataset.stack === "expected") {
+    const low = context.dataset.lowData?.[context.dataIndex];
+    const high = context.dataset.highData?.[context.dataIndex];
+    if (low !== null && low !== undefined && high !== null && high !== undefined) {
+      return (
+        `${context.dataset.label}: ${value.toFixed(1)} kWh ` +
+        `(Spannbereich ${low.toFixed(1)}–${high.toFixed(1)} kWh)`
+      );
+    }
+  }
+  return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
 }
 
 // Footer-Zeile(n) fuer den Tooltip der Prognose-Balkendiagramme: nur bei
@@ -706,24 +750,7 @@ async function refreshForecast() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label(context) {
-                    if (context.dataset.label === "Prognose") {
-                      const range = context.raw;
-                      const expected = context.dataset.expectedData?.[context.dataIndex];
-                      if (!range || expected === null || expected === undefined) {
-                        return "Prognose: –";
-                      }
-                      return (
-                        `Prognose: ${expected.toFixed(1)} kWh ` +
-                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      );
-                    }
-                    const value = context.parsed.y;
-                    if (value === null || value === undefined) {
-                      return `${context.dataset.label}: –`;
-                    }
-                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
-                  },
+                  label: forecastBarTooltipLabel,
                   footer: forecastStackFooter,
                 },
               },
@@ -822,24 +849,7 @@ async function refreshForecast() {
               plugins: {
                 tooltip: {
                   callbacks: {
-                    label(context) {
-                      if (context.dataset.label === "Prognose") {
-                        const range = context.raw;
-                        const expected = context.dataset.expectedData?.[context.dataIndex];
-                        if (!range || expected === null || expected === undefined) {
-                          return "Prognose: –";
-                        }
-                        return (
-                          `Prognose: ${expected.toFixed(1)} kWh ` +
-                          `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                        );
-                      }
-                      const value = context.parsed.y;
-                      if (value === null || value === undefined) {
-                        return `${context.dataset.label}: –`;
-                      }
-                      return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
-                    },
+                    label: forecastBarTooltipLabel,
                     footer: forecastStackFooter,
                   },
                 },
@@ -1014,24 +1024,7 @@ async function refreshForecastYesterday() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label(context) {
-                    if (context.dataset.label === "Prognose") {
-                      const range = context.raw;
-                      const expected = context.dataset.expectedData?.[context.dataIndex];
-                      if (!range || expected === null || expected === undefined) {
-                        return "Prognose: –";
-                      }
-                      return (
-                        `Prognose: ${expected.toFixed(1)} kWh ` +
-                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      );
-                    }
-                    const value = context.parsed.y;
-                    if (value === null || value === undefined) {
-                      return `${context.dataset.label}: –`;
-                    }
-                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
-                  },
+                  label: forecastBarTooltipLabel,
                   footer: forecastStackFooter,
                 },
               },

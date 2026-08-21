@@ -34,11 +34,29 @@ test("buildForecastDeviceDatasets: ein Prognose-Dataset je Geraet, gestapelt", a
   assert.equal(datasets.length, 2);
   assert.equal(datasets[0].label, "Prognose WR1");
   assert.deepEqual(datasets[0].data, [2.0, 2.7]);
+  assert.deepEqual(datasets[0].lowData, [1.6, 2.1]);
+  assert.deepEqual(datasets[0].highData, [2.4, 3.2]);
   assert.equal(datasets[0].stack, "expected");
   assert.equal(datasets[1].label, "Prognose WR2");
   assert.deepEqual(datasets[1].data, [1.0, 1.5]);
   // Ohne getActual (z.B. "morgen") entsteht kein "Tatsaechlich"-Stapel.
   assert.equal(datasets.some((d) => d.label.startsWith("Tatsächlich")), false);
+});
+
+test("forecastBarTooltipLabel: Pro-Geraet-Prognose behaelt ihren Spannbereich", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  const datasets = app.window.buildForecastDeviceDatasets(HOURS, null);
+  const dataset = datasets.find((d) => d.label === "Prognose WR1");
+
+  assert.equal(
+    app.window.forecastBarTooltipLabel({
+      dataset,
+      dataIndex: 1,
+      parsed: { y: 2.7 },
+      raw: 2.7,
+    }),
+    "Prognose WR1: 2.7 kWh (Spannbereich 2.1–3.2 kWh)"
+  );
 });
 
 test("buildForecastDeviceDatasets: mit getActual zusaetzlich ein Tatsaechlich-Dataset je Geraet", async () => {
