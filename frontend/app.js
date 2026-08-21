@@ -431,6 +431,122 @@ const forecastExpectedMarkerPlugin = {
   },
 };
 
+// Baut je Stunde EIN Dataset PRO WECHSELRICHTER (gestapelt ueber "stack"),
+// statt nur eines kombinierten Gesamtwerts - fuer den "Alle"-Modus der
+// Prognose-Balkendiagramme (Heute/Morgen/Gestern), analog zur Aufschlues-
+// selung im Wechselrichter-Vergleich (siehe refreshHourlyCompareChart()).
+// So zeigt der Balken einer Stunde nicht mehr nur die Summe, sondern auch,
+// welcher Wechselrichter wie viel dazu beigetragen hat.
+//
+// getActual(hour, deviceId) liefert den Ist-Wert je Geraet und Stunde -
+// bei "Morgen" gibt es das naturgemaess noch nicht (Tag liegt in der
+// Zukunft), dort einfach `null` uebergeben, dann entsteht gar kein
+// "Tatsaechlich"-Stapel.
+function buildForecastDeviceDatasets(hours, getActual) {
+  const deviceNames = new Map();
+  for (const hour of hours) {
+    for (const device of hour.devices || []) {
+      if (!deviceNames.has(device.device_id)) {
+        deviceNames.set(device.device_id, device.device_name || device.device_id);
+      }
+    }
+  }
+  const devices = [...deviceNames.entries()];
+
+  const datasets = devices.map(([deviceId, deviceName], i) => ({
+    label: `Prognose ${deviceName}`,
+    data: hours.map(
+      (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.expected_kw ?? null
+    ),
+    // Der gestapelte Balken selbst zeigt den Erwartungswert. Die Grenzen
+    // bleiben separat am Dataset erhalten, damit der bislang vorhandene
+    // Prognose-Spannbereich in der Pro-Geraet-Ansicht nicht verloren geht
+    // und weiterhin im Tooltip ausgewiesen werden kann.
+    lowData: hours.map(
+      (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.low_kw ?? null
+    ),
+    highData: hours.map(
+      (hour) => hour.devices?.find((d) => d.device_id === deviceId)?.high_kw ?? null
+    ),
+    backgroundColor: dayColor(i) + "80",
+    borderColor: dayColor(i),
+    borderWidth: 1,
+    borderRadius: 2,
+    stack: "expected",
+  }));
+
+  if (getActual) {
+    devices.forEach(([deviceId, deviceName], i) => {
+      datasets.push({
+        label: `Tatsächlich ${deviceName}`,
+        data: hours.map((hour) => getActual(hour, deviceId)),
+        backgroundColor: dayColor(i),
+        borderColor: dayColor(i),
+        borderWidth: 1,
+        borderRadius: 2,
+        stack: "actual",
+      });
+    });
+  }
+  return datasets;
+}
+
+// Gemeinsame Tooltip-Zeile fuer alle drei Stundenprognose-Diagramme. In der
+// Einzelgeraet-Ansicht ist die Prognose weiterhin ein Floating Bar [low,
+// high]; im Gesamt-Tab ist sie ein gestapelter Erwartungswert je Geraet und
+// der zugehoerige Spannbereich liegt in lowData/highData (siehe oben).
+function forecastBarTooltipLabel(context) {
+  if (context.dataset.label === "Prognose") {
+    const range = context.raw;
+    const expected = context.dataset.expectedData?.[context.dataIndex];
+    if (!range || expected === null || expected === undefined) {
+      return "Prognose: –";
+    }
+    return (
+      `Prognose: ${expected.toFixed(1)} kWh ` +
+      `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
+    );
+  }
+
+  const value = context.parsed.y;
+  if (value === null || value === undefined) {
+    return `${context.dataset.label}: –`;
+  }
+  if (context.dataset.stack === "expected") {
+    const low = context.dataset.lowData?.[context.dataIndex];
+    const high = context.dataset.highData?.[context.dataIndex];
+    if (low !== null && low !== undefined && high !== null && high !== undefined) {
+      return (
+        `${context.dataset.label}: ${value.toFixed(1)} kWh ` +
+        `(Spannbereich ${low.toFixed(1)}–${high.toFixed(1)} kWh)`
+      );
+    }
+  }
+  return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
+}
+
+// Footer-Zeile(n) fuer den Tooltip der Prognose-Balkendiagramme: nur bei
+// der Pro-Geraet-Aufschluesselung oben (erkennbar an "dataset.stack")
+// sinnvoll, sonst ist schon der einzelne Balken die Summe - deshalb hier
+// generisch anhand der aktuell angezeigten Datasets entschieden, nicht
+// anhand eines fest zum Erstellungszeitpunkt gesetzten Modus (die Charts
+// werden bei reiner Datenaktualisierung wiederverwendet, siehe
+// refreshForecast()/refreshForecastYesterday()).
+function forecastStackFooter(items) {
+  const expected = items.filter((item) => item.dataset.stack === "expected");
+  if (expected.length === 0) return undefined;
+  const lines = [
+    `Prognose gesamt: ${expected.reduce((sum, item) => sum + (item.parsed.y || 0), 0).toFixed(1)} kWh`,
+  ];
+  const actual = items.filter((item) => item.dataset.stack === "actual");
+  if (actual.length > 0) {
+    lines.push(
+      `Tatsächlich gesamt: ${actual.reduce((sum, item) => sum + (item.parsed.y || 0), 0).toFixed(1)} kWh`
+    );
+  }
+  return lines;
+}
+
 async function refreshForecast() {
   return withLoading(["#forecast-section"], async () => {
     // Prognose- und Ist-Werte werden parallel geladen: die Ist-Werte
@@ -616,28 +732,41 @@ async function refreshForecast() {
       ? `Prognose (mit Spannbereich) vs. tatsächlicher Ertrag von ${deviceName}, je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.`
       : "Prognose (mit Spannbereich) vs. tatsächlicher Ertrag (alle Wechselrichter), je Stunde. Für die laufende und künftige Stunden liegt noch kein Ist-Wert vor.";
 
-    const hoursTodayDatasets = [
-      {
-        label: "Prognose",
-        data: forecastRanges,
-        backgroundColor: "#38bdf8",
-        borderColor: "#38bdf8",
-        borderWidth: 1,
-        borderRadius: 3,
-        // Nur fuer den Tooltip mitgefuehrt (kein eigenes Chart.js-Feld) -
-        // die Balkenhoehe selbst ist bereits der Spannbereich (data oben),
-        // der Erwartungswert wird zusaetzlich im Tooltip genannt.
-        expectedData: forecastExpected,
-      },
-      {
-        label: "Tatsächlich",
-        data: actualValues,
-        backgroundColor: "#facc15",
-        borderColor: "#facc15",
-        borderWidth: 1,
-        borderRadius: 3,
-      },
-    ];
+    // Bei ausgewaehltem Einzelgeraet bleibt es bei den zwei kombinierten
+    // Balken (Prognose-Spannbereich + Tatsaechlich) wie bisher - im
+    // "Alle"-Modus dagegen je Wechselrichter ein eigenes Paar gestapelter
+    // Balken, damit sichtbar wird, welches Geraet wie viel zur jeweiligen
+    // Stunde beigetragen hat (siehe buildForecastDeviceDatasets()).
+    const hoursTodayDatasets = deviceId
+      ? [
+          {
+            label: "Prognose",
+            data: forecastRanges,
+            backgroundColor: "#38bdf8",
+            borderColor: "#38bdf8",
+            borderWidth: 1,
+            borderRadius: 3,
+            // Nur fuer den Tooltip mitgefuehrt (kein eigenes Chart.js-Feld) -
+            // die Balkenhoehe selbst ist bereits der Spannbereich (data oben),
+            // der Erwartungswert wird zusaetzlich im Tooltip genannt.
+            expectedData: forecastExpected,
+          },
+          {
+            label: "Tatsächlich",
+            data: actualValues,
+            backgroundColor: "#facc15",
+            borderColor: "#facc15",
+            borderWidth: 1,
+            borderRadius: 3,
+          },
+        ]
+      : buildForecastDeviceDatasets(todayHours, (hour, id) => {
+          if (!isHourElapsed(hour)) return null;
+          const bucket = actualBuckets.get(hour.local_hour);
+          if (!bucket) return null;
+          const value = bucket.values[id];
+          return value === undefined || value === null ? null : value;
+        });
 
     if (state.forecastHoursTodayChart) {
       state.forecastHoursTodayChart.data.labels = hourLabels;
@@ -662,24 +791,8 @@ async function refreshForecast() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label(context) {
-                    if (context.dataset.label === "Prognose") {
-                      const range = context.raw;
-                      const expected = context.dataset.expectedData?.[context.dataIndex];
-                      if (!range || expected === null || expected === undefined) {
-                        return "Prognose: –";
-                      }
-                      return (
-                        `Prognose: ${expected.toFixed(1)} kWh ` +
-                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      );
-                    }
-                    const value = context.parsed.y;
-                    if (value === null || value === undefined) {
-                      return `${context.dataset.label}: –`;
-                    }
-                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
-                  },
+                  label: forecastBarTooltipLabel,
+                  footer: forecastStackFooter,
                 },
               },
             },
@@ -736,18 +849,23 @@ async function refreshForecast() {
         tomorrowRanges.push(hourValues ? [hourValues.low_kw, hourValues.high_kw] : null);
       }
 
-      const tomorrowDatasets = [
-        {
-          label: "Prognose",
-          data: tomorrowRanges,
-          backgroundColor: "#38bdf8",
-          borderColor: "#38bdf8",
-          borderWidth: 1,
-          borderRadius: 3,
-          // Nur fuer den Tooltip mitgefuehrt, siehe hoursTodayDatasets oben.
-          expectedData: tomorrowExpected,
-        },
-      ];
+      // Fuer "morgen" gibt es naturgemaess keinen Ist-Wert (Tag liegt in der
+      // Zukunft) - im "Alle"-Modus daher nur der Prognose-Stapel je Geraet,
+      // kein "Tatsaechlich"-Stapel (getActual = null).
+      const tomorrowDatasets = deviceId
+        ? [
+            {
+              label: "Prognose",
+              data: tomorrowRanges,
+              backgroundColor: "#38bdf8",
+              borderColor: "#38bdf8",
+              borderWidth: 1,
+              borderRadius: 3,
+              // Nur fuer den Tooltip mitgefuehrt, siehe hoursTodayDatasets oben.
+              expectedData: tomorrowExpected,
+            },
+          ]
+        : buildForecastDeviceDatasets(tomorrowHours, null);
 
       if (state.forecastTomorrowChart) {
         state.forecastTomorrowChart.data.labels = tomorrowLabels;
@@ -772,17 +890,8 @@ async function refreshForecast() {
               plugins: {
                 tooltip: {
                   callbacks: {
-                    label(context) {
-                      const range = context.raw;
-                      const expected = context.dataset.expectedData?.[context.dataIndex];
-                      if (!range || expected === null || expected === undefined) {
-                        return "Prognose: –";
-                      }
-                      return (
-                        `Prognose: ${expected.toFixed(1)} kWh ` +
-                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      );
-                    },
+                    label: forecastBarTooltipLabel,
+                    footer: forecastStackFooter,
                   },
                 },
               },
@@ -906,27 +1015,32 @@ async function refreshForecastYesterday() {
       actualValues.push(hourValues ? hourValues.actual_kw : null);
     }
 
-    const datasets = [
-      {
-        label: "Prognose",
-        data: forecastRanges,
-        backgroundColor: "#38bdf8",
-        borderColor: "#38bdf8",
-        borderWidth: 1,
-        borderRadius: 3,
-        // Nur fuer den Tooltip mitgefuehrt - die Balkenhoehe selbst ist
-        // bereits der Spannbereich (data oben), siehe refreshForecast().
-        expectedData: forecastExpected,
-      },
-      {
-        label: "Tatsächlich",
-        data: actualValues,
-        backgroundColor: "#facc15",
-        borderColor: "#facc15",
-        borderWidth: 1,
-        borderRadius: 3,
-      },
-    ];
+    const datasets = deviceId
+      ? [
+          {
+            label: "Prognose",
+            data: forecastRanges,
+            backgroundColor: "#38bdf8",
+            borderColor: "#38bdf8",
+            borderWidth: 1,
+            borderRadius: 3,
+            // Nur fuer den Tooltip mitgefuehrt - die Balkenhoehe selbst ist
+            // bereits der Spannbereich (data oben), siehe refreshForecast().
+            expectedData: forecastExpected,
+          },
+          {
+            label: "Tatsächlich",
+            data: actualValues,
+            backgroundColor: "#facc15",
+            borderColor: "#facc15",
+            borderWidth: 1,
+            borderRadius: 3,
+          },
+        ]
+      : buildForecastDeviceDatasets(
+          data.hours,
+          (hour, id) => hour.devices?.find((d) => d.device_id === id)?.actual_kw ?? null
+        );
 
     if (state.forecastYesterdayChart) {
       state.forecastYesterdayChart.data.labels = hourLabels;
@@ -951,24 +1065,8 @@ async function refreshForecastYesterday() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label(context) {
-                    if (context.dataset.label === "Prognose") {
-                      const range = context.raw;
-                      const expected = context.dataset.expectedData?.[context.dataIndex];
-                      if (!range || expected === null || expected === undefined) {
-                        return "Prognose: –";
-                      }
-                      return (
-                        `Prognose: ${expected.toFixed(1)} kWh ` +
-                        `(Spannbereich ${range[0].toFixed(1)}–${range[1].toFixed(1)} kWh)`
-                      );
-                    }
-                    const value = context.parsed.y;
-                    if (value === null || value === undefined) {
-                      return `${context.dataset.label}: –`;
-                    }
-                    return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
-                  },
+                  label: forecastBarTooltipLabel,
+                  footer: forecastStackFooter,
                 },
               },
             },

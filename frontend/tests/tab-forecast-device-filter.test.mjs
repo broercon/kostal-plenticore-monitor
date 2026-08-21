@@ -127,14 +127,37 @@ test("Stuendliche Prognose (Balkendiagramm) zeigt nur die Stunden von heute, nic
   const labels = app.state.forecastHoursTodayChart.data.labels;
   assert.deepEqual(labels.sort(), ["12:00", "23:00"]);
 
-  // Der Prognose-Balken ist ein Floating Bar ([low, high] je Stunde) - der
-  // gelernte Spannbereich steckt damit direkt in derselben Spalte und
-  // Farbe wie die Prognose selbst, kein separater dritter Balken noetig.
-  // Der Erwartungswert bleibt zusaetzlich fuer den Tooltip erhalten
-  // (expectedData).
-  const forecastDataset = app.state.forecastHoursTodayChart.data.datasets.find(
-    (d) => d.label === "Prognose"
+  // Im Gesamt-Tab ("Alle") zeigt das Diagramm die Pro-Geraet-Aufschluesselung
+  // (siehe buildForecastDeviceDatasets()) statt eines einzelnen kombinierten
+  // Prognose-Balkens - je Wechselrichter ein eigener, gestapelter Balken.
+  const datasets = app.state.forecastHoursTodayChart.data.datasets;
+  const wr1 = datasets.find((d) => d.label === "Prognose WR1");
+  assert.ok(wr1);
+  assert.equal(wr1.stack, "expected");
+  assert.equal(wr1.data.length, 2);
+  for (const value of wr1.data) {
+    assert.equal(typeof value, "number");
+  }
+});
+
+test("Stuendliche Prognose (Balkendiagramm) filtert nach Wechsel auf WR1 auf den kombinierten Floating-Bar-Balken", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("forecast");
+  await waitFor(() => app.state.forecastHoursTodayChart !== null);
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(() =>
+    app.state.forecastHoursTodayChart.data.datasets.some((d) => d.label === "Prognose")
   );
+
+  // Bei ausgewaehltem Einzelgeraet bleibt es beim bisherigen kombinierten
+  // Floating-Bar-Balken (Prognose-Spannbereich) + "Tatsächlich" - die
+  // Pro-Geraet-Aufschluesselung ist dort redundant (schon auf ein Geraet
+  // gefiltert), siehe hoursTodayDatasets in refreshForecast().
+  const datasets = app.state.forecastHoursTodayChart.data.datasets;
+  assert.equal(datasets.length, 2);
+  const forecastDataset = datasets.find((d) => d.label === "Prognose");
   assert.equal(forecastDataset.data.length, 2);
   for (const range of forecastDataset.data) {
     assert.equal(range.length, 2);
@@ -143,41 +166,47 @@ test("Stuendliche Prognose (Balkendiagramm) zeigt nur die Stunden von heute, nic
   assert.equal(forecastDataset.expectedData.length, 2);
 });
 
-test("Stuendliche Prognose (Balkendiagramm) filtert nach Wechsel auf WR1 auf dessen eigenen Anteil", async () => {
+test("Stuendliche Prognose (Balkendiagramm): Pro-Geraet-Aufschluesselung im Gesamt-Tab, kombiniert nach Wechsel auf WR1", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
   await waitFor(() => app.state.forecastHoursTodayChart !== null);
 
+  function datasets() {
+    return app.state.forecastHoursTodayChart.data.datasets;
+  }
+  function byLabel(label) {
+    return datasets().find((d) => d.label === label);
+  }
+
+  // Gesamt-Tab ("Alle"): je Wechselrichter ein eigener Prognose- und
+  // Tatsächlich-Balken (gestapelt), analog zum Wechselrichter-Vergleich.
+  // WR1: 2.0 (23 Uhr) und 2.7 (12 Uhr) erwartet, Ist-Wert 0 bzw. 2.5 kWh.
+  // WR2: 1.0 und 1.5 erwartet, Ist-Wert 0 bzw. 1.2 kWh.
+  assert.deepEqual([...byLabel("Prognose WR1").data].sort((a, b) => a - b), [2.0, 2.7]);
+  assert.deepEqual([...byLabel("Prognose WR2").data].sort((a, b) => a - b), [1.0, 1.5]);
+  assert.deepEqual([...byLabel("Tatsächlich WR1").data].sort((a, b) => a - b), [0, 2.5]);
+  assert.deepEqual([...byLabel("Tatsächlich WR2").data].sort((a, b) => a - b), [0, 1.2]);
+  assert.equal(byLabel("Prognose WR1").stack, "expected");
+  assert.equal(byLabel("Tatsächlich WR1").stack, "actual");
+
+  app.clickTab("WR1");
+  await waitFor(() => app.state.selectedDeviceId === "wr1");
+  await waitFor(() => datasets().some((d) => d.label === "Prognose"));
+
   function forecastDataset() {
-    return app.state.forecastHoursTodayChart.data.datasets.find((d) => d.label === "Prognose");
+    return byLabel("Prognose");
   }
   function actualData() {
-    return app.state.forecastHoursTodayChart.data.datasets.find((d) => d.label === "Tatsächlich")
-      .data;
+    return byLabel("Tatsächlich").data;
   }
-  // Range-Werte (Balkenhoehe des Floating Bars) ueber ihr oberes Ende
-  // (high_kw) vergleichen - eindeutig genug, um die beiden Mock-Stunden zu
-  // unterscheiden.
   function forecastHighValues() {
     return [...forecastDataset().data].map((range) => range[1]);
   }
 
-  // Kombiniert (Alle): 23:00-Stunde (Index 0 nach Sortierung im Mock ist
-  // die 23-Uhr-Stunde zuerst, siehe harness.mjs) hat expected_kw 3.0 (WR1
-  // 2.0 + WR2 1.0, Spannbereich 2.4-3.6), die 12-Uhr-Stunde 4.2 (2.7 + 1.5,
-  // Spannbereich 3.4-5.0). Ist-Werte laut Mock (hourly-per-device):
-  // 23:00-Stunde 0 kWh, 12-Uhr-Stunde 2.5+1.2=3.7 kWh.
-  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [3.0, 4.2]);
-  assert.deepEqual(forecastHighValues().sort((a, b) => a - b), [3.6, 5.0]);
-  assert.deepEqual([...actualData()].sort((a, b) => a - b), [0, 3.7]);
-
-  app.clickTab("WR1");
-  await waitFor(() => app.state.selectedDeviceId === "wr1");
-  await waitFor(() => forecastDataset().expectedData.includes(2.0));
-
-  // Nur WR1s Anteil: 2.0 (23 Uhr, Spannbereich 1.6-2.4) und 2.7 (12 Uhr,
-  // Spannbereich 2.1-3.2); Ist-Wert nur WR1s gemessener Anteil (0 bzw. 2.5
-  // kWh), nicht die Summe mit WR2.
+  // Nach Wechsel auf WR1: wieder der bisherige kombinierte Floating-Bar-
+  // Balken, aber nur mit WR1s eigenem Anteil - 2.0 (23 Uhr, Spannbereich
+  // 1.6-2.4) und 2.7 (12 Uhr, Spannbereich 2.1-3.2); Ist-Wert nur WR1s
+  // gemessener Anteil (0 bzw. 2.5 kWh), nicht die Summe mit WR2.
   assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [2.0, 2.7]);
   assert.deepEqual(forecastHighValues().sort((a, b) => a - b), [2.4, 3.2]);
   assert.deepEqual([...actualData()].sort((a, b) => a - b), [0, 2.5]);
@@ -220,7 +249,7 @@ test("Prognose gestern zeigt das Datum vollstaendig formatiert, nicht als rohen 
   assert.doesNotMatch(status, /2026-07-12/);
 });
 
-test("Prognose gestern zeigt die stuendlichen Werte kombiniert und filtert nach Wechselrichter", async () => {
+test("Prognose gestern zeigt die stuendlichen Werte je Wechselrichter und kombiniert nach Filterwechsel", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
   await waitFor(() => app.state.forecastYesterdayChart !== null);
@@ -228,24 +257,34 @@ test("Prognose gestern zeigt die stuendlichen Werte kombiniert und filtert nach 
   const labels = app.state.forecastYesterdayChart.data.labels;
   assert.equal(labels.length, 2);
 
-  function forecastDataset() {
-    return app.state.forecastYesterdayChart.data.datasets.find((d) => d.label === "Prognose");
+  function datasets() {
+    return app.state.forecastYesterdayChart.data.datasets;
   }
-  function actualData() {
-    return app.state.forecastYesterdayChart.data.datasets.find(
-      (d) => d.label === "Tatsächlich"
-    ).data;
+  function byLabel(label) {
+    return datasets().find((d) => d.label === label);
   }
 
-  // Kombiniert (Alle): Stunde 1 (07:00 lokal) hat expected_kw 2.0 (1.2+0.8),
-  // Stunde 2 (13:00 lokal) 4.5 (3.0+1.5).
-  assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [2.0, 4.5]);
-  assert.deepEqual([...actualData()].sort((a, b) => a - b), [2.3, 4.0]);
+  // Gesamt-Tab ("Alle"): Pro-Geraet-Aufschluesselung statt eines einzelnen
+  // kombinierten Balkens - WR1 erwartet 1.2/3.0, Ist 1.4/2.6; WR2 erwartet
+  // 0.8/1.5, Ist 0.9/1.4 (siehe harness.mjs /api/forecast/yesterday-Mock).
+  assert.deepEqual([...byLabel("Prognose WR1").data].sort((a, b) => a - b), [1.2, 3.0]);
+  assert.deepEqual([...byLabel("Prognose WR2").data].sort((a, b) => a - b), [0.8, 1.5]);
+  assert.deepEqual([...byLabel("Tatsächlich WR1").data].sort((a, b) => a - b), [1.4, 2.6]);
+  assert.deepEqual([...byLabel("Tatsächlich WR2").data].sort((a, b) => a - b), [0.9, 1.4]);
 
   app.clickTab("WR1");
   await waitFor(() => app.state.selectedDeviceId === "wr1");
-  await waitFor(() => forecastDataset().expectedData.includes(1.2));
+  await waitFor(() => datasets().some((d) => d.label === "Prognose"));
 
+  function forecastDataset() {
+    return byLabel("Prognose");
+  }
+  function actualData() {
+    return byLabel("Tatsächlich").data;
+  }
+
+  // Nach Wechsel auf WR1: wieder der bisherige kombinierte Balken, aber nur
+  // mit WR1s eigenem Anteil.
   assert.deepEqual([...forecastDataset().expectedData].sort((a, b) => a - b), [1.2, 3.0]);
   assert.deepEqual([...actualData()].sort((a, b) => a - b), [1.4, 2.6]);
 });
