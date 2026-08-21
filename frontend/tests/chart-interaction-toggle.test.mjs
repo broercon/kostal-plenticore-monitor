@@ -3,7 +3,9 @@
 // aber ALLE Diagramme auf einmal umgeschaltet hat) jetzt automatisch je
 // Diagramm bestimmt (siehe chartEventsFor() in app.js): am Desktop an, wenn
 // genau EIN Tag dargestellt wird, sonst aus; auf einem Touch-Geraet immer aus
-// (damit die Seite frei scrollt).
+// (damit die Seite frei scrollt). Ausnahme auf Nutzerwunsch: bei Prognose
+// und Autarkiegrad sind die Werte am Desktop immer an, unabhaengig von der
+// Tagesanzahl (chartEventsFor(true) statt chartEventsFor(isSingleDayView)).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -69,7 +71,7 @@ test("Wechselrichter-Vergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne
   assert.equal(app.state.hourlyCompare.chart, chartBefore);
 });
 
-test("Tagesverbrauch und Autarkiegrad zeigen strukturell nie einen Einzeltag - Werte-Anzeige bleibt immer aus", async () => {
+test("Tagesverbrauch zeigt strukturell nie einen Einzeltag - Werte-Anzeige bleibt aus, Autarkiegrad aber immer an", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => app.state.tabsLoaded.has("autarky"));
@@ -77,10 +79,14 @@ test("Tagesverbrauch und Autarkiegrad zeigen strukturell nie einen Einzeltag - W
   await waitFor(() => !!app.state.autarky.chart);
 
   assert.equal(isInteractive(app.state.dailyTotals.chart), false);
-  assert.equal(isInteractive(app.state.autarky.chart), false);
+  // Abweichung vom sonstigen Ein-Tag/Mehr-Tage-Automatismus: beim
+  // Autarkiegrad sollen die Werte unabhaengig vom Zeitraum immer sichtbar
+  // sein (auf Wunsch des Nutzers), obwohl die Ansicht strukturell nie
+  // einen Einzeltag zeigt.
+  assert.equal(isInteractive(app.state.autarky.chart), true);
 });
 
-test("Stuendliche Prognose-Diagramme (heute/morgen/gestern, je genau ein Tag) sind an, die mehrtaegigen Prognose-Diagramme aus", async () => {
+test("Alle Prognose-Diagramme (heute/morgen/gestern, Tagesuebersicht, Prognosekontrolle) zeigen die Werte immer an", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("forecast"));
   await waitFor(() => !!app.state.forecastHoursTodayChart);
@@ -93,8 +99,12 @@ test("Stuendliche Prognose-Diagramme (heute/morgen/gestern, je genau ein Tag) si
   if (app.state.forecastTomorrowChart) {
     assert.equal(isInteractive(app.state.forecastTomorrowChart), true);
   }
-  assert.equal(isInteractive(app.state.forecastChart), false);
-  assert.equal(isInteractive(app.state.forecastAccuracyChart), false);
+  // Abweichung vom sonstigen Ein-Tag/Mehr-Tage-Automatismus: bei der
+  // Prognose sollen die Werte unabhaengig von der Tagesanzahl immer
+  // sichtbar sein (auf Wunsch des Nutzers), auch in der mehrtaegigen
+  // Tagesuebersicht und der Prognosekontrolle.
+  assert.equal(isInteractive(app.state.forecastChart), true);
+  assert.equal(isInteractive(app.state.forecastAccuracyChart), true);
 });
 
 test("Auf einem Touch-Geraet bleiben die Werte auch in der Tagesansicht immer aus", async () => {

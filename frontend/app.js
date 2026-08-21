@@ -793,7 +793,7 @@ async function refreshForecast() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(false), // Tagesuebersicht zeigt immer FORECAST_DAYS=7 Tage
+        events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
         interaction: { mode: "index", intersect: false },
         scales: {
           x: { ticks: { maxTicksLimit: 14 } },
@@ -1123,7 +1123,7 @@ async function refreshForecastAccuracy() {
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          events: chartEventsFor(false), // Genauigkeit wird immer ueber mehrere Tage (days=30) gebildet
+          events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
           scales: {
             y: {
               min: yRange.min,
@@ -2120,7 +2120,7 @@ async function refreshAutarkyChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(false), // Autarkiegrad ist monatsweise, nie ein Einzeltag
+        events: chartEventsFor(true), // Autarkiegrad: Werte-Anzeige immer an (unabhaengig vom Zeitraum), siehe Nutzerwunsch
         scales: {
           x: {
             ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
