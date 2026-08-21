@@ -84,6 +84,47 @@ function purePvWatt(r) {
   return Math.max(0, r.pv_power_w - (r.battery_power_w || 0));
 }
 
+// Deckungsgleich mit aggregation.MAX_INTEGRATION_GAP_HOURS im Backend: ein
+// Intervall zwischen zwei Messpunkten, das laenger als 30 Minuten
+// auseinanderliegt (z.B. Poller-Ausfall), wird bei der Kumulation NICHT
+// interpoliert, sondern uebersprungen (traegt 0 bei) - siehe dortige
+// Begruendung (sonst wuerde eine Datenluecke die Tagessumme verfaelschen).
+const MAX_INTEGRATION_GAP_HOURS = 0.5;
+
+// Bildet aus einer Momentanleistungs-Zeitreihe (Watt, wie sie
+// /api/readings/history liefert) eine LAUFENDE kumulierte Energiemenge
+// (kWh) je Zeitpunkt - per Trapezregel, spiegelbildlich zu
+// aggregation.integrate_kwh() im Backend (das nur eine EINZELNE Summe ueber
+// einen ganzen Zeitraum liefert, keinen laufenden Verlauf). Fuer die
+// Einspeisungskurve im Tagesmodus des Leistungsverlaufs (refreshChart()):
+// so zeigt der Diagrammwert um z.B. 13:30 Uhr, wie viel seit Mitternacht
+// bereits insgesamt eingespeist wurde, statt nur die Momentanleistung.
+//
+// Liefert genau einen Ausgabepunkt PRO Eingabepunkt (gleiche Laenge/
+// Reihenfolge wie die anderen, nicht kumulierten Kurven im selben
+// Diagramm) - waehrend einer Datenluecke (Feld null/undefined oder zu
+// grosser Zeitabstand) bleibt die Summe einfach auf dem letzten Stand
+// stehen, statt Punkte auszulassen (das haette bei der "index"-Tooltip-
+// Zuordnung ueber mehrere Kurven hinweg zu Verwerfungen fuehren koennen).
+function cumulativeKwhSeries(points, field, xFor) {
+  let energyWh = 0;
+  let prevValid = null; // { t: Millisekunden, v: Watt }
+  return points.map((p) => {
+    const t = new Date(p.timestamp).getTime();
+    const v = p[field];
+    if (v !== null && v !== undefined) {
+      if (prevValid !== null) {
+        const dtHours = (t - prevValid.t) / 3600000;
+        if (dtHours > 0 && dtHours <= MAX_INTEGRATION_GAP_HOURS) {
+          energyWh += ((prevValid.v + v) / 2) * dtHours;
+        }
+      }
+      prevValid = { t, v };
+    }
+    return { x: xFor(p), y: energyWh / 1000 };
+  });
+}
+
 async function fetchJson(url, options) {
   const res = await fetch(url, options);
   if (res.status === 401) {
@@ -1532,14 +1573,25 @@ async function refreshChart() {
       // also immer den ganzen Tag, auch wenn aktuell erst z.B. 14 Uhr ist -
       // der restliche Tag bleibt dann leer, statt dass die Achse "dynamisch"
       // beim jeweils letzten Messwert endet.
-      datasets = Object.keys(fieldFor).map((key) => ({
-        label: metricLabel[key],
-        data: points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: key === "pv" ? purePvWatt(p) : p[fieldFor[key]] })),
-        borderColor: CHART_METRIC_COLORS[key],
-        backgroundColor: CHART_METRIC_COLORS[key] + "33",
-        tension: 0.25,
-        pointRadius: 0,
-      }));
+      datasets = Object.keys(fieldFor).map((key) => {
+        // Einspeisung waechst im Tagesmodus kumulativ seit Mitternacht
+        // (kWh, eigene rechte Achse "y1"), statt wie die uebrigen Kurven
+        // die Momentanleistung (W, linke Achse) zu zeigen - siehe
+        // cumulativeKwhSeries().
+        const isCumulativeFeedin = key === "feedin";
+        return {
+          label: isCumulativeFeedin ? `${metricLabel[key]} (kumuliert seit 0 Uhr)` : metricLabel[key],
+          data: isCumulativeFeedin
+            ? cumulativeKwhSeries(points, fieldFor.feedin, (p) => minuteOfLocalDay(new Date(p.timestamp)))
+            : points.map((p) => ({ x: minuteOfLocalDay(new Date(p.timestamp)), y: key === "pv" ? purePvWatt(p) : p[fieldFor[key]] })),
+          borderColor: CHART_METRIC_COLORS[key],
+          backgroundColor: CHART_METRIC_COLORS[key] + "33",
+          tension: 0.25,
+          pointRadius: 0,
+          yAxisID: isCumulativeFeedin ? "y1" : "y",
+          unit: isCumulativeFeedin ? "kwh" : "watt",
+        };
+      });
     } else {
       labels = points.map((p) => {
         const d = new Date(p.timestamp);
@@ -1552,6 +1604,8 @@ async function refreshChart() {
         backgroundColor: CHART_METRIC_COLORS[key] + "33",
         tension: 0.25,
         pointRadius: 0,
+        yAxisID: "y",
+        unit: "watt",
       }));
     }
 
@@ -1596,6 +1650,19 @@ async function refreshChart() {
             ticks: { color: "#94a3b8", callback: (v) => fmtWatt(v) },
             grid: { color: "#334155" },
           },
+          // Nur im Tagesmodus: eigene rechte Achse fuer die kumulierte
+          // Einspeisung (kWh) - deren Groessenordnung (wenige bis wenige
+          // Dutzend kWh/Tag) passt nicht zur Watt-Skala der uebrigen Kurven.
+          ...(isDayMode
+            ? {
+                y1: {
+                  position: "right",
+                  ticks: { color: "#94a3b8", callback: (v) => fmtKwh(v) },
+                  grid: { display: false },
+                  title: { display: true, text: "Einspeisung (kumuliert)", color: "#94a3b8" },
+                },
+              }
+            : {}),
         },
         plugins: {
           legend: { labels: { color: "#e2e8f0" } },
@@ -1603,7 +1670,10 @@ async function refreshChart() {
             callbacks: {
               title: (items) =>
                 isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
-              label: (item) => `${item.dataset.label}: ${fmtWatt(item.parsed.y)}`,
+              label: (item) =>
+                `${item.dataset.label}: ${
+                  item.dataset.unit === "kwh" ? fmtKwh(item.parsed.y) : fmtWatt(item.parsed.y)
+                }`,
             },
           },
         },
