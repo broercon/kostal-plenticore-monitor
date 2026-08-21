@@ -100,7 +100,6 @@ test("Prognose-Tab: Flyout laesst sich auf einem Touch-Geraet nach Auswahl einer
   );
 });
 
-
 test("Kopfzeile (Titel + Status) im Prognose-Tab bleibt unabhaengig von der gewaehlten Ansicht sichtbar", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("forecast");
