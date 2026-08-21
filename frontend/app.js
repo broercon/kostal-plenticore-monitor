@@ -31,9 +31,6 @@ const state = {
     days: 1,
     chart: null,
   },
-  // Werte-Anzeige der Diagramme (Tooltip/Hover). Auf Touch-Geraeten
-  // standardmaessig AUS, damit die Seite frei scrollt; per Umschalter aktivierbar.
-  chartsInteractive: true,
   forecastChart: null,
   forecastAccuracyChart: null,
   forecastHoursTodayChart: null,
@@ -782,7 +779,7 @@ async function refreshForecast() {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            events: chartEvents(),
+            events: chartEventsFor(true), // "Prognose heute" ist immer genau ein Tag
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -881,7 +878,7 @@ async function refreshForecast() {
             options: {
               responsive: true,
               maintainAspectRatio: false,
-              events: chartEvents(),
+              events: chartEventsFor(true), // "Prognose morgen" ist immer genau ein Tag
               interaction: { mode: "index", intersect: false },
               scales: {
                 x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -946,7 +943,7 @@ async function refreshForecast() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
         interaction: { mode: "index", intersect: false },
         scales: {
           x: { ticks: { maxTicksLimit: 14 } },
@@ -1056,7 +1053,7 @@ async function refreshForecastYesterday() {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            events: chartEvents(),
+            events: chartEventsFor(true), // "Prognose gestern" ist immer genau ein Tag
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -1265,7 +1262,7 @@ async function refreshForecastAccuracy() {
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          events: chartEvents(),
+          events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
           scales: {
             y: {
               min: yRange.min,
@@ -1740,7 +1737,7 @@ async function refreshChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(isDayMode),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: xScale,
@@ -1934,6 +1931,12 @@ async function refreshDayCompareChart() {
 
     if (state.dayCompare.chart) {
       state.dayCompare.chart.data.datasets = datasets;
+      // Die Werte-Anzeige haengt von der Tagesanzahl ab (siehe
+      // chartEventsFor) - anders als bei den Daten selbst wird "options"
+      // beim reinen Aktualisieren oben nicht automatisch neu ausgewertet,
+      // deshalb hier explizit nachziehen, wenn sich die Tagesanzahl
+      // (1 Tag <-> mehrere Tage) seit dem letzten Aufruf geaendert hat.
+      state.dayCompare.chart.options.events = chartEventsFor(days === 1);
       state.dayCompare.chart.update();
       return;
     }
@@ -1945,7 +1948,7 @@ async function refreshDayCompareChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(days === 1),
         // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
         // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
         // vergleichen lassen.
@@ -2134,7 +2137,7 @@ async function refreshDailyTotalsChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(false), // Tagesverbrauch zeigt strukturell nie nur einen Tag (min. 14)
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
@@ -2285,7 +2288,7 @@ async function refreshAutarkyChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(true), // Autarkiegrad: Werte-Anzeige immer an (unabhaengig vom Zeitraum), siehe Nutzerwunsch
         scales: {
           x: {
             ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
@@ -2394,6 +2397,10 @@ async function refreshHourlyCompareChart() {
     if (state.hourlyCompare.chart) {
       state.hourlyCompare.chart.data.labels = labels;
       state.hourlyCompare.chart.data.datasets = datasets;
+      // Siehe Kommentar in refreshDayCompareChart(): options.events muss bei
+      // einer Aenderung der Tagesanzahl (1 Tag <-> mehrere Tage) explizit
+      // nachgezogen werden.
+      state.hourlyCompare.chart.options.events = chartEventsFor(!multiDay);
       state.hourlyCompare.chart.update();
       return;
     }
@@ -2405,7 +2412,7 @@ async function refreshHourlyCompareChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEvents(),
+        events: chartEventsFor(!multiDay),
         // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
         // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
         // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
@@ -2865,11 +2872,17 @@ function setupViewTabs() {
   activate(initial);
 }
 
-function chartEvents() {
-  // Leeres Array = Chart.js reagiert auf keinerlei Zeiger-/Touch-Events
-  // (kein Tooltip/Hover). So faengt das Diagramm auf dem Handy die
-  // Scroll-Geste nicht ab, solange die Werte-Anzeige aus ist.
-  return state.chartsInteractive
+// Werte-Anzeige (Tooltip/Hover) je Diagramm: kein manueller Umschalter mehr
+// (frueher ein einzelner globaler Knopf, der verwirrenderweise gleichzeitig
+// an mehreren Stellen im Dashboard auftauchte, obwohl er ALLE Diagramme auf
+// einmal umgeschaltet hat) - stattdessen automatisch abhaengig davon, ob
+// gerade genau EIN Tag dargestellt wird: bei mehreren Tagen/einem laengeren
+// Zeitraum zaehlt der grobe Verlauf mehr als ein einzelner Messpunkt, dort
+// bleiben die Werte deshalb ausgeblendet. Auf einem Touch-Geraet bleiben
+// sie zusaetzlich IMMER aus, damit die Seite frei scrollt (kein Tooltip, der
+// die Scroll-Geste abfaengt).
+function chartEventsFor(isSingleDayView) {
+  return !isTouchDevice() && isSingleDayView
     ? ["mousemove", "mouseout", "click", "touchstart", "touchmove"]
     : [];
 }
@@ -2881,32 +2894,6 @@ function isTouchDevice() {
     typeof window.matchMedia === "function" &&
     window.matchMedia("(hover: none), (pointer: coarse)").matches
   );
-}
-
-// Tooltip/Hover (Werte-Anzeige) fuer ALLE Diagramme ein-/ausschalten. Aus =
-// keine Events -> das Diagramm faengt die Touch-Geste nicht ab, die Seite
-// scrollt frei; an = Werte lassen sich per Tippen/Hovern ablesen.
-function setChartsInteractive(on) {
-  state.chartsInteractive = on;
-  const charts = [
-    state.chart,
-    state.dayCompare.chart,
-    state.dailyTotals.chart,
-    state.hourlyCompare.chart,
-    state.forecastChart,
-    state.forecastAccuracyChart,
-    state.forecastHoursTodayChart,
-    state.forecastYesterdayChart,
-  ];
-  for (const c of charts) {
-    if (!c || !c.options) continue;
-    c.options.events = chartEvents();
-    if (typeof c.update === "function") c.update();
-  }
-  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
-    btn.textContent = on ? "Werte anzeigen: an" : "Werte anzeigen: aus";
-    btn.classList.toggle("active", on);
-  }
 }
 
 function setupTopbarMenu() {
@@ -2932,13 +2919,6 @@ function setupTopbarMenu() {
   });
 }
 
-function setupChartInteractionToggle() {
-  for (const btn of document.querySelectorAll(".chart-interaction-toggle")) {
-    btn.addEventListener("click", () => setChartsInteractive(!state.chartsInteractive));
-  }
-}
-
-
 // Aktualisierungs-Ring in der Topbar bei jeder Kopf-Aktualisierung neu
 // starten (synchron zum Auto-Refresh-Intervall).
 function restartRefreshRing() {
@@ -2951,9 +2931,6 @@ function restartRefreshRing() {
 
 async function init() {
   await checkAuth(); // leitet bei fehlender/ungueltiger Sitzung zu login.html um
-  // Auf Touch-Geraeten die Diagramm-Interaktion standardmaessig ausschalten
-  // (Scrollen soll Vorrang haben); am Desktop (Maus) an lassen.
-  state.chartsInteractive = !isTouchDevice();
   setupChangePassword();
   setupLogout();
   setupTopbarMenu();
@@ -2967,7 +2944,6 @@ async function init() {
   setupHourlyCompareControls();
   updateHourlyCompareVisibility();
   setupForecastSubView();
-  setupChartInteractionToggle();
   // Alle Tabs laden jetzt schon beim Start im Hintergrund (nicht erst beim
   // ersten Anklicken, wie frueher) - der Tab-Wechsel selbst wird dadurch
   // spuerbar schneller, weil Daten/Diagramme meist schon bereitstehen,
@@ -2981,7 +2957,6 @@ async function init() {
     startTabInterval(tabId);
   }
   setupViewTabs();
-  setChartsInteractive(state.chartsInteractive);
   const LIVE_REFRESH_MS = 20000;
   const ringEl = document.querySelector(".refresh-ring-progress");
   if (ringEl) ringEl.style.setProperty("--refresh-secs", LIVE_REFRESH_MS / 1000 + "s");

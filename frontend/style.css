@@ -959,26 +959,3 @@ canvas {
     text-align: left;
   }
 }
-
-
-/* ---- Werte-Anzeige (Hover/Tooltip) umschaltbar (v.a. mobil) ---- */
-
-.chart-interaction-toggle {
-  font-size: 0.8rem;
-  padding: 5px 10px;
-  color: var(--muted);
-  display: none; /* nur auf Touch-Geraeten eingeblendet, siehe Media-Query */
-}
-
-.chart-interaction-toggle.active {
-  background: var(--accent-blue);
-  color: #0f172a;
-  border-color: var(--accent-blue);
-  font-weight: 600;
-}
-
-@media (hover: none), (pointer: coarse) {
-  .chart-interaction-toggle {
-    display: inline-flex;
-  }
-}
