@@ -421,3 +421,19 @@ es unverändert beim bisherigen, einzelnen Floating-Bar-Balken (Prognose
 inkl. gelerntem Spannbereich) plus einem "Tatsächlich"-Balken - die
 Pro-Geräte-Aufschlüsselung wäre dort redundant, da schon auf ein Gerät
 gefiltert ist.
+
+### Prognosekontrolle: "im Rahmen"-Markierung (reine Anzeige-Toleranz)
+
+Die Genauigkeitsberechnung selbst (`accuracy_percent`, `difference_kwh`,
+`difference_percent` in `backend/app/forecast_evaluation.py`) bleibt
+unveraendert und weiterhin exakt - eine Wetterprognose auf die Kommastelle
+genau zu erwarten wäre unrealistisch, aber die Kennzahlen selbst sollen
+diese Unschärfe nicht verschleiern.
+
+Stattdessen markiert das Frontend (`isDeviationWithinDisplayTolerance()`
+in `app.js`) Tage bzw. "Heute (bisher)", deren Abweichung innerhalb einer
+Toleranz liegt, zusätzlich mit dem Hinweis "im Rahmen" - die Toleranz ist
+das Maximum aus einem festen Sockel (0,5 kWh, damit auch kleine Tage
+profitieren) und 10 % des erwarteten Tageswerts. Die zugrunde liegenden
+Zahlen (Abweichung in kWh/%, Genauigkeit) werden dabei nicht verändert
+oder ausgeblendet, nur zusätzlich eingeordnet.
