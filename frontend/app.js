@@ -2313,8 +2313,12 @@ async function refreshAutarkyChart() {
               afterLabel: (item) => {
                 const m = autarkyMonthsData[item.dataIndex];
                 if (!m) return "";
-                const ownKwh = (m.pv_kwh + m.battery_kwh).toFixed(1);
-                return `PV + Speicher: ${ownKwh} kWh · Netz: ${m.grid_kwh.toFixed(1)} kWh`;
+                // Auf ganze kWh gerundet statt mit Nachkommastelle - bei
+                // Monatssummen im zwei- bis dreistelligen kWh-Bereich ist
+                // eine Nachkommastelle keine sinnvolle Genauigkeit, siehe
+                // Nutzerwunsch.
+                const ownKwh = Math.round(m.pv_kwh + m.battery_kwh);
+                return `PV + Speicher: ${ownKwh} kWh · Netz: ${Math.round(m.grid_kwh)} kWh`;
               },
             },
           },
