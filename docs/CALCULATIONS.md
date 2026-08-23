@@ -421,3 +421,32 @@ es unverändert beim bisherigen, einzelnen Floating-Bar-Balken (Prognose
 inkl. gelerntem Spannbereich) plus einem "Tatsächlich"-Balken - die
 Pro-Geräte-Aufschlüsselung wäre dort redundant, da schon auf ein Gerät
 gefiltert ist.
+
+## Prognosekontrolle: Genauigkeit mit Toleranz statt auf das Watt genau
+
+`accuracy_percent` (siehe `backend/app/forecast_evaluation.py`) misst, wie
+gut die stündliche Prognose mit dem tatsächlichen Ertrag übereinstimmt:
+100 % minus (Summe der absoluten stündlichen Fehler ⁄ tatsächlicher
+Ertrag). Bewusst die Summe der Beträge je Stunde statt der Netto-Differenz
+über den Tag - sonst würde ein Tag mit vormittags zu hoher und nachmittags
+zu niedriger Prognose fälschlich als treffsicher gelten, nur weil sich die
+Fehler beim Aufsummieren gegenseitig aufheben.
+
+Eine Wetterprognose kann und soll aber nicht auf das Watt genau treffen -
+das wäre eine unrealistische Erwartung an das Modell. Deshalb zieht
+`_tolerant_hour_error_w()` von jedem stündlichen Fehler zunächst eine
+Toleranz ab, bevor er überhaupt in die Genauigkeit einfließt: das Maximum
+aus einem festen Sockel (100 W, deckt Mess-/Rundungsrauschen bei kleinen
+Leistungen ab) und 5 % des tatsächlichen Stundenwerts (skaliert mit der
+Anlagengröße/Tageszeit). Eine Stunde, die z. B. nur 80 W daneben lag,
+zählt dadurch als vollständig getroffen.
+
+Wichtig: das betrifft ausschließlich `accuracy_percent`. Die tatsächliche,
+ungefilterte Abweichung (`difference_kwh`/`difference_percent`) bleibt
+davon unberührt und wird nirgends verschleiert - nur die Genauigkeits-
+Kennzahl selbst bewertet nicht mehr unrealistisch streng.
+
+Zusätzlich markiert das Frontend (`isDeviationWithinDisplayTolerance()` in
+`app.js`) Tage, deren *Netto*-Abweichung innerhalb einer eigenen, rein
+kosmetischen Anzeige-Toleranz liegt, mit dem Hinweis "im Rahmen" - das ist
+unabhängig von der obigen, echten Berechnung und ändert keine Zahlen.

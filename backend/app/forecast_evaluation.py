@@ -146,8 +146,35 @@ def load_frozen_predictions(
     return dict(result)
 
 
+# Toleranz, bevor die stuendliche Abweichung ueberhaupt in die Genauigkeit
+# (accuracy_percent) einfliesst - eine Wetterprognose kann und soll nicht
+# auf das Watt genau treffen, das waere eine unrealistische Erwartung an
+# das Modell. Methodisch begruendet (deckt Mess-/Rundungsrauschen und die
+# unvermeidbare Unschaerfe einer Wettervorhersage ab), keine kosmetische
+# Manipulation: difference_kwh/difference_percent (die tatsaechliche,
+# ungefilterte Abweichung) bleiben davon unberuehrt und weiterhin exakt.
+#
+# Kombination aus festem Sockel (deckt Rauschen bei kleinen Leistungen ab,
+# wo ein reiner Prozentsatz kaum etwas waere) und einem Prozentsatz des
+# TATSAECHLICHEN Stundenwerts (skaliert mit der Anlagengroesse/Tageszeit) -
+# je nachdem, was fuer die jeweilige Stunde groesser ist.
+ACCURACY_TOLERANCE_MIN_W = 100.0
+ACCURACY_TOLERANCE_PERCENT = 5.0
+
+
+def _tolerant_hour_error_w(expected_w: float, actual_w: float) -> float:
+    """Absoluter Stundenfehler abzueglich der obigen Toleranz (nie unter
+    0). Muss VOR dem Aufsummieren mehrerer Stunden angewendet werden (siehe
+    _build_accuracy_days) - eine Toleranz erst auf die bereits aufsummierte
+    Tagesabweichung anzuwenden, wuerde bei vielen Stunden praktisch
+    wirkungslos verschwinden."""
+    tolerance_w = max(ACCURACY_TOLERANCE_MIN_W, ACCURACY_TOLERANCE_PERCENT / 100 * actual_w)
+    return max(0.0, abs(expected_w - actual_w) - tolerance_w)
+
+
 def _accuracy_from_absolute_error(abs_error_kwh: float, actual_kwh: float) -> float | None:
-    """Genauigkeit auf Basis der Summe der ABSOLUTEN stuendlichen Fehler,
+    """Genauigkeit auf Basis der Summe der (bereits um die Toleranz aus
+    _tolerant_hour_error_w reduzierten) ABSOLUTEN stuendlichen Fehler,
     nicht der Differenz der (ueber mehrere Stunden aufsummierten)
     Gesamtwerte - siehe get_forecast_accuracy() fuer die Begruendung: ein
     Tag mit vormittags zu hoher und nachmittags zu niedriger Prognose darf
@@ -195,7 +222,11 @@ def _build_accuracy_days(
     for (date_key, device_id), samples in by_day_device.items():
         expected_kwh = sum(item[0] for item in samples) / 1000
         actual_kwh = sum(item[1] for item in samples) / 1000
-        abs_error_kwh = sum(abs(item[0] - item[1]) for item in samples) / 1000
+        # Toleranz je Stunde VOR dem Aufsummieren anwenden (siehe
+        # _tolerant_hour_error_w), nicht abs(item[0] - item[1]) direkt.
+        abs_error_kwh = (
+            sum(_tolerant_hour_error_w(item[0], item[1]) for item in samples) / 1000
+        )
         device_day_entries[date_key].append(
             {
                 "device_id": device_id,
@@ -245,7 +276,7 @@ def _build_accuracy_days(
     for (date_key, _hour), (expected_w, actual_w) in combined_hourly.items():
         by_day_expected[date_key] += expected_w / 1000
         by_day_actual[date_key] += actual_w / 1000
-        by_day_abs_error[date_key] += abs(expected_w - actual_w) / 1000
+        by_day_abs_error[date_key] += _tolerant_hour_error_w(expected_w, actual_w) / 1000
 
     result_days = []
     total_abs_error = 0.0
