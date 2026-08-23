@@ -422,18 +422,39 @@ inkl. gelerntem Spannbereich) plus einem "Tatsächlich"-Balken - die
 Pro-Geräte-Aufschlüsselung wäre dort redundant, da schon auf ein Gerät
 gefiltert ist.
 
+### Prognosekontrolle: Genauigkeit mit Toleranz statt auf das Watt genau
+
+`accuracy_percent` (siehe `backend/app/forecast_evaluation.py`) misst, wie
+gut die stündliche Prognose mit dem tatsächlichen Ertrag übereinstimmt:
+100 % minus (Summe der absoluten stündlichen Fehler ⁄ tatsächlicher
+Ertrag). Bewusst die Summe der Beträge je Stunde statt der Netto-Differenz
+über den Tag - sonst würde ein Tag mit vormittags zu hoher und nachmittags
+zu niedriger Prognose fälschlich als treffsicher gelten, nur weil sich die
+Fehler beim Aufsummieren gegenseitig aufheben.
+
+Eine Wetterprognose kann und soll aber nicht auf das Watt genau treffen -
+das wäre eine unrealistische Erwartung an das Modell. Deshalb zieht
+`_tolerant_hour_error_w()` von jedem stündlichen Fehler zunächst eine
+Toleranz ab, bevor er überhaupt in die Genauigkeit einfließt: das Maximum
+aus einem festen Sockel (100 W, deckt Mess-/Rundungsrauschen bei kleinen
+Leistungen ab) und 5 % des tatsächlichen Stundenwerts (skaliert mit der
+Anlagengröße/Tageszeit). Eine Stunde, die z. B. nur 80 W daneben lag,
+zählt dadurch als vollständig getroffen.
+
+Wichtig: das betrifft ausschließlich `accuracy_percent`. Die tatsächliche,
+ungefilterte Abweichung (`difference_kwh`/`difference_percent`) bleibt
+davon unberührt und wird nirgends verschleiert - nur die Genauigkeits-
+Kennzahl selbst bewertet nicht mehr unrealistisch streng.
+
 ### Prognosekontrolle: "im Rahmen"-Markierung (reine Anzeige-Toleranz)
 
-Die Genauigkeitsberechnung selbst (`accuracy_percent`, `difference_kwh`,
-`difference_percent` in `backend/app/forecast_evaluation.py`) bleibt
-unveraendert und weiterhin exakt - eine Wetterprognose auf die Kommastelle
-genau zu erwarten wäre unrealistisch, aber die Kennzahlen selbst sollen
-diese Unschärfe nicht verschleiern.
-
-Stattdessen markiert das Frontend (`isDeviationWithinDisplayTolerance()`
-in `app.js`) Tage bzw. "Heute (bisher)", deren Abweichung innerhalb einer
-Toleranz liegt, zusätzlich mit dem Hinweis "im Rahmen" - die Toleranz ist
-das Maximum aus einem festen Sockel (0,5 kWh, damit auch kleine Tage
-profitieren) und 10 % des erwarteten Tageswerts. Die zugrunde liegenden
-Zahlen (Abweichung in kWh/%, Genauigkeit) werden dabei nicht verändert
-oder ausgeblendet, nur zusätzlich eingeordnet.
+Zusätzlich zur obigen (echten) Toleranz in `accuracy_percent` markiert das
+Frontend (`isDeviationWithinDisplayTolerance()` in `app.js`) Tage bzw.
+"Heute (bisher)", deren *Netto*-Abweichung innerhalb einer eigenen, rein
+kosmetischen Anzeige-Toleranz liegt, zusätzlich mit dem Hinweis "im
+Rahmen" - das Maximum aus einem festen Sockel (0,5 kWh, damit auch kleine
+Tage profitieren) und 10 % des erwarteten Tageswerts. Diese Anzeige-
+Toleranz ist unabhängig von der obigen Berechnung und ändert keine Zahlen
+- sie kann inzwischen seltener zusätzlich etwas anzeigen, weil bereits
+kleine Abweichungen durch die echte Toleranz oben oft schon zu 100 %
+Genauigkeit führen.

@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.database import SessionLocal
 from app.forecast_evaluation import (
+    _tolerant_hour_error_w,
     get_forecast_accuracy,
     get_yesterday_hourly_comparison,
     save_forecast_predictions,
@@ -203,11 +204,80 @@ def test_accuracy_does_not_let_opposite_hourly_errors_cancel_out(client):
     assert day["expected_kwh"] == 7.0
     assert day["actual_kwh"] == 7.0
     assert day["difference_kwh"] == 0.0
-    expected_accuracy = round(100 * (1 - 2.0 / 7.0), 1)
+    # accuracy_percent zieht je Stunde zunaechst die Toleranz aus
+    # _tolerant_hour_error_w ab (siehe dort), bevor die 1000-W-Fehler in die
+    # Genauigkeit einfliessen: Stunde 1 (Ist 4000 W) -> Toleranz 200 W ->
+    # effektiver Fehler 800 W; Stunde 2 (Ist 3000 W) -> Toleranz 150 W ->
+    # effektiver Fehler 850 W. difference_kwh/difference_percent bleiben
+    # davon unberuehrt (oben weiterhin 0.0) - nur die Genauigkeitszahl wird
+    # nicht mehr unrealistisch streng bewertet.
+    expected_accuracy = round(100 * (1 - (0.8 + 0.85) / 7.0), 1)
     assert day["accuracy_percent"] == expected_accuracy
     assert day["accuracy_percent"] < 100.0
     assert day["devices"][0]["accuracy_percent"] == expected_accuracy
     assert result["overall_accuracy_percent"] == expected_accuracy
+
+
+def test_tolerant_hour_error_absorbs_small_deviations_fully():
+    """Innerhalb der Toleranz (Sockel ODER Prozentsatz, je nachdem was
+    groesser ist) zaehlt eine Abweichung gar nicht - eine Wetterprognose
+    kann realistischerweise nicht auf das Watt genau treffen."""
+    # 80 W Abweichung liegt unter dem festen Sockel (100 W) UND unter 5 %
+    # von 1000 W (50 W waere die reine Prozent-Toleranz, hier greift also
+    # der Sockel) -> voll toleriert.
+    assert _tolerant_hour_error_w(1080.0, 1000.0) == 0.0
+    # Bei einer grossen Leistung (10000 W) ist der Prozentsatz (5 % = 500 W)
+    # groesser als der Sockel - eine Abweichung von 400 W bleibt darunter.
+    assert _tolerant_hour_error_w(10400.0, 10000.0) == 0.0
+
+
+def test_tolerant_hour_error_counts_only_the_excess_beyond_tolerance():
+    """Oberhalb der Toleranz zaehlt nur der ueberschiessende Anteil, nicht
+    der komplette Fehler - siehe _tolerant_hour_error_w."""
+    # Ist-Wert 1000 W -> Toleranz = max(100, 5% von 1000 = 50) = 100 W.
+    assert _tolerant_hour_error_w(1300.0, 1000.0) == 200.0
+    # Ist-Wert 10000 W -> Toleranz = max(100, 5% von 10000 = 500) = 500 W.
+    assert _tolerant_hour_error_w(11000.0, 10000.0) == 500.0
+
+
+def test_accuracy_treats_small_deviation_within_tolerance_as_perfect(client):
+    """End-to-End: eine Stunde, die nur knapp (innerhalb der Toleranz)
+    daneben lag, soll die Genauigkeit nicht mehr verschlechtern - auch wenn
+    difference_kwh/difference_percent weiterhin die tatsaechliche,
+    ungefilterte Abweichung zeigen."""
+    hour = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
+    generated_at = hour - timedelta(days=1)
+    # 80 W Abweichung bei 4000 W Ist-Leistung liegt unter der Toleranz
+    # (5 % von 4000 W = 200 W; dieser Wert ist groesser als der
+    # 100-W-Sockel und greift deshalb hier).
+    save_forecast_predictions(
+        {"wr1": {hour: (4080.0, 3000.0, 5000.0)}},
+        {"wr1": "standard"},
+        generated_at,
+    )
+    session = SessionLocal()
+    try:
+        session.add(
+            Reading(
+                device_id="wr1",
+                device_name="WR 1",
+                timestamp=hour + timedelta(minutes=30),
+                pv_power_w=4000.0,
+                battery_power_w=0.0,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    result = get_forecast_accuracy(
+        days=2, now=datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    )
+    day = result["days"][0]
+    assert day["accuracy_percent"] == 100.0
+    # Die rohe Abweichung bleibt sichtbar, wird also NICHT verschleiert.
+    assert day["difference_kwh"] == round((4.0 - 4.08), 2)
+    assert day["difference_kwh"] != 0.0
 
 
 def test_accuracy_allows_cancellation_across_devices_within_the_same_hour(client):
