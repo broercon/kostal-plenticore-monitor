@@ -1082,6 +1082,35 @@ function deviationPointColor(value) {
   return value >= 0 ? "#4ade80" : "#f87171";
 }
 
+// Reine Anzeige-Toleranz fuer die Prognosekontrolle: eine kleine
+// Abweichung soll nicht wie ein "Fehler" wirken - eine Wetterprognose kann
+// realistischerweise nicht auf die Kommastelle genau treffen. Aendert NUR
+// die Darstellung (Badge "im Rahmen"); accuracy_percent/difference_kwh
+// selbst kommen unveraendert vom Backend (siehe forecast_evaluation.py -
+// bewusst KEIN Eingriff dort, siehe Nutzerwunsch).
+//
+// Toleranz ist das Maximum aus einem festen Sockel (kleine Tage/Stunden
+// mit wenig erwarteter Erzeugung wuerden von einem reinen Prozentsatz kaum
+// profitieren) und einem Prozentsatz des ERWARTETEN Werts (skaliert mit
+// der Tagesgroesse).
+const ACCURACY_DISPLAY_TOLERANCE_KWH = 0.5;
+const ACCURACY_DISPLAY_TOLERANCE_PERCENT = 10;
+
+function isDeviationWithinDisplayTolerance(differenceKwh, expectedKwh) {
+  const toleranceKwh = Math.max(
+    ACCURACY_DISPLAY_TOLERANCE_KWH,
+    (ACCURACY_DISPLAY_TOLERANCE_PERCENT / 100) * expectedKwh
+  );
+  return Math.abs(differenceKwh) <= toleranceKwh;
+}
+
+function forecastAccuracyToleranceBadge() {
+  const badge = document.createElement("span");
+  badge.className = "forecast-accuracy-tolerance-badge";
+  badge.textContent = "im Rahmen";
+  return badge;
+}
+
 async function refreshForecastAccuracy() {
   return withLoading(["#forecast-accuracy-section"], async () => {
     const data = await fetchJson("/api/forecast/accuracy?days=30");
@@ -1141,6 +1170,9 @@ async function refreshForecastAccuracy() {
       difference.textContent =
         `Abweichung ${sign}${todayValues.difference_kwh.toFixed(1)} kWh · ${accuracy} · ` +
         `${todayValues.matched_hours} Stundenwerte bisher`;
+      if (isDeviationWithinDisplayTolerance(todayValues.difference_kwh, todayValues.expected_kwh)) {
+        difference.append(" · ", forecastAccuracyToleranceBadge());
+      }
       const note = document.createElement("span");
       note.className = "forecast-accuracy-today-note";
       note.textContent =
@@ -1195,6 +1227,9 @@ async function refreshForecastAccuracy() {
         : `Genauigkeit ${day.accuracy_percent.toFixed(1)} %`;
       difference.textContent = `Abweichung ${sign}${day.difference_kwh.toFixed(1)} kWh · ${accuracy}`;
       difference.textContent += ` · ${day.matched_hours} Stundenwerte verglichen`;
+      if (isDeviationWithinDisplayTolerance(day.difference_kwh, day.expected_kwh)) {
+        difference.append(" · ", forecastAccuracyToleranceBadge());
+      }
       const devices = document.createElement("span");
       devices.className = "forecast-accuracy-devices";
       devices.textContent = deviceId
@@ -2313,8 +2348,12 @@ async function refreshAutarkyChart() {
               afterLabel: (item) => {
                 const m = autarkyMonthsData[item.dataIndex];
                 if (!m) return "";
-                const ownKwh = (m.pv_kwh + m.battery_kwh).toFixed(1);
-                return `PV + Speicher: ${ownKwh} kWh · Netz: ${m.grid_kwh.toFixed(1)} kWh`;
+                // Auf ganze kWh gerundet statt mit Nachkommastelle - bei
+                // Monatssummen im zwei- bis dreistelligen kWh-Bereich ist
+                // eine Nachkommastelle keine sinnvolle Genauigkeit, siehe
+                // Nutzerwunsch.
+                const ownKwh = Math.round(m.pv_kwh + m.battery_kwh);
+                return `PV + Speicher: ${ownKwh} kWh · Netz: ${Math.round(m.grid_kwh)} kWh`;
               },
             },
           },

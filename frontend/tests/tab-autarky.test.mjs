@@ -38,6 +38,26 @@ test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Monatsver
   assert.deepEqual(app.state.autarky.chart.data.datasets[0].data, [50.0, 75.0]);
 });
 
+test("Autarkie-Tooltip rundet die kWh-Werte auf ganze Zahlen (keine Nachkommastelle)", async () => {
+  const backend = async (url) => {
+    if (url.pathname === "/api/readings/autarky-monthly") {
+      return {
+        months: [
+          // Bewusst mit Nachkommaanteil gewaehlt, der eine Rundung auf
+          // ganze kWh sichtbar macht (40.4 + 10.4 = 50.8 -> 51).
+          { month: "2026-05", pv_kwh: 40.4, battery_kwh: 10.4, grid_kwh: 50.6, home_kwh: 100.0, autarky_percent: 50.0 },
+        ],
+      };
+    }
+    return makeBackend()(url);
+  };
+  const app = await bootApp({ fetchHandler: backend });
+  await waitFor(() => app.loadingCount() === 0);
+
+  const afterLabel = app.state.autarky.chart.options.plugins.tooltip.callbacks.afterLabel;
+  assert.equal(afterLabel({ dataIndex: 0 }), "PV + Speicher: 51 kWh · Netz: 51 kWh");
+});
+
 test("Autarkie-Standardzeitraum ist 24 Monate, Y-Achse skaliert dynamisch statt fest 0-100", async () => {
   const seenMonthsParams = [];
   const backend = backendWithAutarky();

@@ -87,3 +87,66 @@ test("Prognosekontrolle: Punktfarbe zeigt Abweichungsrichtung (gruen/rot)", asyn
   assert.equal(colorFor(-10), "#f87171", "negative Abweichung ist rot");
   assert.equal(colorFor(null), "#94a3b8", "fehlender Wert ist neutral grau");
 });
+
+test("Prognosekontrolle: kleine Abweichung innerhalb der Anzeige-Toleranz zeigt 'im Rahmen'", async () => {
+  const days = [
+    // 1 kWh Abweichung bei 10 kWh erwartet liegt an der Toleranzgrenze
+    // (max(0.5, 10% von 10 = 1.0) = 1.0 kWh) - siehe app.js
+    // isDeviationWithinDisplayTolerance(). Reine Anzeigeentscheidung: die
+    // zugrunde liegenden Werte (difference_kwh/accuracy_percent) bleiben
+    // unveraendert vom Backend.
+    dayEntry("2026-07-14", { expected: 10, actual: 9 }),
+  ];
+  const app = await bootApp({ fetchHandler: backendWithAccuracyDays(days) });
+  await waitFor(() => app.state.tabsLoaded.has("forecast"));
+
+  const card = app.document.querySelector("#forecast-accuracy-days .forecast-accuracy-day");
+  const badge = card.querySelector(".forecast-accuracy-tolerance-badge");
+  assert.ok(badge, "Badge 'im Rahmen' sollte innerhalb der Toleranz angezeigt werden");
+  assert.equal(badge.textContent, "im Rahmen");
+  // Die Rohwerte selbst bleiben unangetastet.
+  assert.match(card.querySelector(".muted").textContent, /Abweichung -1\.0 kWh/);
+});
+
+test("Prognosekontrolle: Abweichung ausserhalb der Toleranz zeigt keine 'im Rahmen'-Markierung", async () => {
+  const days = [
+    // 2 kWh Abweichung bei 10 kWh erwartet liegt klar ueber der Toleranz
+    // (1.0 kWh, siehe Test oben).
+    dayEntry("2026-07-14", { expected: 10, actual: 12 }),
+  ];
+  const app = await bootApp({ fetchHandler: backendWithAccuracyDays(days) });
+  await waitFor(() => app.state.tabsLoaded.has("forecast"));
+
+  const card = app.document.querySelector("#forecast-accuracy-days .forecast-accuracy-day");
+  assert.equal(card.querySelector(".forecast-accuracy-tolerance-badge"), null);
+});
+
+test("Prognosekontrolle: 'Heute (bisher)' zeigt dieselbe Toleranz-Markierung", async () => {
+  const base = makeBackend();
+  const app = await bootApp({
+    fetchHandler: async (url) => {
+      if (url.pathname === "/api/forecast/accuracy") {
+        const data = await base(url);
+        return {
+          ...data,
+          today_so_far: {
+            date: "2026-07-13",
+            expected_kwh: 3.0,
+            actual_kwh: 3.2,
+            difference_kwh: 0.2,
+            difference_percent: 6.7,
+            accuracy_percent: 90.0,
+            matched_hours: 3,
+            devices: [],
+          },
+        };
+      }
+      return base(url);
+    },
+  });
+  await waitFor(() => !app.document.getElementById("forecast-accuracy-today").classList.contains("hidden"));
+
+  const today = app.document.getElementById("forecast-accuracy-today");
+  const badge = today.querySelector(".forecast-accuracy-tolerance-badge");
+  assert.ok(badge, "0.2 kWh Abweichung bei 3.0 kWh erwartet liegt unter der Toleranz (0.5 kWh Sockel)");
+});

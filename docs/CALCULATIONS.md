@@ -422,7 +422,7 @@ inkl. gelerntem Spannbereich) plus einem "Tatsächlich"-Balken - die
 Pro-Geräte-Aufschlüsselung wäre dort redundant, da schon auf ein Gerät
 gefiltert ist.
 
-## Prognosekontrolle: Genauigkeit mit Toleranz statt auf das Watt genau
+### Prognosekontrolle: Genauigkeit mit Toleranz statt auf das Watt genau
 
 `accuracy_percent` (siehe `backend/app/forecast_evaluation.py`) misst, wie
 gut die stündliche Prognose mit dem tatsächlichen Ertrag übereinstimmt:
@@ -445,3 +445,16 @@ Wichtig: das betrifft ausschließlich `accuracy_percent`. Die tatsächliche,
 ungefilterte Abweichung (`difference_kwh`/`difference_percent`) bleibt
 davon unberührt und wird nirgends verschleiert - nur die Genauigkeits-
 Kennzahl selbst bewertet nicht mehr unrealistisch streng.
+
+### Prognosekontrolle: "im Rahmen"-Markierung (reine Anzeige-Toleranz)
+
+Zusätzlich zur obigen (echten) Toleranz in `accuracy_percent` markiert das
+Frontend (`isDeviationWithinDisplayTolerance()` in `app.js`) Tage bzw.
+"Heute (bisher)", deren *Netto*-Abweichung innerhalb einer eigenen, rein
+kosmetischen Anzeige-Toleranz liegt, zusätzlich mit dem Hinweis "im
+Rahmen" - das Maximum aus einem festen Sockel (0,5 kWh, damit auch kleine
+Tage profitieren) und 10 % des erwarteten Tageswerts. Diese Anzeige-
+Toleranz ist unabhängig von der obigen Berechnung und ändert keine Zahlen
+- sie kann inzwischen seltener zusätzlich etwas anzeigen, weil bereits
+kleine Abweichungen durch die echte Toleranz oben oft schon zu 100 %
+Genauigkeit führen.
