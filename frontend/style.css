@@ -804,6 +804,13 @@ canvas {
   display: none;
 }
 
+/* Reine Anzeige-Toleranz (siehe app.js isDeviationWithinDisplayTolerance):
+   kleine Abweichungen sollen nicht wie ein "Fehler" wirken. */
+.forecast-accuracy-tolerance-badge {
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
 /* "Heute (bisher)" - optisch bewusst vom Rest abgesetzt (gestrichelter statt
    durchgezogener Rahmen, Akzentfarbe): kein abgeschlossener Tag wie die
    Kacheln darunter, daher nicht direkt mit ihnen vergleichbar. */
