@@ -248,7 +248,8 @@ def test_accuracy_treats_small_deviation_within_tolerance_as_perfect(client):
     hour = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
     generated_at = hour - timedelta(days=1)
     # 80 W Abweichung bei 4000 W Ist-Leistung liegt unter der Toleranz
-    # (Sockel 100 W).
+    # (5 % von 4000 W = 200 W; dieser Wert ist groesser als der
+    # 100-W-Sockel und greift deshalb hier).
     save_forecast_predictions(
         {"wr1": {hour: (4080.0, 3000.0, 5000.0)}},
         {"wr1": "standard"},

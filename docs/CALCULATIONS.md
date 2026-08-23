@@ -445,8 +445,3 @@ Wichtig: das betrifft ausschließlich `accuracy_percent`. Die tatsächliche,
 ungefilterte Abweichung (`difference_kwh`/`difference_percent`) bleibt
 davon unberührt und wird nirgends verschleiert - nur die Genauigkeits-
 Kennzahl selbst bewertet nicht mehr unrealistisch streng.
-
-Zusätzlich markiert das Frontend (`isDeviationWithinDisplayTolerance()` in
-`app.js`) Tage, deren *Netto*-Abweichung innerhalb einer eigenen, rein
-kosmetischen Anzeige-Toleranz liegt, mit dem Hinweis "im Rahmen" - das ist
-unabhängig von der obigen, echten Berechnung und ändert keine Zahlen.
