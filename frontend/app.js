@@ -29,10 +29,11 @@ const state = {
     chart: null,
   },
   batterySoc: {
-    // Wie Leistungsverlauf: Standard 24 Std (fester 00:00-24:00-Achsenmodus),
-    // ueber die Buttons zusaetzlich 2/3/7/14 Tage waehlbar.
-    hours: 24,
-    chartMode: null, // "day" | "range", wie state.chartMode beim Leistungsverlauf
+    // Wie Tagesvergleich: mehrere ganze Tage auf einer festen 00:00-24:00-
+    // Achse uebereinandergelegt (statt einer fortlaufenden Linie), damit
+    // sich einzelne Tage direkt vergleichen lassen. Standard 1 Tag, ueber
+    // die Buttons zusaetzlich 2/3/7/14 Tage waehlbar.
+    days: 1,
     chart: null,
   },
   autarky: {
@@ -1874,6 +1875,16 @@ function dayColor(index) {
   return DAY_COLORS[index % DAY_COLORS.length];
 }
 
+// Mehrere Kurven derselben Tagesfarbe (mehrere Geraete an einem Tag, siehe
+// buildBatterySocDatasets) werden ueber den Strichstil unterschieden -
+// durchgezogen fuers erste Geraet, gestrichelt fuers zweite usw., wie beim
+// Tagesvergleich Solar (durchgezogen) vs. Batterie (gestrichelt).
+const DEVICE_DASH_PATTERNS = [[], [6, 4], [2, 2], [10, 4, 2, 4]];
+
+function deviceDashPattern(index) {
+  return DEVICE_DASH_PATTERNS[index % DEVICE_DASH_PATTERNS.length];
+}
+
 function buildDayCompareDatasets(days, metric) {
   const datasets = [];
   const total = days.length;
@@ -2374,106 +2385,97 @@ function setupYearCompareControls() {
   });
 }
 
-// --- Speicherstand: Ladezustand (SoC, %) ueber die Zeit, eine Kurve je
-// Geraet mit Batterie (siehe backend aggregation.build_battery_soc_series -
-// Prozentwerte werden bewusst NICHT ueber mehrere Geraete kombiniert/
-// summiert wie beim Leistungsverlauf). Standard 24 Std mit fester
-// 00:00-24:00-Achse (wie Leistungsverlauf), zusaetzlich 2/3/7/14 Tage
-// waehlbar. Hausweite Uebersicht (kein device_id-Filter noetig - Geraete
-// ohne Batterie tauchen in der Antwort ohnehin nicht auf). ---
+// --- Speicherstand: Ladezustand (SoC, %) je Kalendertag, wie der
+// Tagesvergleich mehrere Tage auf einer festen 00:00-24:00-Achse
+// uebereinandergelegt statt einer fortlaufenden Linie ueber mehrere Tage
+// (siehe backend aggregation.build_battery_soc_day_series). Weiterhin
+// eine eigene Kurve je Geraet mit Batterie - Prozentwerte werden bewusst
+// NICHT ueber mehrere Geraete kombiniert/summiert wie beim
+// Leistungsverlauf. Standard 1 Tag, zusaetzlich 2/3/7/14 Tage waehlbar.
+// Hausweite Uebersicht (kein device_id-Filter noetig - Geraete ohne
+// Batterie tauchen in der Antwort ohnehin nicht auf). ---
 
-function buildBatterySocDatasets(devices, points, isDayMode) {
-  return devices.map((device, i) => ({
-    label: device.device_name,
-    data: points.map((p) => {
-      const value = p.values[device.device_id];
-      const y = value === undefined ? null : value;
-      // Wie beim Leistungsverlauf: im Tagesmodus {x,y}-Punkte auf der
-      // festen Minuten-des-Tages-Achse, sonst ein einfacher Wert je
-      // Label (siehe labels in refreshBatterySocChart()).
-      return isDayMode ? { x: minuteOfLocalDay(new Date(p.timestamp)), y } : y;
-    }),
-    borderColor: dayColor(i),
-    backgroundColor: "transparent",
-    tension: 0.25,
-    pointRadius: 0,
-    spanGaps: true,
-  }));
+function buildBatterySocDatasets(devices, days) {
+  const datasets = [];
+  const total = days.length;
+
+  days.forEach((day, i) => {
+    const isLatest = i === total - 1;
+    const width = isLatest ? 2.5 : 1.5;
+    const dateLabel = shortDate(day.date);
+    // Farbe an die Aktualitaet des Tages gekoppelt (wie buildDayCompare-
+    // Datasets), nicht an das Geraet - so laesst sich ein einzelner Tag
+    // ueber alle Geraete hinweg auf einen Blick erkennen.
+    const colorIndex = total - 1 - i;
+    const color = dayColor(colorIndex);
+
+    devices.forEach((device, di) => {
+      // Bei mehr als einem Geraet zusaetzlich den Geraetenamen in die
+      // Legende aufnehmen und die Geraete per Strichstil unterscheiden
+      // (gleiche Tagesfarbe) - bei nur einem Geraet (Regelfall) reicht
+      // das Datum allein.
+      const label = devices.length > 1 ? `${dateLabel} · ${device.device_name}` : dateLabel;
+      datasets.push({
+        label,
+        data: day.points.map((p) => ({ x: p.minute, y: p.values[device.device_id] ?? null })),
+        borderColor: color,
+        backgroundColor: "transparent",
+        borderWidth: width,
+        borderDash: deviceDashPattern(di),
+        tension: 0.25,
+        pointRadius: 0,
+        spanGaps: true,
+      });
+    });
+  });
+
+  return datasets;
 }
 
 async function refreshBatterySocChart() {
   return withLoading(["#batterysoc-chart-wrapper"], async () => {
-    const reqHours = state.batterySoc.hours;
-    const isDayMode = reqHours <= 24;
-    const mode = isDayMode ? "day" : "range";
-    const bucketMinutes = bucketMinutesForRange(reqHours);
+    const reqDays = state.batterySoc.days;
     const params = new URLSearchParams({
-      hours: String(reqHours),
-      bucket_minutes: String(bucketMinutes),
+      days: String(reqDays),
+      bucket_minutes: "5",
     });
     const result = await fetchJson(`/api/readings/battery-soc-history?${params.toString()}`);
     // Auswahl waehrend des Ladens geaendert? Dann Ergebnis verwerfen (wie
-    // beim Leistungsverlauf/Jahresvergleich).
-    if (state.batterySoc.hours !== reqHours) return;
+    // beim Leistungsverlauf/Tagesvergleich).
+    if (state.batterySoc.days !== reqDays) return;
 
-    const datasets = buildBatterySocDatasets(result.devices, result.points, isDayMode);
-    const labels = isDayMode
-      ? null
-      : result.points.map((p) =>
-          new Date(p.timestamp).toLocaleString("de-DE", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        );
+    const datasets = buildBatterySocDatasets(result.devices, result.days);
 
-    if (state.batterySoc.chart && state.batterySoc.chartMode === mode) {
-      state.batterySoc.chart.data.labels = labels;
+    if (state.batterySoc.chart) {
       state.batterySoc.chart.data.datasets = datasets;
-      // options.events wird bei einer reinen Datenaktualisierung nicht
-      // automatisch neu ausgewertet - hier explizit nachziehen, da sich
-      // der Zeitraum ueber die Buttons jederzeit zwischen Tages- und
-      // Mehrtagesmodus wechseln kann, ohne dass der Chart neu erzeugt
-      // wird (siehe Kommentar in refreshDayCompareChart()).
-      state.batterySoc.chart.options.events = chartEventsFor(isDayMode);
+      // Wie beim Tagesvergleich: options.events wird bei einer reinen
+      // Datenaktualisierung nicht automatisch neu ausgewertet, deshalb
+      // hier explizit nachziehen.
+      state.batterySoc.chart.options.events = chartEventsFor(reqDays === 1);
       state.batterySoc.chart.update();
       return;
     }
 
-    if (state.batterySoc.chart) {
-      state.batterySoc.chart.destroy();
-      state.batterySoc.chart = null;
-    }
-    state.batterySoc.chartMode = mode;
-
     const ctx = el("batterysoc-chart").getContext("2d");
-    const xScale = isDayMode
-      ? {
-          type: "linear",
-          min: 0,
-          max: 1440,
-          ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
-          grid: { color: "#334155" },
-        }
-      : {
-          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
-          grid: { color: "#334155" },
-        };
-
     state.batterySoc.chart = new Chart(ctx, {
       type: "line",
-      data: { labels, datasets },
+      data: { datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        // Wie beim Leistungsverlauf (kein Sonderfall wie bei Prognose/
-        // Autarkiegrad): Werte-Anzeige nur automatisch an, wenn genau ein
-        // Tag dargestellt wird.
-        events: chartEventsFor(isDayMode),
+        // Wie beim Tagesvergleich: Werte-Anzeige nur automatisch an, wenn
+        // genau ein Tag dargestellt wird - bei mehreren ueberlagerten
+        // Tagen wuerden sich die Tooltips sonst gegenseitig verdecken.
+        events: chartEventsFor(reqDays === 1),
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: xScale,
+          x: {
+            type: "linear",
+            min: 0,
+            max: 1440,
+            ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
+            grid: { color: "#334155" },
+          },
           y: {
             min: 0,
             max: 100,
@@ -2485,8 +2487,7 @@ async function refreshBatterySocChart() {
           legend: { labels: { color: "#e2e8f0" } },
           tooltip: {
             callbacks: {
-              title: (items) =>
-                isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
+              title: (items) => (items.length ? minutesToLabel(items[0].parsed.x) : ""),
               label: (item) => {
                 const y = item.parsed.y;
                 return `${item.dataset.label}: ${y === null || y === undefined ? "–" : Math.round(y) + " %"}`;
@@ -2500,13 +2501,13 @@ async function refreshBatterySocChart() {
 }
 
 function setupBatterySocControls() {
-  const container = el("batterysoc-hour-buttons");
+  const container = el("batterysoc-day-buttons");
   container.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-hours]");
+    const btn = e.target.closest("button[data-days]");
     if (!btn) return;
     for (const b of container.querySelectorAll("button")) b.classList.remove("active");
     btn.classList.add("active");
-    state.batterySoc.hours = Number(btn.dataset.hours);
+    state.batterySoc.days = Number(btn.dataset.days);
     refreshBatterySocChart().catch(console.error);
   });
 }

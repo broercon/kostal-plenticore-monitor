@@ -512,10 +512,17 @@ Der Wert (`battery_soc_percent`, siehe `plenticore_client.py`,
 `devices:local:battery/SoC`) wird bei jeder Messung ohnehin schon
 gespeichert - dieses Diagramm macht ihn erstmals sichtbar.
 
-Wie der Leistungsverlauf zeigt die Standardansicht die letzten 24 Stunden
-auf einer festen 00:00–24:00-Achse; über die Buttons sind zusätzlich 2, 3,
-7 oder 14 Tage wählbar (dann mit fortlaufenden Datums-/Uhrzeit-Labels statt
-der festen Tagesachse, wie beim Leistungsverlauf ab über 24 Stunden).
+Wie der Tagesvergleich zeigt die Standardansicht nur den aktuellen Tag auf
+einer festen 00:00–24:00-Achse; über die Buttons sind zusätzlich 2, 3, 7
+oder 14 Tage wählbar - dann als eigene, übereinandergelegte Kurven auf
+derselben Achse (nicht als eine fortlaufende Linie über mehrere Tage
+hinweg), damit sich einzelne Tage direkt vergleichen lassen. Die Farbe
+richtet sich wie beim Tagesvergleich nach der Aktualität des Tages (heute
+= erster Palettenton, gestern = zweiter, ...), nicht nach dem Gerät; bei
+mehreren Geräten mit Batterie unterscheidet stattdessen der Strichstil
+(durchgezogen/gestrichelt) die Geräte innerhalb derselben Tagesfarbe. Wie
+beim Tagesvergleich/Jahresvergleich ist die Werte-Anzeige (Tooltip/Hover)
+nur bei genau einem dargestellten Tag automatisch an.
 
 ### Warum hier NICHT wie sonst kombiniert/summiert wird
 
@@ -530,8 +537,8 @@ Kapazität, die dem System gar nicht bekannt ist).
 
 Der Speicherstand-Verlauf verwendet deshalb eine eigene, von
 `HISTORY_FIELDS`/`combine_devices()` unabhängige Aggregation
-(`aggregate_battery_soc_per_device()`/`build_battery_soc_series()` in
-`aggregation.py`): jedes Gerät mit Batterie bekommt seine eigene Kurve.
+(`build_battery_soc_day_series()` in `aggregation.py`, analog zu
+`day_profile()`): jedes Gerät mit Batterie bekommt seine eigene Kurve.
 Geräte ganz ohne SoC-Messwert im betrachteten Zeitraum (z. B. weil sie
 keine Batterie haben) tauchen in der Antwort gar nicht erst auf - es gibt
 also keine leere/flache Phantom-Kurve für batterielose Wechselrichter.

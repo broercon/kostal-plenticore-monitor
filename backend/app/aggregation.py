@@ -52,74 +52,71 @@ def aggregate_per_device(
     return result
 
 
-def aggregate_battery_soc_per_device(
-    rows: list[Reading], bucket_seconds: int
-) -> dict[str, dict[int, float]]:
-    """Wie aggregate_per_device(), aber ausschliesslich fuer
-    battery_soc_percent und bewusst GETRENNT von HISTORY_FIELDS/
-    combine_devices: ein Ladezustand in Prozent darf beim Kombinieren
-    mehrerer Geraete ("Alle (Summe)") nicht wie eine Leistung aufsummiert
-    werden (zwei Batterien bei je 50 % waeren zusammen nicht "100 %"). Der
-    Speicherstand-Verlauf zeigt deshalb je Geraet mit Batterie eine eigene
-    Kurve, siehe build_battery_soc_series().
+def build_battery_soc_day_series(
+    rows: list[Reading], bucket_minutes: int, timezone_name: str
+) -> dict:
+    """Speicherstand (Ladezustand, %) je lokalem Kalendertag - wie
+    day_profile(), aber fuer battery_soc_percent und bewusst GETRENNT von
+    HISTORY_FIELDS/combine_devices: ein Prozentwert darf beim Kombinieren
+    mehrerer Geraete ("Alle (Summe)" wie beim Leistungsverlauf) nicht
+    aufsummiert werden (zwei Batterien bei je 50 % waeren zusammen nicht
+    "100 %"). Jedes Geraet mit Batterie bekommt daher weiterhin eine
+    eigene Kurve - hier zusaetzlich je Kalendertag, damit sich einzelne
+    Tage auf einer gemeinsamen 00:00-24:00-Achse direkt vergleichen
+    lassen, statt in einer einzigen langen Linie ueber mehrere Tage hinweg
+    zu verschwimmen.
 
-    Nur Buckets mit mindestens einem tatsaechlichen Messwert werden
-    aufgenommen (kein Auffuellen mit None hier - das passiert erst in
-    build_battery_soc_series(), wo die vollstaendige Bucket-Liste ueber
-    alle Geraete bekannt ist).
-
-    Rueckgabe: {device_id: {bucket_epoch_sekunden: mittlerer_soc_prozent}}
+    Rueckgabe: {"devices": [{"device_id","device_name"}, ...], "days": [
+    {"date": "YYYY-MM-DD", "points": [{"minute": int, "values":
+    {device_id: prozent|None}}, ...]}, ...]}, Tage aufsteigend nach Datum
+    sortiert (aeltester Tag zuerst, wie day_profile()). Jeder Punkt
+    enthaelt fuer JEDES Geraet mit Batterie im GESAMTEN angefragten
+    Zeitraum einen Eintrag (None, wenn an diesem Tag/Bucket kein Messwert
+    vorliegt), damit das Frontend pro Geraet eine luekenlose Kurve bauen
+    kann (Chart.js "spanGaps"). Geraete ganz ohne SoC-Messwert im Zeitraum
+    (z. B. weil sie keine Batterie haben) tauchen gar nicht erst auf.
     """
-    sums: dict[tuple[str, int], float] = {}
-    counts: dict[tuple[str, int], int] = {}
+    tz = ZoneInfo(timezone_name)
+    sums: dict[tuple[str, int, str], float] = {}
+    counts: dict[tuple[str, int, str], int] = {}
+    device_names: dict[str, str] = {}
 
     for row in rows:
         if row.battery_soc_percent is None:
             continue
-        bk = _bucket_key(row.timestamp, bucket_seconds)
-        key = (row.device_id, bk)
+        device_names.setdefault(row.device_id, row.device_name)
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        local = ts.astimezone(tz)
+        date_str = local.strftime("%Y-%m-%d")
+        minute_of_day = local.hour * 60 + local.minute
+        bucket = (minute_of_day // bucket_minutes) * bucket_minutes
+        key = (date_str, bucket, row.device_id)
         sums[key] = sums.get(key, 0.0) + row.battery_soc_percent
         counts[key] = counts.get(key, 0) + 1
 
-    result: dict[str, dict[int, float]] = {}
-    for (device_id, bk), total in sums.items():
-        result.setdefault(device_id, {})[bk] = total / counts[(device_id, bk)]
-    return result
-
-
-def build_battery_soc_series(rows: list[Reading], bucket_seconds: int) -> dict:
-    """Speicherstand-Zeitreihe fuer das 'Speicherstand'-Diagramm: eine Kurve
-    je Geraet mit Batterie (siehe aggregate_battery_soc_per_device() fuer
-    die Begruendung, warum hier NICHT kombiniert/summiert wird). Geraete
-    ganz ohne SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine
-    Batterie haben) tauchen gar nicht erst in "devices" auf.
-
-    Rueckgabe: {"devices": [{"device_id","device_name"}, ...], "points":
-    [{"timestamp": datetime, "values": {device_id: prozent|None}}, ...]},
-    Punkte aufsteigend sortiert. Jeder Punkt enthaelt fuer JEDES Geraet mit
-    Batterie einen Eintrag (None, wenn fuer dieses Geraet in diesem Bucket
-    kein Messwert vorliegt), damit das Frontend eine luekenlose Kurve pro
-    Geraet bauen kann (Chart.js "spanGaps").
-    """
-    per_device = aggregate_battery_soc_per_device(rows, bucket_seconds)
-
-    device_names: dict[str, str] = {}
-    for row in rows:
-        if row.device_id in per_device and row.device_id not in device_names:
-            device_names[row.device_id] = row.device_name
-
     device_ids = list(device_names.keys())
-    all_buckets = sorted({bk for buckets in per_device.values() for bk in buckets})
 
-    points = [
-        {
-            "timestamp": datetime.fromtimestamp(bk, tz=timezone.utc),
-            "values": {d: per_device.get(d, {}).get(bk) for d in device_ids},
-        }
-        for bk in all_buckets
-    ]
+    by_date: dict[str, dict[int, dict[str, float]]] = {}
+    for (date_str, bucket, device_id), total in sums.items():
+        avg = total / counts[(date_str, bucket, device_id)]
+        by_date.setdefault(date_str, {}).setdefault(bucket, {})[device_id] = avg
+
+    days = []
+    for date_str in sorted(by_date.keys()):
+        buckets = by_date[date_str]
+        points = [
+            {
+                "minute": bucket,
+                "values": {d: buckets[bucket].get(d) for d in device_ids},
+            }
+            for bucket in sorted(buckets.keys())
+        ]
+        days.append({"date": date_str, "points": points})
+
     devices = [{"device_id": d, "device_name": device_names[d]} for d in device_ids]
-    return {"devices": devices, "points": points}
+    return {"devices": devices, "days": days}
 
 
 def combine_devices(

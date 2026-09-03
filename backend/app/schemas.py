@@ -126,14 +126,19 @@ class BatterySocDeviceInfo(BaseModel):
     device_name: str
 
 
-class BatterySocPoint(BaseModel):
-    timestamp: datetime
+class BatterySocDayPoint(BaseModel):
+    minute: int
     values: dict[str, float | None]  # device_id -> Ladezustand in Prozent
+
+
+class BatterySocDayOut(BaseModel):
+    date: str
+    points: list[BatterySocDayPoint]
 
 
 class BatterySocHistoryOut(BaseModel):
     devices: list[BatterySocDeviceInfo]
-    points: list[BatterySocPoint]
+    days: list[BatterySocDayOut]
 
 
 class ImportDeviceResult(BaseModel):
