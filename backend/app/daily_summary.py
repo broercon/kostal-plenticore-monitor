@@ -430,6 +430,16 @@ def build_feed_in_summary() -> list[FeedInPeriod]:
     return build_energy_period_summary("feed_in_power_w")
 
 
+def _compute_pv_yield_days(start: date, end_exclusive: date) -> dict[str, float | None]:
+    """Gemeinsame compute_missing()-Funktion fuer _cached_daily_totals() mit
+    dem Cache-Feld "pv_yield" - von build_pv_yield_summary() UND
+    build_yearly_comparison() genutzt, damit beide denselben Cache-Inhalt
+    teilen (keine doppelte Integration derselben Tage) und die Formel nur an
+    einer Stelle gepflegt wird."""
+    rows = _load_readings_range(start, end_exclusive)
+    return {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
+
+
 def build_pv_yield_summary() -> list[FeedInPeriod]:
     """PV-Ertrag (kWh) je Zeitraum - fuer Dashboard-Leiste und Mail-Report.
 
@@ -445,12 +455,95 @@ def build_pv_yield_summary() -> list[FeedInPeriod]:
     earliest = min(start for _, start, _ in periods)
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
-    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
-        rows = _load_readings_range(start, end_exclusive)
-        return {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
-
-    per_day = _cached_daily_totals("pv_yield", earliest, today, compute)
+    per_day = _cached_daily_totals("pv_yield", earliest, today, _compute_pv_yield_days)
     return _periods_from_per_day(periods, per_day)
+
+
+_YEARLY_COMPARISON_MONTH_LABELS = [
+    "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
+    "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
+]
+# Obergrenze statt 52 - manche Jahre haben nach ISO 8601 eine 53. Kalenderwoche
+# (siehe date.isocalendar()); ungenutzte Positionen bleiben fuer die
+# betroffenen Jahre einfach None (siehe build_yearly_comparison unten).
+_YEARLY_COMPARISON_WEEK_COUNT = 53
+
+
+def build_yearly_comparison(
+    granularity: str = "month", years: int | None = None
+) -> dict:
+    """PV-Ertrag (kWh) je Kalendermonat ODER ISO-Kalenderwoche, gruppiert
+    nach Jahr - fuer den Jahresvergleich im "Verlauf"-Tab: jedes Jahr eine
+    eigene Kurve auf einer FESTEN Jan-Dez- bzw. KW1-53-Achse, damit sich
+    mehrere Jahre direkt uebereinanderlegen lassen (analog zum
+    Tagesvergleich, nur auf Jahresebene statt Tagesebene).
+
+    granularity: "month" (Standard, 12 Positionen) oder "week" (53
+    Positionen, siehe _YEARLY_COMPARISON_WEEK_COUNT). Bei "week" wird nach
+    dem ISO-Kalenderjahr/-woche gruppiert (date.isocalendar()), NICHT nach
+    dem Kalenderjahr des Tages selbst - sonst wuerden die letzten Tage im
+    Dezember bzw. die ersten Tage im Januar (die laut ISO 8601 oft zur
+    Woche des jeweils ANDEREN Jahres gehoeren) dem falschen Jahr/der
+    falschen Woche zugeschlagen.
+
+    `years`: bei Angabe werden nur die letzten `years` Kalenderjahre (mit
+    Daten) zurueckgegeben - analog zum `months`-Parameter bei
+    /api/readings/autarky-monthly. None (Standard) liefert die komplette
+    Historie.
+
+    Anders als build_autarky_monthly_summary() (die Monate OHNE jegliche
+    Daten komplett auslaesst) behaelt jedes zurueckgegebene Jahr IMMER alle
+    12 bzw. 53 Positionen (mit null fuer eine Position ohne Daten) - sonst
+    wuerde die feste Achsen-Zuordnung (Position 0 = Januar/KW1 in jedem
+    Jahr) durcheinandergeraten."""
+    if granularity not in ("month", "week"):
+        raise ValueError(f"Unbekannte Granularitaet: {granularity!r}")
+
+    earliest = _earliest_reading_date()
+    if earliest is None:
+        return {"granularity": granularity, "labels": [], "years": []}
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+
+    per_day = _cached_daily_totals("pv_yield", earliest, today, _compute_pv_yield_days)
+
+    if granularity == "week":
+        num_positions = _YEARLY_COMPARISON_WEEK_COUNT
+        labels = [f"KW {i}" for i in range(1, num_positions + 1)]
+
+        def position_key(day: date) -> tuple[int, int]:
+            iso_year, iso_week, _iso_weekday = day.isocalendar()
+            return iso_year, iso_week
+    else:
+        num_positions = 12
+        labels = list(_YEARLY_COMPARISON_MONTH_LABELS)
+
+        def position_key(day: date) -> tuple[int, int]:
+            return day.year, day.month
+
+    totals: dict[tuple[int, int], float] = {}
+    has_data: set[tuple[int, int]] = set()
+    day = earliest
+    while day <= today:
+        value = per_day.get(day.strftime("%Y-%m-%d"))
+        if value is not None:
+            key = position_key(day)
+            totals[key] = totals.get(key, 0.0) + value
+            has_data.add(key)
+        day += timedelta(days=1)
+
+    all_years = sorted({year for year, _position in has_data})
+    if years is not None and years > 0:
+        all_years = all_years[-years:]
+
+    result_years = []
+    for year in all_years:
+        values: list[float | None] = []
+        for position in range(1, num_positions + 1):
+            key = (year, position)
+            values.append(round(totals[key], 3) if key in has_data else None)
+        result_years.append({"year": year, "values": values})
+
+    return {"granularity": granularity, "labels": labels, "years": result_years}
 
 
 def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:

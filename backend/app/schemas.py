@@ -108,6 +108,34 @@ class AutarkyMonthlySummaryOut(BaseModel):
     months: list[AutarkyMonthOut]
 
 
+class YearlyComparisonYearOut(BaseModel):
+    year: int
+    # Feste Laenge (12 bei "month", 53 bei "week") mit None fuer Positionen
+    # ohne Daten - siehe daily_summary.build_yearly_comparison().
+    values: list[float | None]
+
+
+class YearlyComparisonOut(BaseModel):
+    granularity: str  # "month" | "week"
+    labels: list[str]
+    years: list[YearlyComparisonYearOut]
+
+
+class BatterySocDeviceInfo(BaseModel):
+    device_id: str
+    device_name: str
+
+
+class BatterySocPoint(BaseModel):
+    timestamp: datetime
+    values: dict[str, float | None]  # device_id -> Ladezustand in Prozent
+
+
+class BatterySocHistoryOut(BaseModel):
+    devices: list[BatterySocDeviceInfo]
+    points: list[BatterySocPoint]
+
+
 class ImportDeviceResult(BaseModel):
     device_id: str
     device_name: str

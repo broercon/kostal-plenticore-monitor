@@ -16,6 +16,7 @@ from sqlalchemy import select
 from . import auth
 from .aggregation import (
     aggregate_per_device,
+    build_battery_soc_series,
     combine_devices,
     combine_latest_readings,
     daily_home_source_breakdown_kwh,
@@ -50,6 +51,7 @@ from .daily_summary import (
     build_daily_summaries,
     build_feed_in_summary,
     build_pv_yield_summary,
+    build_yearly_comparison,
 )
 from .database import SessionLocal, init_db
 from .models import Reading, User
@@ -59,6 +61,7 @@ from .schemas import (
     AdminResetPasswordOut,
     AdminUserOut,
     AutarkyMonthlySummaryOut,
+    BatterySocHistoryOut,
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
@@ -85,6 +88,7 @@ from .schemas import (
     MeOut,
     ReadingOut,
     SummaryOut,
+    YearlyComparisonOut,
 )
 from .timeutil import local_midnight_utc
 from zoneinfo import ZoneInfo
@@ -802,6 +806,30 @@ def get_autarky_monthly(
     return AutarkyMonthlySummaryOut(months=build_autarky_monthly_summary(months=months))
 
 
+@app.get("/api/readings/yearly-comparison", response_model=YearlyComparisonOut)
+def get_yearly_comparison(
+    granularity: str = Query(
+        default="month", pattern="^(month|week)$", description="'month' oder 'week'"
+    ),
+    years: int | None = Query(
+        default=None, ge=1, le=5, description="Nur die letzten N Kalenderjahre (Standard: alle)"
+    ),
+    _user: User = Depends(auth.get_current_user),
+) -> YearlyComparisonOut:
+    """PV-Ertrag (kWh) je Kalendermonat oder ISO-Kalenderwoche, gruppiert
+    nach Jahr - fuer den Jahresvergleich im "Verlauf"-Tab: jedes Jahr eine
+    eigene Kurve auf einer festen Jan-Dez- bzw. KW1-53-Achse (analog zum
+    Tagesvergleich, nur auf Jahresebene).
+
+    Hausweite Groesse wie /api/readings/autarky-monthly, daher auch hier
+    kein device_id-Parameter. `years` begrenzt auf maximal 5, damit auf dem
+    Dashboard nicht mehr Jahre gleichzeitig dargestellt werden, als es
+    unterscheidbare Farben in der Palette gibt (siehe frontend DAY_COLORS).
+    Die eigentliche Berechnung steckt in
+    daily_summary.build_yearly_comparison()."""
+    return YearlyComparisonOut(**build_yearly_comparison(granularity=granularity, years=years))
+
+
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)
 def get_hourly_per_device(
     metric: Literal["feed_in", "pv", "home", "grid_draw"] = Query(default="feed_in"),
@@ -828,6 +856,44 @@ def get_hourly_per_device(
 
     result = hourly_kwh_per_device(rows, field, settings.timezone_name)
     return HourlyPerDeviceOut(metric=metric, **result)
+
+
+@app.get("/api/readings/battery-soc-history", response_model=BatterySocHistoryOut)
+def get_battery_soc_history(
+    hours: float = Query(default=24, ge=0.1, le=24 * 14),
+    bucket_minutes: float = Query(default=5, ge=1, le=1440),
+    _user: User = Depends(auth.get_current_user),
+) -> BatterySocHistoryOut:
+    """Ladezustand (Speicherstand, %) ueber die Zeit - eine eigene Kurve JE
+    GERAET MIT BATTERIE, keine "Alle (Summe)"-Kombination wie beim
+    Leistungsverlauf: ein Prozentwert darf beim Kombinieren mehrerer
+    Geraete nicht aufsummiert werden (siehe
+    aggregation.aggregate_battery_soc_per_device). Geraete ganz ohne
+    SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine Batterie
+    haben) tauchen gar nicht erst in der Antwort auf.
+
+    Wie /api/readings/history: bei hours<=24 gilt die feste lokale
+    Tagesgrenze (seit Mitternacht) statt eines rollierenden Fensters,
+    damit sich der angezeigte Tag nicht mit der Uhrzeit verschiebt.
+    """
+    if hours <= 24:
+        since = local_midnight_utc()
+    else:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    bucket_seconds = int(bucket_minutes * 60)
+
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    result = build_battery_soc_series(rows, bucket_seconds)
+    return BatterySocHistoryOut(**result)
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.
