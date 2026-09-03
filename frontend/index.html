@@ -457,30 +457,38 @@
   <div class="tab-panel hidden" id="tab-panel-autarky" data-tab-panel="autarky">
     <section class="chart-section" id="autarky-section">
       <div class="daycompare-header">
-        <h2>Autarkiegrad je Monat</h2>
+        <h2>Autarkiegrad</h2>
         <p class="muted">
-          Welcher Anteil des Hausverbrauchs je Kalendermonat aus PV/Speicher
-          statt aus dem Netz gedeckt wurde – berechnet aus den monatlichen
-          kWh-Summen (nicht dem Mittelwert der Tageswerte), seit dem ersten
-          gespeicherten Messwert.
+          Welcher Anteil des Hausverbrauchs aus PV/Speicher statt aus dem
+          Netz gedeckt wurde, je Kalendermonat (oder -woche) – ein Jahr eine
+          eigene Kurve auf einer festen Januar–Dezember- bzw. KW1–53-Achse,
+          so lassen sich mehrere Jahre direkt übereinanderlegen. Berechnet
+          aus den kWh-Summen je Position (nicht dem Mittelwert der
+          Tageswerte). Maximal 5 Jahre gleichzeitig, damit die Farben
+          unterscheidbar bleiben.
         </p>
       </div>
       <div class="chart-toolbar daycompare-toolbar">
-        <div class="range-buttons" id="autarky-month-buttons">
-          <button data-months="12">12 Monate</button>
-          <button data-months="24" class="active">24 Monate</button>
-          <button data-months="36">36 Monate</button>
-          <button data-months="all">Alle</button>
+        <div class="range-buttons" id="autarky-granularity-buttons">
+          <button data-granularity="month" class="active">Monate</button>
+          <button data-granularity="week">Wochen</button>
+        </div>
+        <div class="range-buttons" id="autarky-years-buttons">
+          <button data-years="1">1 Jahr</button>
+          <button data-years="2">2 Jahre</button>
+          <button data-years="3" class="active">3 Jahre</button>
+          <button data-years="5">5 Jahre</button>
         </div>
       </div>
       <div class="chart-canvas-wrapper" id="autarky-chart-wrapper">
         <canvas id="autarky-chart"></canvas>
       </div>
       <p class="chart-hint muted">
-        Tipp: Maus über einen Punkt halten, um die genauen kWh-Anteile
-        (PV/Speicher gegenüber Netzbezug) zu sehen. Die Y-Achse skaliert sich
-        auf die tatsächlich vorkommenden Werte (nicht fest 0–100 %), damit
-        Unterschiede zwischen Monaten sichtbar bleiben.
+        Tipp: Auf ein Jahr in der Legende klicken, um es ein- oder
+        auszublenden. Jedes Jahr hat eine eigene, feste Farbe (das aktuellste
+        Jahr etwas dicker gezeichnet). Die Y-Achse skaliert sich auf die
+        tatsächlich vorkommenden Werte (nicht fest 0–100 %), damit
+        Unterschiede zwischen den Jahren sichtbar bleiben.
       </p>
     </section>
   </div>

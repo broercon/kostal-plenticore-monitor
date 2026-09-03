@@ -95,19 +95,6 @@ class DailyHomeBreakdownOut(BaseModel):
     days: list[DailyHomeBreakdownDay]
 
 
-class AutarkyMonthOut(BaseModel):
-    month: str  # "YYYY-MM"
-    pv_kwh: float
-    battery_kwh: float
-    grid_kwh: float
-    home_kwh: float
-    autarky_percent: float | None = None
-
-
-class AutarkyMonthlySummaryOut(BaseModel):
-    months: list[AutarkyMonthOut]
-
-
 class YearlyComparisonYearOut(BaseModel):
     year: int
     # Feste Laenge (12 bei "month", 53 bei "week") mit None fuer Positionen

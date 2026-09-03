@@ -1,5 +1,7 @@
 // Tests fuer die "Autarkie"-Ansicht (Liniendiagramm mit dynamischer
-// Y-Achse, Autarkiegrad je Monat, siehe app.js refreshAutarkyChart) sowie
+// Y-Achse, Autarkiegrad je Kalendermonat/-woche gruppiert nach Jahr - wie
+// der Jahresvergleich beim PV-Ertrag ein Jahr eine eigene Kurve auf einer
+// festen Jan-Dez- bzw. KW1-53-Achse, siehe app.js refreshAutarkyChart) sowie
 // die "Autarkiegrad heute"-Kachel in der Uebersicht (refreshSummaryCards).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -7,13 +9,30 @@ import { bootApp, makeBackend, waitFor } from "./harness.mjs";
 
 function backendWithAutarky() {
   const base = makeBackend();
-  return async (url) => {
-    if (url.pathname === "/api/readings/autarky-monthly") {
+  const seenParams = [];
+  const handler = async (url) => {
+    if (url.pathname === "/api/readings/autarky-yearly-comparison") {
+      seenParams.push({
+        granularity: url.searchParams.get("granularity"),
+        years: url.searchParams.get("years"),
+      });
+      const years = Number(url.searchParams.get("years"));
+      const granularity = url.searchParams.get("granularity");
+      if (granularity === "week") {
+        return {
+          granularity: "week",
+          labels: Array.from({ length: 53 }, (_, i) => `KW ${i + 1}`),
+          years: [{ year: 2026, values: [50, 55, null, ...Array(50).fill(null)] }].slice(0, years),
+        };
+      }
+      const allYears = [
+        { year: 2025, values: [50.0, null, null, null, null, null, null, null, null, null, null, null] },
+        { year: 2026, values: [null, null, null, null, null, 75.0, null, null, null, null, null, null] },
+      ];
       return {
-        months: [
-          { month: "2026-05", pv_kwh: 40.0, battery_kwh: 10.0, grid_kwh: 50.0, home_kwh: 100.0, autarky_percent: 50.0 },
-          { month: "2026-06", pv_kwh: 60.0, battery_kwh: 15.0, grid_kwh: 25.0, home_kwh: 100.0, autarky_percent: 75.0 },
-        ],
+        granularity: "month",
+        labels: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
+        years: allYears.slice(-years),
       };
     }
     if (url.pathname === "/api/readings/daily-home-breakdown") {
@@ -25,57 +44,53 @@ function backendWithAutarky() {
     }
     return base(url);
   };
+  handler.seenParams = seenParams;
+  return handler;
 }
 
-test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Monatsverlauf als Liniendiagramm", async () => {
+test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Jahresvergleich als Liniendiagramm", async () => {
   const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
 
   assert.equal(app.state.tabsLoaded.has("autarky"), true);
   assert.ok(app.state.autarky.chart, "Autarkiegrad-Chart ist schon vor dem ersten Oeffnen aufgebaut");
-  assert.equal(app.state.autarky.chart.type, "line", "Autarkiegrad ist ein Liniendiagramm, kein Balkendiagramm");
-  assert.deepEqual(app.state.autarky.chart.data.labels, ["Mai 2026", "Jun 2026"]);
-  assert.deepEqual(app.state.autarky.chart.data.datasets[0].data, [50.0, 75.0]);
+  assert.equal(app.state.autarky.chart.type, "line");
+  assert.deepEqual(
+    app.state.autarky.chart.data.labels,
+    ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+  );
 });
 
-test("Autarkie-Tooltip rundet die kWh-Werte auf ganze Zahlen (keine Nachkommastelle)", async () => {
-  const backend = async (url) => {
-    if (url.pathname === "/api/readings/autarky-monthly") {
-      return {
-        months: [
-          // Bewusst mit Nachkommaanteil gewaehlt, der eine Rundung auf
-          // ganze kWh sichtbar macht (40.4 + 10.4 = 50.8 -> 51).
-          { month: "2026-05", pv_kwh: 40.4, battery_kwh: 10.4, grid_kwh: 50.6, home_kwh: 100.0, autarky_percent: 50.0 },
-        ],
-      };
-    }
-    return makeBackend()(url);
-  };
+test("Autarkie: Standardansicht ist Monate/3 Jahre, entsprechende Buttons aktiv", async () => {
+  const backend = backendWithAutarky();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => app.loadingCount() === 0);
 
-  const afterLabel = app.state.autarky.chart.options.plugins.tooltip.callbacks.afterLabel;
-  assert.equal(afterLabel({ dataIndex: 0 }), "PV + Speicher: 51 kWh · Netz: 51 kWh");
+  assert.equal(app.state.autarky.granularity, "month");
+  assert.equal(app.state.autarky.years, 3);
+  assert.ok(backend.seenParams.some((p) => p.years === "3"));
+
+  const activeGranularity = app.document.querySelector("#autarky-granularity-buttons button.active");
+  assert.equal(activeGranularity.dataset.granularity, "month");
+  const activeYears = app.document.querySelector("#autarky-years-buttons button.active");
+  assert.equal(activeYears.dataset.years, "3");
 });
 
-test("Autarkie-Standardzeitraum ist 24 Monate, Y-Achse skaliert dynamisch statt fest 0-100", async () => {
-  const seenMonthsParams = [];
-  const backend = backendWithAutarky();
-  const app = await bootApp({
-    fetchHandler: async (url) => {
-      if (url.pathname === "/api/readings/autarky-monthly") {
-        seenMonthsParams.push(url.searchParams.get("months"));
-      }
-      return backend(url);
-    },
-  });
+test("Autarkie: ein Dataset je Jahr, aktuellstes Jahr = Farbindex 0, Y-Achse skaliert dynamisch statt fest 0-100", async () => {
+  const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
+  app.clickViewTab("autarky");
 
-  assert.equal(app.state.autarky.months, 24);
-  assert.ok(seenMonthsParams.includes("24"), "Standardanfrage nutzt months=24");
+  const { datasets } = app.state.autarky.chart.data;
+  assert.equal(datasets.length, 2);
+  assert.deepEqual(datasets.map((d) => d.label), ["2025", "2026"]);
 
-  const activeBtn = app.document.querySelector("#autarky-month-buttons button.active");
-  assert.equal(activeBtn.dataset.months, "24");
+  const dayColor = app.window.dayColor;
+  // Aktuellstes Jahr (2026) bekommt Farbindex 0 und die dickere Linie.
+  assert.equal(datasets[1].borderColor, dayColor(0));
+  assert.equal(datasets[0].borderColor, dayColor(1));
+  assert.equal(datasets[1].borderWidth, 2.5);
+  assert.equal(datasets[0].borderWidth, 1.5);
 
   // Werte liegen bei 50/75 % - die Y-Achse darf nicht fest bei 0-100 bleiben
   // (sonst waere der Unterschied kaum sichtbar), sondern soll sich mit
@@ -84,6 +99,60 @@ test("Autarkie-Standardzeitraum ist 24 Monate, Y-Achse skaliert dynamisch statt 
   assert.ok(min > 0, `Y-Achsen-Minimum sollte ueber 0 liegen (war ${min})`);
   assert.ok(max < 100, `Y-Achsen-Maximum sollte unter 100 liegen (war ${max})`);
   assert.ok(min < 50 && max > 75, "Marge muss den vollen Wertebereich weiterhin abdecken");
+});
+
+test("Autarkie: Klick auf 'Wochen' fragt neu ab und aktualisiert Achsentitel/Labels", async () => {
+  const backend = backendWithAutarky();
+  const app = await bootApp({ fetchHandler: backend });
+  await waitFor(() => app.loadingCount() === 0);
+  app.clickViewTab("autarky");
+
+  const btnWeek = app.document.querySelector('#autarky-granularity-buttons button[data-granularity="week"]');
+  btnWeek.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
+  await waitFor(() => app.state.autarky.granularity === "week");
+  await waitFor(() => backend.seenParams.some((p) => p.granularity === "week"));
+
+  assert.ok(btnWeek.classList.contains("active"));
+  await waitFor(() => app.state.autarky.chart.data.labels[0] === "KW 1");
+  assert.equal(app.state.autarky.chart.options.scales.x.title.text, "Kalenderwoche");
+});
+
+test("Autarkie: Klick auf Jahres-Button aendert state.autarky.years und fragt mit passendem Parameter neu ab", async () => {
+  const backend = backendWithAutarky();
+  const app = await bootApp({ fetchHandler: backend });
+  await waitFor(() => app.loadingCount() === 0);
+  app.clickViewTab("autarky");
+
+  const btn1 = app.document.querySelector('#autarky-years-buttons button[data-years="1"]');
+  btn1.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
+  await waitFor(() => app.state.autarky.years === 1);
+  await waitFor(() => backend.seenParams.some((p) => p.years === "1"));
+
+  assert.ok(btn1.classList.contains("active"));
+  await waitFor(() => app.state.autarky.chart.data.datasets.length === 1);
+  assert.equal(app.state.autarky.chart.data.datasets[0].label, "2026");
+});
+
+test("Autarkie: Werte-Anzeige nur an, wenn genau ein Jahr dargestellt wird", async () => {
+  const backend = backendWithAutarky();
+  const app = await bootApp({ fetchHandler: backend });
+  await waitFor(() => app.loadingCount() === 0);
+  app.clickViewTab("autarky");
+
+  // Standard sind 3 Jahre -> Werte-Anzeige aus.
+  const isInteractive = (chart) => Array.isArray(chart.options.events) && chart.options.events.length > 0;
+  assert.equal(isInteractive(app.state.autarky.chart), false);
+
+  const chartBefore = app.state.autarky.chart;
+  const btn1 = app.document.querySelector('#autarky-years-buttons button[data-years="1"]');
+  btn1.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
+  await waitFor(() => app.state.autarky.years === 1);
+  await waitFor(() => isInteractive(app.state.autarky.chart) === true);
+
+  // Dasselbe Chart.js-Objekt wird bei einer reinen Datenaktualisierung
+  // weiterverwendet - options.events muss deshalb explizit nachgezogen
+  // werden.
+  assert.equal(app.state.autarky.chart, chartBefore);
 });
 
 test("Autarkie-Tab wird per Klick sichtbar (kein erneuter Request noetig)", async () => {
@@ -98,27 +167,6 @@ test("Autarkie-Tab wird per Klick sichtbar (kein erneuter Request noetig)", asyn
     false,
     "Umschalten auf den schon vorgeladenen Tab loest keinen neuen Ladeindikator aus"
   );
-});
-
-test("Monats-Filter (12/24/36/Alle) loest einen neuen Request mit dem passenden Parameter aus", async () => {
-  const seenMonthsParams = [];
-  const backend = backendWithAutarky();
-  const app = await bootApp({
-    fetchHandler: async (url) => {
-      if (url.pathname === "/api/readings/autarky-monthly") {
-        seenMonthsParams.push(url.searchParams.get("months"));
-      }
-      return backend(url);
-    },
-  });
-  await waitFor(() => app.loadingCount() === 0);
-
-  app.clickViewTab("autarky");
-  const btn12 = app.document.querySelector('#autarky-month-buttons button[data-months="12"]');
-  btn12.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
-  await waitFor(() => seenMonthsParams.includes("12"));
-
-  assert.ok(btn12.classList.contains("active"));
 });
 
 test("Autarkiegrad heute erscheint in der Uebersicht", async () => {

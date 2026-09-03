@@ -46,7 +46,7 @@ from .forecast_config import (
 from .energy_forecast import forecast_service, refresh_forecast_for_new_day
 from .forecast_evaluation import get_forecast_accuracy, get_yesterday_hourly_comparison
 from .daily_summary import (
-    build_autarky_monthly_summary,
+    build_autarky_yearly_comparison,
     build_daily_home_breakdown,
     build_daily_summaries,
     build_feed_in_summary,
@@ -60,7 +60,6 @@ from .schemas import (
     AdminResetPasswordIn,
     AdminResetPasswordOut,
     AdminUserOut,
-    AutarkyMonthlySummaryOut,
     BatterySocHistoryOut,
     ChangePasswordIn,
     ChangePasswordOut,
@@ -788,22 +787,29 @@ def get_daily_home_breakdown(
     return DailyHomeBreakdownOut(days=build_daily_home_breakdown(days=days))
 
 
-@app.get("/api/readings/autarky-monthly", response_model=AutarkyMonthlySummaryOut)
-def get_autarky_monthly(
-    months: int | None = Query(
-        default=None, ge=1, le=600, description="Nur die letzten N Kalendermonate (Standard: alle)"
+@app.get("/api/readings/autarky-yearly-comparison", response_model=YearlyComparisonOut)
+def get_autarky_yearly_comparison(
+    granularity: str = Query(
+        default="month", pattern="^(month|week)$", description="'month' oder 'week'"
+    ),
+    years: int | None = Query(
+        default=None, ge=1, le=5, description="Nur die letzten N Kalenderjahre (Standard: alle)"
     ),
     _user: User = Depends(auth.get_current_user),
-) -> AutarkyMonthlySummaryOut:
-    """Autarkiegrad (Anteil des Hausverbrauchs aus PV/Speicher statt Netz)
-    je Kalendermonat, seit dem ersten gespeicherten Messwert - fuer die
-    "Autarkie"-Ansicht im Dashboard.
+) -> YearlyComparisonOut:
+    """Autarkiegrad (%) je Kalendermonat oder ISO-Kalenderwoche, gruppiert
+    nach Jahr - fuer die "Autarkie"-Ansicht im Dashboard: wie
+    /api/readings/yearly-comparison fuer den PV-Ertrag zeigt jedes Jahr
+    eine eigene Kurve auf einer festen Jan-Dez- bzw. KW1-53-Achse, statt
+    einer einzigen durchgehenden Linie ueber die gesamte Historie.
 
     Hausweite Groesse wie /api/readings/daily-home-breakdown, daher auch
-    hier kein device_id-Parameter. Die eigentliche Berechnung (inkl.
-    Zwischenspeicherung abgeschlossener Tage) steckt in
-    daily_summary.build_autarky_monthly_summary()."""
-    return AutarkyMonthlySummaryOut(months=build_autarky_monthly_summary(months=months))
+    hier kein device_id-Parameter. `years` begrenzt auf maximal 5 (siehe
+    get_yearly_comparison). Die eigentliche Berechnung steckt in
+    daily_summary.build_autarky_yearly_comparison()."""
+    return YearlyComparisonOut(
+        **build_autarky_yearly_comparison(granularity=granularity, years=years)
+    )
 
 
 @app.get("/api/readings/yearly-comparison", response_model=YearlyComparisonOut)
@@ -821,8 +827,8 @@ def get_yearly_comparison(
     eigene Kurve auf einer festen Jan-Dez- bzw. KW1-53-Achse (analog zum
     Tagesvergleich, nur auf Jahresebene).
 
-    Hausweite Groesse wie /api/readings/autarky-monthly, daher auch hier
-    kein device_id-Parameter. `years` begrenzt auf maximal 5, damit auf dem
+    Hausweite Groesse wie /api/readings/autarky-yearly-comparison, daher
+    auch hier kein device_id-Parameter. `years` begrenzt auf maximal 5, damit auf dem
     Dashboard nicht mehr Jahre gleichzeitig dargestellt werden, als es
     unterscheidbare Farben in der Palette gibt (siehe frontend DAY_COLORS).
     Die eigentliche Berechnung steckt in

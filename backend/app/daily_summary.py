@@ -32,7 +32,7 @@ from .config import settings
 from .database import SessionLocal
 from .models import DailyEnergyCache, Reading
 from .poller import poller
-from .schemas import AutarkyMonthOut, DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
+from .schemas import DailyHomeBreakdownDay, FeedInPeriod, SummaryOut
 from .timeutil import local_midnight_utc
 
 # Synthetische device_id für die "Alle (Summe)"-Zeile bei mehreren
@@ -487,12 +487,13 @@ def build_yearly_comparison(
     falschen Woche zugeschlagen.
 
     `years`: bei Angabe werden nur die letzten `years` Kalenderjahre (mit
-    Daten) zurueckgegeben - analog zum `months`-Parameter bei
-    /api/readings/autarky-monthly. None (Standard) liefert die komplette
-    Historie.
+    Daten) zurueckgegeben - analog zum `years`-Parameter bei
+    build_autarky_yearly_comparison(). None (Standard) liefert die
+    komplette Historie.
 
-    Anders als build_autarky_monthly_summary() (die Monate OHNE jegliche
-    Daten komplett auslaesst) behaelt jedes zurueckgegebene Jahr IMMER alle
+    Anders als build_autarky_monthly_summary() (deren Nachfolger
+    build_autarky_yearly_comparison() dasselbe Verhalten uebernimmt, siehe
+    dort) behaelt jedes zurueckgegebene Jahr IMMER alle
     12 bzw. 53 Positionen (mit null fuer eine Position ohne Daten) - sonst
     wuerde die feste Achsen-Zuordnung (Position 0 = Januar/KW1 in jedem
     Jahr) durcheinandergeraten."""
@@ -590,8 +591,9 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
 
 def _earliest_reading_date() -> date | None:
     """Lokales Kalenderdatum des allerersten gespeicherten Messwerts (ueber
-    alle Geraete) - Startpunkt fuer die monatliche Autarkiegrad-Uebersicht
-    (siehe build_autarky_monthly_summary), da dort (anders als bei den neun
+    alle Geraete) - Startpunkt fuer den Autarkiegrad-Jahresvergleich UND den
+    PV-Ertrag-Jahresvergleich (siehe build_autarky_yearly_comparison/
+    build_yearly_comparison), da dort (anders als bei den neun
     Zeitraeumen in _energy_period_ranges) die GESAMTE Historie seit
     Inbetriebnahme gezeigt werden soll, nicht nur bis "letztes Jahr"."""
     session = SessionLocal()
@@ -713,63 +715,82 @@ def _cached_home_source_breakdown(
     return cached
 
 
-def build_autarky_monthly_summary(months: int | None = None) -> list[AutarkyMonthOut]:
-    """Autarkiegrad je Kalendermonat, seit dem allerersten gespeicherten
-    Messwert (siehe _earliest_reading_date).
+def build_autarky_yearly_comparison(granularity: str = "month", years: int | None = None) -> dict:
+    """Autarkiegrad (%) je Kalendermonat ODER ISO-Kalenderwoche, gruppiert
+    nach Jahr - wie build_yearly_comparison() fuer den PV-Ertrag, nur fuer
+    den Autarkiegrad: jedes Jahr eine eigene Kurve auf einer FESTEN
+    Jan-Dez- bzw. KW1-53-Achse, damit sich mehrere Jahre direkt
+    uebereinanderlegen lassen (statt einer einzigen durchgehenden Linie
+    ueber die gesamte Historie).
 
-    Ein Monatswert ist NICHT der Mittelwert der taeglichen Prozentsaetze,
-    sondern wird aus den ueber den Monat aufsummierten kWh-Anteilen
-    berechnet (siehe _autarky_percent) - sonst wuerden Tage mit wenig
-    Hausverbrauch (z.B. Abwesenheit) das Monatsergebnis unverhaeltnismaessig
-    verzerren, obwohl sie kaum zum tatsaechlichen Monatsverbrauch beitragen.
+    Ein Positionswert ist NICHT der Mittelwert der taeglichen
+    Prozentsaetze, sondern wird aus den ueber die Position (Monat/Woche)
+    aufsummierten kWh-Anteilen berechnet (siehe _autarky_percent) - sonst
+    wuerden Tage mit wenig Hausverbrauch (z.B. Abwesenheit) das Ergebnis
+    unverhaeltnismaessig verzerren, obwohl sie kaum zum tatsaechlichen
+    Verbrauch beitragen.
 
-    `months`: bei Angabe werden nur die letzten `months` Kalendermonate
-    (mit Daten) zurueckgegeben - analog zum `days`-Parameter bei
-    /api/readings/daily-home-breakdown. None (Standard) liefert die
-    komplette Historie.
+    granularity/years: siehe build_yearly_comparison(). Anders als die
+    fruehere build_autarky_monthly_summary() (die Monate OHNE jegliche
+    Daten komplett ausliess) behaelt jedes zurueckgegebene Jahr IMMER alle
+    12 bzw. 53 Positionen (None fuer eine Position ohne Daten) - sonst
+    wuerde die feste Achsen-Zuordnung (Position 0 = Januar/KW1 in jedem
+    Jahr) durcheinandergeraten."""
+    if granularity not in ("month", "week"):
+        raise ValueError(f"Unbekannte Granularitaet: {granularity!r}")
 
-    Monate ganz ohne Messwerte (z.B. eine Luecke vor der Inbetriebnahme
-    aller Geraete) fehlen in der Rueckgabe, statt mit 0 kWh/undefiniertem
-    Autarkiegrad aufzutauchen."""
     earliest = _earliest_reading_date()
     if earliest is None:
-        return []
+        return {"granularity": granularity, "labels": [], "years": []}
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
     per_day = _cached_home_source_breakdown(earliest, today)
 
-    per_month: dict[str, dict[str, float]] = {}
-    months_with_data: set[str] = set()
+    if granularity == "week":
+        num_positions = _YEARLY_COMPARISON_WEEK_COUNT
+        labels = [f"KW {i}" for i in range(1, num_positions + 1)]
+
+        def position_key(day: date) -> tuple[int, int]:
+            iso_year, iso_week, _iso_weekday = day.isocalendar()
+            return iso_year, iso_week
+    else:
+        num_positions = 12
+        labels = list(_YEARLY_COMPARISON_MONTH_LABELS)
+
+        def position_key(day: date) -> tuple[int, int]:
+            return day.year, day.month
+
+    sums: dict[tuple[int, int], dict[str, float]] = {}
+    has_data: set[tuple[int, int]] = set()
     day = earliest
     while day <= today:
         date_str = day.strftime("%Y-%m-%d")
-        month_key = day.strftime("%Y-%m")
-        entry = per_month.setdefault(month_key, {"pv_kwh": 0.0, "battery_kwh": 0.0, "grid_kwh": 0.0})
+        key = position_key(day)
+        entry = sums.setdefault(key, {"pv_kwh": 0.0, "battery_kwh": 0.0, "grid_kwh": 0.0})
         day_values = per_day.get(date_str, {})
         for out_key in _HOME_SOURCE_CACHE_FIELDS:
             value = day_values.get(out_key)
             if value is not None:
                 entry[out_key] += value
-                months_with_data.add(month_key)
+                has_data.add(key)
         day += timedelta(days=1)
 
-    result = []
-    for month_key in sorted(months_with_data):
-        entry = per_month[month_key]
-        home_kwh = entry["pv_kwh"] + entry["battery_kwh"] + entry["grid_kwh"]
-        result.append(
-            AutarkyMonthOut(
-                month=month_key,
-                pv_kwh=round(entry["pv_kwh"], 3),
-                battery_kwh=round(entry["battery_kwh"], 3),
-                grid_kwh=round(entry["grid_kwh"], 3),
-                home_kwh=round(home_kwh, 3),
-                autarky_percent=_autarky_percent(
-                    entry["pv_kwh"], entry["battery_kwh"], entry["grid_kwh"]
-                ),
-            )
-        )
+    all_years = sorted({year for year, _position in has_data})
+    if years is not None and years > 0:
+        all_years = all_years[-years:]
 
-    if months is not None and months > 0:
-        result = result[-months:]
-    return result
+    result_years = []
+    for year in all_years:
+        values: list[float | None] = []
+        for position in range(1, num_positions + 1):
+            key = (year, position)
+            if key in has_data:
+                entry = sums[key]
+                values.append(
+                    _autarky_percent(entry["pv_kwh"], entry["battery_kwh"], entry["grid_kwh"])
+                )
+            else:
+                values.append(None)
+        result_years.append({"year": year, "values": values})
+
+    return {"granularity": granularity, "labels": labels, "years": result_years}
