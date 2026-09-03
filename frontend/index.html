@@ -176,6 +176,7 @@
         <button type="button" data-subview="grid">Verbrauch aus Netz</button>
         <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
         <button type="button" data-subview="yearcompare">Jahresvergleich</button>
+        <button type="button" data-subview="batterysoc">Speicherstand</button>
       </div>
     </div>
 
@@ -381,6 +382,33 @@
         Tipp: Auf ein Jahr in der Legende klicken, um es ein- oder
         auszublenden. Jedes Jahr hat eine eigene, feste Farbe (das aktuellste
         Jahr etwas dicker gezeichnet).
+      </p>
+    </section>
+
+    <section class="chart-section hidden" id="trend-view-batterysoc">
+      <div class="daycompare-header">
+        <h2>Speicherstand</h2>
+        <p class="muted">
+          Ladezustand des Batteriespeichers über die Zeit – eine eigene
+          Kurve je Gerät mit Batterie. Standard: die letzten 24 Stunden auf
+          einer festen 0–24-Uhr-Achse, wahlweise auch 2, 3, 7 oder 14 Tage.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="batterysoc-hour-buttons">
+          <button data-hours="24" class="active">24 Std</button>
+          <button data-hours="48">2 Tage</button>
+          <button data-hours="72">3 Tage</button>
+          <button data-hours="168">7 Tage</button>
+          <button data-hours="336">14 Tage</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrapper" id="batterysoc-chart-wrapper">
+        <canvas id="batterysoc-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Ein ansteigender Verlauf zeigt, wann und wie lange der
+        Speicher geladen hat.
       </p>
     </section>
   </div>

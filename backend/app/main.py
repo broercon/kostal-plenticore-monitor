@@ -16,6 +16,7 @@ from sqlalchemy import select
 from . import auth
 from .aggregation import (
     aggregate_per_device,
+    build_battery_soc_series,
     combine_devices,
     combine_latest_readings,
     daily_home_source_breakdown_kwh,
@@ -60,6 +61,7 @@ from .schemas import (
     AdminResetPasswordOut,
     AdminUserOut,
     AutarkyMonthlySummaryOut,
+    BatterySocHistoryOut,
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
@@ -854,6 +856,44 @@ def get_hourly_per_device(
 
     result = hourly_kwh_per_device(rows, field, settings.timezone_name)
     return HourlyPerDeviceOut(metric=metric, **result)
+
+
+@app.get("/api/readings/battery-soc-history", response_model=BatterySocHistoryOut)
+def get_battery_soc_history(
+    hours: float = Query(default=24, ge=0.1, le=24 * 14),
+    bucket_minutes: float = Query(default=5, ge=1, le=1440),
+    _user: User = Depends(auth.get_current_user),
+) -> BatterySocHistoryOut:
+    """Ladezustand (Speicherstand, %) ueber die Zeit - eine eigene Kurve JE
+    GERAET MIT BATTERIE, keine "Alle (Summe)"-Kombination wie beim
+    Leistungsverlauf: ein Prozentwert darf beim Kombinieren mehrerer
+    Geraete nicht aufsummiert werden (siehe
+    aggregation.aggregate_battery_soc_per_device). Geraete ganz ohne
+    SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine Batterie
+    haben) tauchen gar nicht erst in der Antwort auf.
+
+    Wie /api/readings/history: bei hours<=24 gilt die feste lokale
+    Tagesgrenze (seit Mitternacht) statt eines rollierenden Fensters,
+    damit sich der angezeigte Tag nicht mit der Uhrzeit verschiebt.
+    """
+    if hours <= 24:
+        since = local_midnight_utc()
+    else:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    bucket_seconds = int(bucket_minutes * 60)
+
+    session = SessionLocal()
+    try:
+        rows = list(
+            session.scalars(
+                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            )
+        )
+    finally:
+        session.close()
+
+    result = build_battery_soc_series(rows, bucket_seconds)
+    return BatterySocHistoryOut(**result)
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.
