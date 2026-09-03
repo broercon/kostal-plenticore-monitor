@@ -458,3 +458,48 @@ Toleranz ist unabhängig von der obigen Berechnung und ändert keine Zahlen
 - sie kann inzwischen seltener zusätzlich etwas anzeigen, weil bereits
 kleine Abweichungen durch die echte Toleranz oben oft schon zu 100 %
 Genauigkeit führen.
+
+## Jahresvergleich: PV-Erzeugung je Kalendermonat oder -woche, mehrere Jahre übereinandergelegt
+
+Im "Verlauf"-Tab (Unteransicht "Jahresvergleich") lässt sich die gesamte
+PV-Erzeugung mehrerer Jahre direkt vergleichen: pro Jahr eine Kurve auf
+einer gemeinsamen, festen Januar–Dezember- (oder KW1–53-)Achse, statt
+wie sonst üblich einer fortlaufenden Zeitachse. Hausweite Größe (kein
+Wechselrichter-Filter), wie Tagesverbrauch/Autarkiegrad.
+
+`build_yearly_comparison()` (`daily_summary.py`) nutzt denselben
+Tages-Cache (`_cached_daily_totals`, Feld `"pv_yield"`) wie die
+PV-Ertrag-Zeitraumübersicht - beide teilen sich dieselben zwischen-
+gespeicherten Tageswerte, es wird also nichts doppelt berechnet.
+
+### Feste Positionen statt weggelassener Lücken
+
+Anders als bei der Autarkiegrad-Monatsübersicht (die Monate ohne
+Messdaten einfach aus der Liste weglässt) liefert der Jahresvergleich für
+jedes Jahr immer ein volles 12er- (Monate) bzw. 53er-Array (ISO-Kalender-
+wochen), mit `null` an Positionen ohne Daten. Grund: nur so haben alle
+Jahre exakt dieselbe Achse und lassen sich im Liniendiagramm direkt
+übereinanderlegen - ein Jahr, das bei "Mär" einfach fehlen würde (statt
+`null` zu sein), würde die folgenden Monate der anderen Jahre gegenüber
+falsch verschieben.
+
+### Wochen-Granularität: ISO-Kalenderwoche, nicht Kalenderjahr
+
+Bei der Ansicht "Wochen" wird nach `date.isocalendar()` gruppiert (ISO-
+Jahr + ISO-Kalenderwoche), nicht nach `date.year`. Das ist wichtig an
+Jahresgrenzen: der 30.12.2024 liegt z. B. bereits in ISO-Woche 1 des
+Jahres **2025** (`date(2024, 12, 30).isocalendar()` → `(2025, 1, 1)`),
+obwohl sein Kalenderjahr noch 2024 ist. Würde stattdessen nach
+Kalenderjahr gruppiert, würde dieser Tag fälschlich der letzten Woche von
+2024 statt KW 1/2025 zugerechnet.
+
+### Maximal 5 Jahre gleichzeitig
+
+Der Endpoint `/api/readings/yearly-comparison` begrenzt den Parameter
+`years` auf 1-5 (mehr Jahre gleichzeitig wären mit der festen Farbpalette
+kaum noch unterscheidbar). Im Frontend sind über die Buttons 1/2/3
+(Standard)/5 Jahre wählbar; wie beim Tagesvergleich/Wechselrichter-
+Vergleich ist die Werte-Anzeige (Tooltip/Hover) nur bei genau einem
+dargestellten Jahr automatisch an (siehe `chartEventsFor()`), bei
+mehreren Jahren aus, damit sich überlagerte Tooltips nicht gegenseitig
+verdecken.

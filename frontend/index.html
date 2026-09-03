@@ -175,6 +175,7 @@
         <button type="button" data-subview="solar_battery">Verbrauch aus Batterie und Solar</button>
         <button type="button" data-subview="grid">Verbrauch aus Netz</button>
         <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
+        <button type="button" data-subview="yearcompare">Jahresvergleich</button>
       </div>
     </div>
 
@@ -348,6 +349,38 @@
       <p class="chart-hint muted">
         Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
         Tageswerts zu sehen.
+      </p>
+    </section>
+
+    <section class="chart-section hidden" id="trend-view-yearcompare">
+      <div class="daycompare-header">
+        <h2>Jahresvergleich</h2>
+        <p class="muted">
+          Gesamte PV-Erzeugung je Kalendermonat (oder -woche), ein Jahr eine
+          eigene Kurve auf einer festen Januar–Dezember- bzw. KW1–53-Achse –
+          so lassen sich mehrere Jahre direkt übereinanderlegen. Maximal 5
+          Jahre gleichzeitig, damit die Farben unterscheidbar bleiben.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="yearcompare-granularity-buttons">
+          <button data-granularity="month" class="active">Monate</button>
+          <button data-granularity="week">Wochen</button>
+        </div>
+        <div class="range-buttons" id="yearcompare-years-buttons">
+          <button data-years="1">1 Jahr</button>
+          <button data-years="2">2 Jahre</button>
+          <button data-years="3" class="active">3 Jahre</button>
+          <button data-years="5">5 Jahre</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrapper" id="yearcompare-chart-wrapper">
+        <canvas id="yearcompare-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Auf ein Jahr in der Legende klicken, um es ein- oder
+        auszublenden. Jedes Jahr hat eine eigene, feste Farbe (das aktuellste
+        Jahr etwas dicker gezeichnet).
       </p>
     </section>
   </div>

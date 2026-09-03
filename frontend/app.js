@@ -19,6 +19,15 @@ const state = {
     days: 30,
     chart: null,
   },
+  yearCompare: {
+    granularity: "month", // "month" | "week"
+    // Standard 3 Jahre - genug fuer einen aussagekraeftigen Vergleich, ohne
+    // dass die Legende bei kurzer Historie leer bleibt. Ueber die Buttons
+    // weiterhin auf 1/2/5 Jahre umstellbar (Maximum 5, siehe Backend-Limit
+    // und DAY_COLORS-Palette).
+    years: 3,
+    chart: null,
+  },
   autarky: {
     // Standard 24 Monate (2 Jahre) - genug, um saisonale Unterschiede
     // (Sommer/Winter) zu erkennen, ohne bei sehr langer Laufzeit die
@@ -2065,14 +2074,19 @@ function setupDayCompareControls() {
 function applyTrendSubView(view) {
   const isPower = view === "power";
   const isDailyTotals = view === "dailytotals";
+  const isYearCompare = view === "yearcompare";
   el("trend-view-power").classList.toggle("hidden", !isPower);
-  el("trend-view-daycompare").classList.toggle("hidden", isPower || isDailyTotals);
+  el("trend-view-daycompare").classList.toggle(
+    "hidden",
+    isPower || isDailyTotals || isYearCompare
+  );
   // "Tagesverbrauch" (urspruenglich im "Verbrauch & Wechselrichter"-Tab) ist
   // jetzt eine weitere Unteransicht des "Verlauf"-Tabs, siehe HTML - dort
   // liegt die Sektion direkt im Verlauf-Panel, das dazugehoerige Element
   // (#consumption-view-dailytotals) hat seinen Namen aus Kompatibilitaets-
   // gruenden (CSS/Tests/refreshDailyTotalsChart) behalten.
   el("consumption-view-dailytotals").classList.toggle("hidden", !isDailyTotals);
+  el("trend-view-yearcompare").classList.toggle("hidden", !isYearCompare);
 }
 
 function setTrendSubView(view) {
@@ -2086,6 +2100,11 @@ function setTrendSubView(view) {
   if (view === "dailytotals") {
     state.dailyTotals.chart?.resize();
     refreshDailyTotalsChart().catch(console.error);
+    return;
+  }
+  if (view === "yearcompare") {
+    state.yearCompare.chart?.resize();
+    refreshYearCompareChart().catch(console.error);
     return;
   }
   state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
@@ -2217,6 +2236,127 @@ function setupDailyTotalsControls() {
     btn.classList.add("active");
     state.dailyTotals.days = Number(btn.dataset.days);
     refreshDailyTotalsChart().catch(console.error);
+  });
+}
+
+// --- Jahresvergleich: PV-Erzeugung je Kalendermonat oder ISO-Kalenderwoche,
+// ein Jahr eine eigene Kurve auf einer festen Jan-Dez- bzw. KW1-53-Achse
+// (siehe daily_summary.build_yearly_comparison) - analog zum
+// Tagesvergleich, nur auf Jahresebene statt Tagesebene. Hausweite Groesse
+// (kein device_id-Parameter), wie Tagesverbrauch/Autarkiegrad. ---
+
+function buildYearCompareDatasets(years) {
+  const total = years.length;
+  return years.map((year, i) => {
+    const isLatest = i === total - 1;
+    // Wie beim Tagesvergleich: Farbe an die Aktualitaet gekoppelt (aktuellstes
+    // Jahr = Index 0 der Palette), damit es unabhaengig von der Anzahl der
+    // angezeigten Jahre immer denselben Farbton hat; aktuellstes Jahr etwas
+    // dicker gezeichnet.
+    const colorIndex = total - 1 - i;
+    return {
+      label: String(year.year),
+      data: year.values,
+      borderColor: dayColor(colorIndex),
+      backgroundColor: "transparent",
+      borderWidth: isLatest ? 2.5 : 1.5,
+      tension: 0.25,
+      spanGaps: false,
+      pointRadius: 3,
+    };
+  });
+}
+
+async function refreshYearCompareChart() {
+  return withLoading(["#yearcompare-chart-wrapper"], async () => {
+    const { granularity, years } = state.yearCompare;
+    const params = new URLSearchParams({ granularity, years: String(years) });
+    const result = await fetchJson(`/api/readings/yearly-comparison?${params.toString()}`);
+    if (state.yearCompare.granularity !== granularity || state.yearCompare.years !== years) {
+      return;
+    }
+
+    const datasets = buildYearCompareDatasets(result.years);
+    const xTitle = granularity === "week" ? "Kalenderwoche" : "Monat";
+    // Wie beim Tagesvergleich: Werte-Anzeige nur an, wenn genau EIN Jahr
+    // gezeigt wird (sonst wuerden sich die Tooltips mehrerer ueberlagerter
+    // Jahre gegenseitig ueberdecken) - siehe chartEventsFor().
+    const isSingleYear = result.years.length === 1;
+
+    if (state.yearCompare.chart) {
+      state.yearCompare.chart.data.labels = result.labels;
+      state.yearCompare.chart.data.datasets = datasets;
+      state.yearCompare.chart.options.scales.x.title.text = xTitle;
+      // options.events wird bei einer reinen Datenaktualisierung nicht
+      // automatisch neu ausgewertet (siehe Kommentar in
+      // refreshDayCompareChart()) - hier explizit nachziehen, da sich die
+      // Jahresanzahl ueber die Buttons jederzeit aendern kann, ohne dass
+      // der Chart neu erzeugt wird.
+      state.yearCompare.chart.options.events = chartEventsFor(isSingleYear);
+      state.yearCompare.chart.update();
+      return;
+    }
+
+    const ctx = el("yearcompare-chart").getContext("2d");
+    state.yearCompare.chart = new Chart(ctx, {
+      type: "line",
+      data: { labels: result.labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEventsFor(isSingleYear),
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true },
+            grid: { color: "#334155" },
+            title: { display: true, text: xTitle, color: "#94a3b8" },
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { color: "#94a3b8" },
+            grid: { color: "#334155" },
+            title: { display: true, text: "PV-Ertrag (kWh)", color: "#94a3b8" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                const value = context.parsed.y;
+                if (value === null || value === undefined) {
+                  return `${context.dataset.label}: –`;
+                }
+                return `${context.dataset.label}: ${value.toFixed(1)} kWh`;
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+}
+
+function setupYearCompareControls() {
+  const granularityContainer = el("yearcompare-granularity-buttons");
+  granularityContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-granularity]");
+    if (!btn) return;
+    for (const b of granularityContainer.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.yearCompare.granularity = btn.dataset.granularity;
+    refreshYearCompareChart().catch(console.error);
+  });
+
+  const yearsContainer = el("yearcompare-years-buttons");
+  yearsContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-years]");
+    if (!btn) return;
+    for (const b of yearsContainer.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.yearCompare.years = Number(btn.dataset.years);
+    refreshYearCompareChart().catch(console.error);
   });
 }
 
@@ -2653,7 +2793,13 @@ function refreshOverview() {
 function refreshTrendTab() {
   // refreshDailyTotalsChart gehoert seit der Verschiebung von
   // "Tagesverbrauch" hierher (siehe applyTrendSubView) mit zum Verlauf-Tab.
-  return Promise.allSettled([refreshChart(), refreshDayCompareChart(), refreshDailyTotalsChart()]);
+  // refreshYearCompareChart ebenso (Jahresvergleich).
+  return Promise.allSettled([
+    refreshChart(),
+    refreshDayCompareChart(),
+    refreshDailyTotalsChart(),
+    refreshYearCompareChart(),
+  ]);
 }
 
 function refreshConsumptionTab() {
@@ -2767,7 +2913,12 @@ function refreshLoadedTabs() {
 // Erzeugungszeitpunkt bleiben.
 const TAB_CHARTS = {
   overview: () => [],
-  trend: () => [state.chart, state.dayCompare.chart, state.dailyTotals.chart],
+  trend: () => [
+    state.chart,
+    state.dayCompare.chart,
+    state.dailyTotals.chart,
+    state.yearCompare.chart,
+  ],
   consumption: () => [state.hourlyCompare.chart],
   autarky: () => [state.autarky.chart],
   forecast: () => [
@@ -2979,6 +3130,7 @@ async function init() {
   setupTrendSubView();
   setupDayCompareControls();
   setupDailyTotalsControls();
+  setupYearCompareControls();
   setupAutarkyControls();
   setupHourlyCompareControls();
   updateHourlyCompareVisibility();

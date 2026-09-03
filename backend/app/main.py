@@ -50,6 +50,7 @@ from .daily_summary import (
     build_daily_summaries,
     build_feed_in_summary,
     build_pv_yield_summary,
+    build_yearly_comparison,
 )
 from .database import SessionLocal, init_db
 from .models import Reading, User
@@ -85,6 +86,7 @@ from .schemas import (
     MeOut,
     ReadingOut,
     SummaryOut,
+    YearlyComparisonOut,
 )
 from .timeutil import local_midnight_utc
 from zoneinfo import ZoneInfo
@@ -800,6 +802,30 @@ def get_autarky_monthly(
     Zwischenspeicherung abgeschlossener Tage) steckt in
     daily_summary.build_autarky_monthly_summary()."""
     return AutarkyMonthlySummaryOut(months=build_autarky_monthly_summary(months=months))
+
+
+@app.get("/api/readings/yearly-comparison", response_model=YearlyComparisonOut)
+def get_yearly_comparison(
+    granularity: str = Query(
+        default="month", pattern="^(month|week)$", description="'month' oder 'week'"
+    ),
+    years: int | None = Query(
+        default=None, ge=1, le=5, description="Nur die letzten N Kalenderjahre (Standard: alle)"
+    ),
+    _user: User = Depends(auth.get_current_user),
+) -> YearlyComparisonOut:
+    """PV-Ertrag (kWh) je Kalendermonat oder ISO-Kalenderwoche, gruppiert
+    nach Jahr - fuer den Jahresvergleich im "Verlauf"-Tab: jedes Jahr eine
+    eigene Kurve auf einer festen Jan-Dez- bzw. KW1-53-Achse (analog zum
+    Tagesvergleich, nur auf Jahresebene).
+
+    Hausweite Groesse wie /api/readings/autarky-monthly, daher auch hier
+    kein device_id-Parameter. `years` begrenzt auf maximal 5, damit auf dem
+    Dashboard nicht mehr Jahre gleichzeitig dargestellt werden, als es
+    unterscheidbare Farben in der Palette gibt (siehe frontend DAY_COLORS).
+    Die eigentliche Berechnung steckt in
+    daily_summary.build_yearly_comparison()."""
+    return YearlyComparisonOut(**build_yearly_comparison(granularity=granularity, years=years))
 
 
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)
