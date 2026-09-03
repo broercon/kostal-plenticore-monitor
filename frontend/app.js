@@ -37,11 +37,14 @@ const state = {
     chart: null,
   },
   autarky: {
-    // Standard 24 Monate (2 Jahre) - genug, um saisonale Unterschiede
-    // (Sommer/Winter) zu erkennen, ohne bei sehr langer Laufzeit die
-    // Beschriftung der X-Achse zu ueberladen. Ueber "Alle" weiterhin die
-    // komplette Historie waehlbar.
-    months: 24,
+    // Wie Jahresvergleich: mehrere Jahre Autarkiegrad je Monat (oder
+    // Kalenderwoche) auf einer festen Jan-Dez- bzw. KW1-53-Achse
+    // uebereinandergelegt, statt einer einzigen durchgehenden Linie ueber
+    // die gesamte Historie. Standard 3 Jahre, ueber die Buttons zusaetzlich
+    // 1/2/5 Jahre waehlbar (Maximum 5, siehe Backend-Limit und
+    // DAY_COLORS-Palette).
+    granularity: "month", // "month" | "week"
+    years: 3,
     chart: null,
   },
   hourlyCompare: {
@@ -2512,32 +2515,20 @@ function setupBatterySocControls() {
   });
 }
 
-// --- Autarkiegrad je Monat: Balkendiagramm, wie hoch der Anteil des
-// Hausverbrauchs war, der aus PV/Speicher statt aus dem Netz gedeckt wurde
-// (siehe daily_summary.build_autarky_monthly_summary). Hausweite Groesse -
+// --- Autarkiegrad je Kalendermonat oder ISO-Kalenderwoche, gruppiert nach
+// Jahr (siehe daily_summary.build_autarky_yearly_comparison) - wie der
+// Jahresvergleich beim PV-Ertrag zeigt jedes Jahr eine eigene Kurve auf
+// einer festen Jan-Dez- bzw. KW1-53-Achse, statt einer einzigen
+// durchgehenden Linie ueber die gesamte Historie. Hausweite Groesse -
 // unabhaengig vom oben gewaehlten Wechselrichter-Tab, wie beim
 // Tagesverbrauch-Diagramm. ---
 
-const AUTARKY_COLOR = "#2dd4bf";
-const MONTH_NAMES_SHORT = [
-  "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
-  "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
-];
-
-function monthLabel(monthStr) {
-  // "2026-01" -> "Jan 2026"
-  const [year, month] = monthStr.split("-");
-  return `${MONTH_NAMES_SHORT[Number(month) - 1]} ${year}`;
-}
-
-let autarkyMonthsData = [];
-
 // Anders als bei den uebrigen Diagrammen (feste 0-Start- bzw. feste
-// Prozent-Achse) wird die Y-Achse bei manchen Ansichten bewusst dynamisch
-// aus den tatsaechlichen Werten berechnet: eine feste Achse wuerde
-// Unterschiede zwischen recht aehnlichen Werten (z.B. 40-60 % Autarkiegrad,
-// oder kleine Prognoseabweichungen) kaum sichtbar machen (fast eine gerade
-// Linie am Rand). "0" muss dafuer nicht zwingend auf der Achse auftauchen.
+// Prozent-Achse) wird die Y-Achse hier bewusst dynamisch aus den
+// tatsaechlichen Werten berechnet: eine feste Achse wuerde Unterschiede
+// zwischen recht aehnlichen Werten (z.B. 40-60 % Autarkiegrad, oder kleine
+// Prognoseabweichungen) kaum sichtbar machen (fast eine gerade Linie am
+// Rand). "0" muss dafuer nicht zwingend auf der Achse auftauchen.
 // `lowerBound`/`upperBound` begrenzen die Marge nach unten/oben (z.B. 0/100
 // fuer einen Prozentsatz) - weglassen, wenn der Wert (wie eine Abweichung)
 // auch negativ werden kann.
@@ -2558,31 +2549,40 @@ function dynamicYRange(values, { lowerBound = null, upperBound = null } = {}) {
   return { min, max };
 }
 
-function autarkyYRange(months) {
+function autarkyYearsYRange(years) {
   return dynamicYRange(
-    months.map((m) => m.autarky_percent),
+    years.flatMap((y) => y.values),
     { lowerBound: 0, upperBound: 100 }
   );
 }
 
 async function refreshAutarkyChart() {
   return withLoading(["#autarky-chart-wrapper"], async () => {
-    const reqMonths = state.autarky.months;
-    const params = new URLSearchParams();
-    if (reqMonths) params.set("months", String(reqMonths));
-    const result = await fetchJson(`/api/readings/autarky-monthly?${params.toString()}`);
-    if (state.autarky.months !== reqMonths) return;
-    autarkyMonthsData = result.months;
+    const { granularity, years } = state.autarky;
+    const params = new URLSearchParams({ granularity, years: String(years) });
+    const result = await fetchJson(`/api/readings/autarky-yearly-comparison?${params.toString()}`);
+    if (state.autarky.granularity !== granularity || state.autarky.years !== years) return;
 
-    const labels = autarkyMonthsData.map((m) => monthLabel(m.month));
-    const data = autarkyMonthsData.map((m) => m.autarky_percent);
-    const yRange = autarkyYRange(autarkyMonthsData);
+    // Datasets sind strukturell identisch zum Jahresvergleich (ein Jahr
+    // eine Kurve, Farbe nach Aktualitaet) - dieselbe Funktion wiederverwenden.
+    const datasets = buildYearCompareDatasets(result.years);
+    const xTitle = granularity === "week" ? "Kalenderwoche" : "Monat";
+    const yRange = autarkyYearsYRange(result.years);
+    // Wie beim Jahresvergleich: Werte-Anzeige nur an, wenn genau EIN Jahr
+    // gezeigt wird (sonst wuerden sich die Tooltips mehrerer ueberlagerter
+    // Jahre gegenseitig ueberdecken).
+    const isSingleYear = result.years.length === 1;
 
     if (state.autarky.chart) {
-      state.autarky.chart.data.labels = labels;
-      state.autarky.chart.data.datasets[0].data = data;
+      state.autarky.chart.data.labels = result.labels;
+      state.autarky.chart.data.datasets = datasets;
+      state.autarky.chart.options.scales.x.title.text = xTitle;
       state.autarky.chart.options.scales.y.min = yRange.min;
       state.autarky.chart.options.scales.y.max = yRange.max;
+      // options.events wird bei einer reinen Datenaktualisierung nicht
+      // automatisch neu ausgewertet (siehe Kommentar in
+      // refreshDayCompareChart()) - hier explizit nachziehen.
+      state.autarky.chart.options.events = chartEventsFor(isSingleYear);
       state.autarky.chart.update();
       return;
     }
@@ -2590,36 +2590,17 @@ async function refreshAutarkyChart() {
     const ctx = el("autarky-chart").getContext("2d");
     state.autarky.chart = new Chart(ctx, {
       type: "line",
-      data: {
-        labels,
-        datasets: [
-          {
-            label: "Autarkiegrad",
-            data,
-            borderColor: AUTARKY_COLOR,
-            pointBackgroundColor: AUTARKY_COLOR,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-            borderWidth: 2,
-            tension: 0,
-            // Nur die Linie selbst, keine Flaeche darunter (fill: false) -
-            // bei einer dynamisch skalierten Y-Achse (siehe autarkyYRange)
-            // wuerde eine gefuellte Flaeche bis zum unteren Achsenrand
-            // sonst leicht den Eindruck erwecken, die Flaeche haette eine
-            // inhaltliche Bedeutung (z.B. eine Menge), was sie nicht hat.
-            fill: false,
-            spanGaps: false,
-          },
-        ],
-      },
+      data: { labels: result.labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(true), // Autarkiegrad: Werte-Anzeige immer an (unabhaengig vom Zeitraum), siehe Nutzerwunsch
+        events: chartEventsFor(isSingleYear),
+        interaction: { mode: "index", intersect: false },
         scales: {
           x: {
-            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 },
-            grid: { display: false },
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true },
+            grid: { color: "#334155" },
+            title: { display: true, text: xTitle, color: "#94a3b8" },
           },
           y: {
             min: yRange.min,
@@ -2630,40 +2611,41 @@ async function refreshAutarkyChart() {
           },
         },
         plugins: {
-          legend: { display: false },
+          legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
           tooltip: {
             callbacks: {
-              label: (item) =>
-                item.parsed.y === null
-                  ? "keine Daten"
-                  : `Autarkiegrad: ${item.parsed.y.toFixed(1)} %`,
-              afterLabel: (item) => {
-                const m = autarkyMonthsData[item.dataIndex];
-                if (!m) return "";
-                // Auf ganze kWh gerundet statt mit Nachkommastelle - bei
-                // Monatssummen im zwei- bis dreistelligen kWh-Bereich ist
-                // eine Nachkommastelle keine sinnvolle Genauigkeit, siehe
-                // Nutzerwunsch.
-                const ownKwh = Math.round(m.pv_kwh + m.battery_kwh);
-                return `PV + Speicher: ${ownKwh} kWh · Netz: ${Math.round(m.grid_kwh)} kWh`;
+              label(context) {
+                const value = context.parsed.y;
+                return value === null || value === undefined
+                  ? `${context.dataset.label}: –`
+                  : `${context.dataset.label}: ${value.toFixed(1)} %`;
               },
             },
           },
         },
       },
     });
-
   });
 }
 
 function setupAutarkyControls() {
-  const container = el("autarky-month-buttons");
-  container.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-months]");
+  const granularityContainer = el("autarky-granularity-buttons");
+  granularityContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-granularity]");
     if (!btn) return;
-    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    for (const b of granularityContainer.querySelectorAll("button")) b.classList.remove("active");
     btn.classList.add("active");
-    state.autarky.months = btn.dataset.months === "all" ? null : Number(btn.dataset.months);
+    state.autarky.granularity = btn.dataset.granularity;
+    refreshAutarkyChart().catch(console.error);
+  });
+
+  const yearsContainer = el("autarky-years-buttons");
+  yearsContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-years]");
+    if (!btn) return;
+    for (const b of yearsContainer.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.autarky.years = Number(btn.dataset.years);
     refreshAutarkyChart().catch(console.error);
   });
 }

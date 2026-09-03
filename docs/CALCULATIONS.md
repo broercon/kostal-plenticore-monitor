@@ -73,34 +73,44 @@ die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
 
 Der Reiter "Autarkie" zeigt den **Autarkiegrad** – welcher Anteil des
 Hausverbrauchs aus eigener Erzeugung (PV, direkt oder über die Batterie
-zwischengespeichert) statt aus dem Netz gedeckt wurde – je Kalendermonat als
-Liniendiagramm, seit dem allerersten gespeicherten Messwert (Standard: die
-letzten 24 Monate, wählbar auch 12/36/alle). Zusätzlich zeigt die Übersicht
-oben eine Kachel "Autarkiegrad heute" mit dem Wert für den laufenden Tag.
+zwischengespeichert) statt aus dem Netz gedeckt wurde – je Kalendermonat
+(oder -woche), gruppiert nach Jahr: wie der Jahresvergleich beim PV-Ertrag
+zeigt jedes Jahr eine eigene Kurve auf einer festen Januar–Dezember- bzw.
+KW1–53-Achse (Standard 3 Jahre, wählbar 1/2/5, maximal 5 gleichzeitig,
+damit die Farben unterscheidbar bleiben), statt einer einzigen
+durchgehenden Linie über die gesamte Historie – so lassen sich einzelne
+Jahre direkt vergleichen. Zusätzlich zeigt die Übersicht oben eine Kachel
+"Autarkiegrad heute" mit dem Wert für den laufenden Tag.
 
 Anders als die übrigen Diagramme im Dashboard (feste 0 %-/0-Start-Achse)
 skaliert die Y-Achse hier dynamisch auf die tatsächlich vorkommenden Werte
-(kleinster/größter Monatswert jeweils mit etwas Marge, die 0 muss dabei
-nicht auf der Achse auftauchen) – bei den in der Praxis meist recht nah
-beieinander liegenden Autarkiegraden (z.B. 40–60 %) würde eine feste
-0–100 %-Skala Unterschiede zwischen Monaten kaum sichtbar machen.
+(kleinster/größter Wert der angezeigten Jahre jeweils mit etwas Marge, die
+0 muss dabei nicht auf der Achse auftauchen) – bei den in der Praxis meist
+recht nah beieinander liegenden Autarkiegraden (z.B. 40–60 %) würde eine
+feste 0–100 %-Skala Unterschiede kaum sichtbar machen. Wie beim
+Tagesvergleich/Jahresvergleich ist die Werte-Anzeige (Tooltip/Hover) nur
+bei genau einem dargestellten Jahr automatisch an, bei mehreren Jahren aus,
+damit sich überlagerte Tooltips nicht gegenseitig verdecken.
 
 Berechnung: `Autarkiegrad = (PV-Anteil + Speicher-Anteil) / Hausverbrauch
 gesamt`, in Prozent – dieselbe PV-/Speicher-/Netz-Aufteilung, die auch das
 "Tagesverbrauch"-Diagramm verwendet (siehe oben,
-`daily_home_source_breakdown_kwh`). Ein Monatswert ist dabei **nicht** der
-Mittelwert der täglichen Prozentsätze, sondern wird aus den über den Monat
-aufsummierten kWh-Anteilen gebildet – sonst würden Tage mit wenig
-Hausverbrauch (z.B. Abwesenheit) das Monatsergebnis unverhältnismäßig
-verzerren, obwohl sie kaum zum tatsächlichen Monatsverbrauch beitragen. Wie
-beim Tagesverbrauch ist dies eine hausweite Größe, unabhängig vom oben
+`daily_home_source_breakdown_kwh`). Ein Positionswert (Monat/Woche) ist
+dabei **nicht** der Mittelwert der täglichen Prozentsätze, sondern wird aus
+den darüber aufsummierten kWh-Anteilen gebildet – sonst würden Tage mit
+wenig Hausverbrauch (z.B. Abwesenheit) das Ergebnis unverhältnismäßig
+verzerren, obwohl sie kaum zum tatsächlichen Verbrauch beitragen. Wie beim
+Tagesverbrauch ist dies eine hausweite Größe, unabhängig vom oben
 gewählten Wechselrichter-Tab.
 
 Wie bei der PV-Ertrag-/Einspeisungs-Übersicht (siehe "Performance:
 Energie-Zeitraum-Cache" unten) werden abgeschlossene Tage über den
 `daily_energy_cache` zwischengespeichert – nur der laufende Monat/Tag wird
-bei jeder Anfrage frisch berechnet. Kalendermonate ganz ohne Messwerte (z.B.
-vor Inbetriebnahme) fehlen in der Übersicht, statt mit 0 % aufzutauchen.
+bei jeder Anfrage frisch berechnet. Positionen (Monat/Woche) ganz ohne
+Messwerte (z.B. vor Inbetriebnahme) bleiben `null`, statt mit 0 %
+aufzutauchen – anders als bei Monaten ganz ohne Daten behält aber jedes
+zurückgegebene Jahr immer alle 12 bzw. 53 Positionen, damit die feste
+Achsen-Zuordnung nicht durcheinandergerät (siehe "Jahresvergleich" oben).
 Für Zeiträume ohne tatsächlich gespeicherte Netzmessung wird ebenfalls kein
 Autarkiegrad ausgewiesen. Insbesondere ältere Importdaten ohne KSEM-Werte
 dürfen dadurch nicht fälschlich als 100 % autark erscheinen.
@@ -465,23 +475,28 @@ Im "Verlauf"-Tab (Unteransicht "Jahresvergleich") lässt sich die gesamte
 PV-Erzeugung mehrerer Jahre direkt vergleichen: pro Jahr eine Kurve auf
 einer gemeinsamen, festen Januar–Dezember- (oder KW1–53-)Achse, statt
 wie sonst üblich einer fortlaufenden Zeitachse. Hausweite Größe (kein
-Wechselrichter-Filter), wie Tagesverbrauch/Autarkiegrad.
+Wechselrichter-Filter), wie Tagesverbrauch/Autarkiegrad. Die
+Autarkiegrad-Ansicht (siehe oben) folgt demselben Muster, nur für den
+Autarkiegrad statt den PV-Ertrag.
 
 `build_yearly_comparison()` (`daily_summary.py`) nutzt denselben
 Tages-Cache (`_cached_daily_totals`, Feld `"pv_yield"`) wie die
 PV-Ertrag-Zeitraumübersicht - beide teilen sich dieselben zwischen-
 gespeicherten Tageswerte, es wird also nichts doppelt berechnet.
+`build_autarky_yearly_comparison()` nutzt entsprechend denselben
+Tages-Cache wie die Autarkiegrad-heute-Kachel/`daily-home-breakdown`
+(`_cached_home_source_breakdown`).
 
 ### Feste Positionen statt weggelassener Lücken
 
-Anders als bei der Autarkiegrad-Monatsübersicht (die Monate ohne
-Messdaten einfach aus der Liste weglässt) liefert der Jahresvergleich für
-jedes Jahr immer ein volles 12er- (Monate) bzw. 53er-Array (ISO-Kalender-
-wochen), mit `null` an Positionen ohne Daten. Grund: nur so haben alle
-Jahre exakt dieselbe Achse und lassen sich im Liniendiagramm direkt
-übereinanderlegen - ein Jahr, das bei "Mär" einfach fehlen würde (statt
-`null` zu sein), würde die folgenden Monate der anderen Jahre gegenüber
-falsch verschieben.
+Sowohl der PV-Ertrag- als auch der Autarkiegrad-Jahresvergleich liefern
+für jedes Jahr immer ein volles 12er- (Monate) bzw. 53er-Array (ISO-
+Kalenderwochen), mit `null` an Positionen ohne Daten - anders als z.B. die
+tägliche Home-Breakdown-Übersicht, die Tage ganz ohne Messdaten einfach
+weglässt. Grund: nur so haben alle Jahre exakt dieselbe Achse und lassen
+sich im Liniendiagramm direkt übereinanderlegen - ein Jahr, das bei "Mär"
+einfach fehlen würde (statt `null` zu sein), würde die folgenden Monate
+der anderen Jahre gegenüber falsch verschieben.
 
 ### Wochen-Granularität: ISO-Kalenderwoche, nicht Kalenderjahr
 

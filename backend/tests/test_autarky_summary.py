@@ -1,6 +1,9 @@
 """Tests fuer den Autarkiegrad: taeglicher Wert in
-/api/readings/daily-home-breakdown sowie die monatliche Uebersicht
-/api/readings/autarky-monthly (app.daily_summary.build_autarky_monthly_summary).
+/api/readings/daily-home-breakdown sowie den Jahresvergleich
+/api/readings/autarky-yearly-comparison
+(app.daily_summary.build_autarky_yearly_comparison) - je Kalendermonat
+oder ISO-Kalenderwoche gruppiert nach Jahr, analog zu
+build_yearly_comparison() beim PV-Ertrag.
 
 Nutzt die frozen_now-Fixture (siehe conftest.py, FROZEN_NOW = 2026-06-15
 12:00 UTC = 14:00 Europe/Berlin), damit "heute"/"dieser Monat"/"letzter
@@ -8,7 +11,7 @@ Monat" unabhaengig vom tatsaechlichen Testlaufzeitpunkt eindeutig sind.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.models import Reading
@@ -102,65 +105,98 @@ def test_autarky_is_unknown_without_grid_measurements(client, frozen_now):
     assert len(daily) == 1
     assert daily[0]["autarky_percent"] is None
 
-    monthly = client.get("/api/readings/autarky-monthly").json()["months"]
-    assert monthly == []
+    yearly = client.get("/api/readings/autarky-yearly-comparison").json()["years"]
+    assert yearly == []
 
 
-def test_autarky_monthly_summary_two_months(client, frozen_now):
+def test_autarky_yearly_comparison_without_data_is_empty(client):
+    _login(client)
+    res = client.get("/api/readings/autarky-yearly-comparison")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "month"
+    assert body["years"] == []
+
+
+def test_autarky_yearly_comparison_month_groups_by_calendar_month_and_year(client, frozen_now):
+    """Zwei Tage im Juni, ein Jahr auseinander, mit unterschiedlichem
+    Autarkiegrad - muessen als zwei separate Jahres-Eintraege auf Position 5
+    (Juni = Index 5, 0-basiert) erscheinen, alle anderen 11 Positionen
+    bleiben None."""
+    _login(client)
+    today_local = frozen_now.astimezone(TZ).date()  # 2026-06-15
+    last_year_day = today_local.replace(year=today_local.year - 1)  # 2025-06-15
+
+    # Dieses Jahr: 60 % Autarkiegrad (siehe test oben).
+    _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
+    # Letztes Jahr: home=1000W, grid_draw=800W, pv=200W -> 20 % Autarkiegrad.
+    _seed_day("wr1", last_year_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+
+    res = client.get("/api/readings/autarky-yearly-comparison")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "month"
+    assert [y["year"] for y in body["years"]] == [last_year_day.year, today_local.year]
+
+    last_year_entry, this_year_entry = body["years"]
+    assert last_year_entry["values"][5] == 20.0
+    assert this_year_entry["values"][5] == 60.0
+    # Alle anderen 11 Positionen ohne Daten -> None, nicht 0 oder fehlend.
+    assert [v for i, v in enumerate(last_year_entry["values"]) if i != 5] == [None] * 11
+    assert len(this_year_entry["values"]) == 12
+
+
+def test_autarky_yearly_comparison_week_uses_iso_calendar_not_calendar_year(client):
+    """Regression: 2024-12-30 gehoert laut Kalenderjahr zu 2024, aber laut
+    ISO 8601 zu Kalenderwoche 1 des Jahres 2025 (siehe date.isocalendar()) -
+    wie bei build_yearly_comparison()."""
+    _login(client)
+    boundary_day = date(2024, 12, 30)
+    assert boundary_day.isocalendar()[:2] == (2025, 1)
+    _seed_day("wr1", boundary_day, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)  # 60 %
+
+    res = client.get("/api/readings/autarky-yearly-comparison?granularity=week")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["granularity"] == "week"
+    assert len(body["labels"]) == 53
+    assert body["labels"][0] == "KW 1"
+
+    assert [y["year"] for y in body["years"]] == [2025]
+    year_entry = body["years"][0]
+    assert year_entry["values"][0] == 60.0
+    assert all(v is None for v in year_entry["values"][1:])
+
+
+def test_autarky_yearly_comparison_years_param_limits_to_most_recent(client, frozen_now):
     _login(client)
     today_local = frozen_now.astimezone(TZ).date()
-    last_month_day = today_local.replace(day=1) - timedelta(days=1)  # letzter Tag Vormonat
+    for offset_years in range(3):  # 2026, 2025, 2024
+        day = today_local.replace(year=today_local.year - offset_years)
+        _seed_day("wr1", day, home_w=1000.0, pv_w=500.0, grid_draw_w=500.0)
 
-    # Heute: 60 % Autarkiegrad (siehe test oben).
-    _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
-    # Vormonat: home=1000W, grid_draw=800W, pv=200W -> 20 % Autarkiegrad.
-    _seed_day("wr1", last_month_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+    res_all = client.get("/api/readings/autarky-yearly-comparison")
+    assert [y["year"] for y in res_all.json()["years"]] == [2024, 2025, 2026]
 
-    res = client.get("/api/readings/autarky-monthly")
-    assert res.status_code == 200
-    months = res.json()["months"]
-    assert [m["month"] for m in months] == [
-        last_month_day.strftime("%Y-%m"),
-        today_local.strftime("%Y-%m"),
-    ]
-
-    last_month_entry, this_month_entry = months
-    assert last_month_entry["autarky_percent"] == 20.0
-    assert last_month_entry["pv_kwh"] == 0.05
-    assert last_month_entry["grid_kwh"] == 0.2
-    assert last_month_entry["home_kwh"] == 0.25
-
-    assert this_month_entry["autarky_percent"] == 60.0
-    assert this_month_entry["pv_kwh"] == 0.15
-    assert this_month_entry["grid_kwh"] == 0.1
-    assert this_month_entry["home_kwh"] == 0.25
+    res_limited = client.get("/api/readings/autarky-yearly-comparison?years=2")
+    assert res_limited.status_code == 200
+    assert [y["year"] for y in res_limited.json()["years"]] == [2025, 2026]
 
 
-def test_autarky_monthly_months_param_limits_result(client, frozen_now):
+def test_autarky_yearly_comparison_years_param_above_five_is_rejected(client):
     _login(client)
-    today_local = frozen_now.astimezone(TZ).date()
-    last_month_day = today_local.replace(day=1) - timedelta(days=1)
-
-    _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
-    _seed_day("wr1", last_month_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
-
-    res = client.get("/api/readings/autarky-monthly?months=1")
-    assert res.status_code == 200
-    months = res.json()["months"]
-    assert len(months) == 1
-    assert months[0]["month"] == today_local.strftime("%Y-%m")
-    assert months[0]["autarky_percent"] == 60.0
+    res = client.get("/api/readings/autarky-yearly-comparison?years=6")
+    assert res.status_code == 422
 
 
-def test_autarky_monthly_without_data_is_empty(client):
+def test_autarky_yearly_comparison_invalid_granularity_is_rejected(client):
     _login(client)
-    res = client.get("/api/readings/autarky-monthly")
-    assert res.status_code == 200
-    assert res.json()["months"] == []
+    res = client.get("/api/readings/autarky-yearly-comparison?granularity=day")
+    assert res.status_code == 422
 
 
-def test_autarky_monthly_uses_daily_energy_cache(client, frozen_now):
-    """Abgeschlossene Tage (Vormonat) muessen nach dem ersten Aufruf im
+def test_autarky_yearly_comparison_uses_daily_energy_cache(client, frozen_now):
+    """Abgeschlossene Tage (letztes Jahr) muessen nach dem ersten Aufruf im
     daily_energy_cache liegen - wie bei build_pv_yield_summary/
     build_energy_period_summary (siehe test_energy_cache.py)."""
     from app.database import SessionLocal
@@ -168,11 +204,11 @@ def test_autarky_monthly_uses_daily_energy_cache(client, frozen_now):
 
     _login(client)
     today_local = frozen_now.astimezone(TZ).date()
-    last_month_day = today_local.replace(day=1) - timedelta(days=1)
-    _seed_day("wr1", last_month_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+    last_year_day = today_local.replace(year=today_local.year - 1)
+    _seed_day("wr1", last_year_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
     _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
 
-    res = client.get("/api/readings/autarky-monthly")
+    res = client.get("/api/readings/autarky-yearly-comparison")
     assert res.status_code == 200
 
     db = SessionLocal()
@@ -180,7 +216,7 @@ def test_autarky_monthly_uses_daily_energy_cache(client, frozen_now):
         cached_fields = {
             row.field
             for row in db.query(DailyEnergyCache)
-            .filter(DailyEnergyCache.date == last_month_day.strftime("%Y-%m-%d"))
+            .filter(DailyEnergyCache.date == last_year_day.strftime("%Y-%m-%d"))
             .all()
         }
     finally:
@@ -201,7 +237,7 @@ def test_autarky_monthly_uses_daily_energy_cache(client, frozen_now):
     assert today_cached == 0
 
 
-def test_autarky_monthly_loads_raw_readings_only_once_per_gap(client, frozen_now, monkeypatch):
+def test_autarky_yearly_comparison_loads_raw_readings_only_once_per_gap(client, frozen_now, monkeypatch):
     """Regressionstest fuer die Performance-Korrektur: bei einer Cache-
     Luecke duerfen die Rohmesswerte nur EINMAL geladen werden (fuer alle
     drei Anteile PV/Speicher/Netz gemeinsam), nicht dreimal (einmal je
@@ -210,8 +246,8 @@ def test_autarky_monthly_loads_raw_readings_only_once_per_gap(client, frozen_now
 
     _login(client)
     today_local = frozen_now.astimezone(TZ).date()
-    last_month_day = today_local.replace(day=1) - timedelta(days=1)
-    _seed_day("wr1", last_month_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+    last_year_day = today_local.replace(year=today_local.year - 1)
+    _seed_day("wr1", last_year_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
     _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
 
     calls = []
@@ -223,7 +259,7 @@ def test_autarky_monthly_loads_raw_readings_only_once_per_gap(client, frozen_now
 
     monkeypatch.setattr(daily_summary_module, "_load_readings_range", counting_load_readings_range)
 
-    res = client.get("/api/readings/autarky-monthly")
+    res = client.get("/api/readings/autarky-yearly-comparison")
     assert res.status_code == 200
 
     # Genau EIN Aufruf fuer die (gesamte) historische Luecke plus EIN Aufruf

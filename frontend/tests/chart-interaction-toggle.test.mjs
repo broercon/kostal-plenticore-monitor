@@ -2,10 +2,11 @@
 // An/Aus-Knopf (der verwirrenderweise an fuenf Stellen im Dashboard auftauchte,
 // aber ALLE Diagramme auf einmal umgeschaltet hat) jetzt automatisch je
 // Diagramm bestimmt (siehe chartEventsFor() in app.js): am Desktop an, wenn
-// genau EIN Tag dargestellt wird, sonst aus; auf einem Touch-Geraet immer aus
-// (damit die Seite frei scrollt). Ausnahme auf Nutzerwunsch: bei Prognose
-// und Autarkiegrad sind die Werte am Desktop immer an, unabhaengig von der
-// Tagesanzahl (chartEventsFor(true) statt chartEventsFor(isSingleDayView)).
+// genau EIN Tag (bzw. bei Jahresvergleich/Autarkiegrad: EIN Jahr) dargestellt
+// wird, sonst aus; auf einem Touch-Geraet immer aus (damit die Seite frei
+// scrollt). Ausnahme auf Nutzerwunsch: bei Prognose sind die Werte am
+// Desktop immer an, unabhaengig von der Tagesanzahl (chartEventsFor(true)
+// statt chartEventsFor(isSingleDayView)).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -71,19 +72,23 @@ test("Wechselrichter-Vergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne
   assert.equal(app.state.hourlyCompare.chart, chartBefore);
 });
 
-test("Tagesverbrauch zeigt strukturell nie einen Einzeltag - Werte-Anzeige bleibt aus, Autarkiegrad aber immer an", async () => {
+test("Tagesverbrauch zeigt strukturell nie einen Einzeltag - Werte-Anzeige bleibt aus", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("trend"));
-  await waitFor(() => app.state.tabsLoaded.has("autarky"));
   await waitFor(() => !!app.state.dailyTotals.chart);
-  await waitFor(() => !!app.state.autarky.chart);
 
   assert.equal(isInteractive(app.state.dailyTotals.chart), false);
-  // Abweichung vom sonstigen Ein-Tag/Mehr-Tage-Automatismus: beim
-  // Autarkiegrad sollen die Werte unabhaengig vom Zeitraum immer sichtbar
-  // sein (auf Wunsch des Nutzers), obwohl die Ansicht strukturell nie
-  // einen Einzeltag zeigt.
-  assert.equal(isInteractive(app.state.autarky.chart), true);
+});
+
+// Autarkiegrad: wie der Jahresvergleich (siehe tab-autarky.test.mjs) nur
+// an, wenn genau EIN Jahr dargestellt wird - Standard sind 3 Jahre, also
+// aus.
+test("Autarkiegrad (Standard 3 Jahre): Werte-Anzeige aus, wie beim Jahresvergleich", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  await waitFor(() => app.state.tabsLoaded.has("autarky"));
+  await waitFor(() => !!app.state.autarky.chart);
+
+  assert.equal(isInteractive(app.state.autarky.chart), false);
 });
 
 test("Alle Prognose-Diagramme (heute/morgen/gestern, Tagesuebersicht, Prognosekontrolle) zeigen die Werte immer an", async () => {
