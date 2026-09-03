@@ -16,7 +16,7 @@ from sqlalchemy import select
 from . import auth
 from .aggregation import (
     aggregate_per_device,
-    build_battery_soc_series,
+    build_battery_soc_day_series,
     combine_devices,
     combine_latest_readings,
     daily_home_source_breakdown_kwh,
@@ -860,27 +860,22 @@ def get_hourly_per_device(
 
 @app.get("/api/readings/battery-soc-history", response_model=BatterySocHistoryOut)
 def get_battery_soc_history(
-    hours: float = Query(default=24, ge=0.1, le=24 * 14),
-    bucket_minutes: float = Query(default=5, ge=1, le=1440),
+    days: int = Query(default=1, ge=1, le=14, description="Anzahl Tage rueckwirkend inkl. heute"),
+    bucket_minutes: int = Query(default=5, ge=1, le=60),
     _user: User = Depends(auth.get_current_user),
 ) -> BatterySocHistoryOut:
-    """Ladezustand (Speicherstand, %) ueber die Zeit - eine eigene Kurve JE
-    GERAET MIT BATTERIE, keine "Alle (Summe)"-Kombination wie beim
-    Leistungsverlauf: ein Prozentwert darf beim Kombinieren mehrerer
-    Geraete nicht aufsummiert werden (siehe
-    aggregation.aggregate_battery_soc_per_device). Geraete ganz ohne
-    SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine Batterie
-    haben) tauchen gar nicht erst in der Antwort auf.
-
-    Wie /api/readings/history: bei hours<=24 gilt die feste lokale
-    Tagesgrenze (seit Mitternacht) statt eines rollierenden Fensters,
-    damit sich der angezeigte Tag nicht mit der Uhrzeit verschiebt.
+    """Ladezustand (Speicherstand, %) je Kalendertag - wie
+    /api/readings/day-profile zeigt jeder Tag eine eigene Kurve auf einer
+    gemeinsamen 00:00-24:00-Achse, damit sich einzelne Tage direkt
+    vergleichen lassen statt in einer einzigen langen Linie zu
+    verschwimmen (siehe aggregation.build_battery_soc_day_series).
+    Weiterhin eine eigene Kurve JE GERAET MIT BATTERIE, keine "Alle
+    (Summe)"-Kombination wie beim Leistungsverlauf: ein Prozentwert darf
+    beim Kombinieren mehrerer Geraete nicht aufsummiert werden. Geraete
+    ganz ohne SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine
+    Batterie haben) tauchen gar nicht erst in der Antwort auf.
     """
-    if hours <= 24:
-        since = local_midnight_utc()
-    else:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    bucket_seconds = int(bucket_minutes * 60)
+    since = local_midnight_utc() - timedelta(days=days - 1)
 
     session = SessionLocal()
     try:
@@ -892,7 +887,7 @@ def get_battery_soc_history(
     finally:
         session.close()
 
-    result = build_battery_soc_series(rows, bucket_seconds)
+    result = build_battery_soc_day_series(rows, bucket_minutes, settings.timezone_name)
     return BatterySocHistoryOut(**result)
 
 

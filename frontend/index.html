@@ -389,26 +389,30 @@
       <div class="daycompare-header">
         <h2>Speicherstand</h2>
         <p class="muted">
-          Ladezustand des Batteriespeichers über die Zeit – eine eigene
-          Kurve je Gerät mit Batterie. Standard: die letzten 24 Stunden auf
-          einer festen 0–24-Uhr-Achse, wahlweise auch 2, 3, 7 oder 14 Tage.
+          Ladezustand des Batteriespeichers über die Zeit – jeder Tag als
+          eigene Kurve auf einer festen 00:00–24:00-Achse, damit sich
+          einzelne Tage direkt übereinander vergleichen lassen. Standard:
+          nur heute, wahlweise auch 2, 3, 7 oder 14 Tage überlagert.
         </p>
       </div>
       <div class="chart-toolbar daycompare-toolbar">
-        <div class="range-buttons" id="batterysoc-hour-buttons">
-          <button data-hours="24" class="active">24 Std</button>
-          <button data-hours="48">2 Tage</button>
-          <button data-hours="72">3 Tage</button>
-          <button data-hours="168">7 Tage</button>
-          <button data-hours="336">14 Tage</button>
+        <div class="range-buttons" id="batterysoc-day-buttons">
+          <button data-days="1" class="active">1 Tag</button>
+          <button data-days="2">2 Tage</button>
+          <button data-days="3">3 Tage</button>
+          <button data-days="7">7 Tage</button>
+          <button data-days="14">14 Tage</button>
         </div>
       </div>
       <div class="chart-canvas-wrapper" id="batterysoc-chart-wrapper">
         <canvas id="batterysoc-chart"></canvas>
       </div>
       <p class="chart-hint muted">
-        Tipp: Ein ansteigender Verlauf zeigt, wann und wie lange der
-        Speicher geladen hat.
+        Tipp: Auf einen Tag in der Legende klicken, um ihn ein- oder
+        auszublenden – hilfreich, um z.B. nur zwei bestimmte Tage
+        gegenüberzustellen. Jeder Tag hat eine eigene, feste Farbe (der
+        aktuellste Tag etwas dicker gezeichnet). Ein ansteigender Verlauf
+        zeigt, wann und wie lange der Speicher geladen hat.
       </p>
     </section>
   </div>
