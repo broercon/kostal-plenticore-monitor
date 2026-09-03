@@ -52,6 +52,76 @@ def aggregate_per_device(
     return result
 
 
+def aggregate_battery_soc_per_device(
+    rows: list[Reading], bucket_seconds: int
+) -> dict[str, dict[int, float]]:
+    """Wie aggregate_per_device(), aber ausschliesslich fuer
+    battery_soc_percent und bewusst GETRENNT von HISTORY_FIELDS/
+    combine_devices: ein Ladezustand in Prozent darf beim Kombinieren
+    mehrerer Geraete ("Alle (Summe)") nicht wie eine Leistung aufsummiert
+    werden (zwei Batterien bei je 50 % waeren zusammen nicht "100 %"). Der
+    Speicherstand-Verlauf zeigt deshalb je Geraet mit Batterie eine eigene
+    Kurve, siehe build_battery_soc_series().
+
+    Nur Buckets mit mindestens einem tatsaechlichen Messwert werden
+    aufgenommen (kein Auffuellen mit None hier - das passiert erst in
+    build_battery_soc_series(), wo die vollstaendige Bucket-Liste ueber
+    alle Geraete bekannt ist).
+
+    Rueckgabe: {device_id: {bucket_epoch_sekunden: mittlerer_soc_prozent}}
+    """
+    sums: dict[tuple[str, int], float] = {}
+    counts: dict[tuple[str, int], int] = {}
+
+    for row in rows:
+        if row.battery_soc_percent is None:
+            continue
+        bk = _bucket_key(row.timestamp, bucket_seconds)
+        key = (row.device_id, bk)
+        sums[key] = sums.get(key, 0.0) + row.battery_soc_percent
+        counts[key] = counts.get(key, 0) + 1
+
+    result: dict[str, dict[int, float]] = {}
+    for (device_id, bk), total in sums.items():
+        result.setdefault(device_id, {})[bk] = total / counts[(device_id, bk)]
+    return result
+
+
+def build_battery_soc_series(rows: list[Reading], bucket_seconds: int) -> dict:
+    """Speicherstand-Zeitreihe fuer das 'Speicherstand'-Diagramm: eine Kurve
+    je Geraet mit Batterie (siehe aggregate_battery_soc_per_device() fuer
+    die Begruendung, warum hier NICHT kombiniert/summiert wird). Geraete
+    ganz ohne SoC-Messwert im betrachteten Zeitraum (z.B. weil sie keine
+    Batterie haben) tauchen gar nicht erst in "devices" auf.
+
+    Rueckgabe: {"devices": [{"device_id","device_name"}, ...], "points":
+    [{"timestamp": datetime, "values": {device_id: prozent|None}}, ...]},
+    Punkte aufsteigend sortiert. Jeder Punkt enthaelt fuer JEDES Geraet mit
+    Batterie einen Eintrag (None, wenn fuer dieses Geraet in diesem Bucket
+    kein Messwert vorliegt), damit das Frontend eine luekenlose Kurve pro
+    Geraet bauen kann (Chart.js "spanGaps").
+    """
+    per_device = aggregate_battery_soc_per_device(rows, bucket_seconds)
+
+    device_names: dict[str, str] = {}
+    for row in rows:
+        if row.device_id in per_device and row.device_id not in device_names:
+            device_names[row.device_id] = row.device_name
+
+    device_ids = list(device_names.keys())
+    all_buckets = sorted({bk for buckets in per_device.values() for bk in buckets})
+
+    points = [
+        {
+            "timestamp": datetime.fromtimestamp(bk, tz=timezone.utc),
+            "values": {d: per_device.get(d, {}).get(bk) for d in device_ids},
+        }
+        for bk in all_buckets
+    ]
+    devices = [{"device_id": d, "device_name": device_names[d]} for d in device_ids]
+    return {"devices": devices, "points": points}
+
+
 def combine_devices(
     per_device: dict[str, dict[int, dict[str, float | None]]],
     has_grid_meter: dict[str, bool] | None = None,

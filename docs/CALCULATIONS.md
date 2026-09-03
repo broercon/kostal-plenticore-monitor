@@ -503,3 +503,35 @@ Vergleich ist die Werte-Anzeige (Tooltip/Hover) nur bei genau einem
 dargestellten Jahr automatisch an (siehe `chartEventsFor()`), bei
 mehreren Jahren aus, damit sich überlagerte Tooltips nicht gegenseitig
 verdecken.
+
+## Speicherstand: Ladezustand (SoC) über die Zeit, je Gerät eine eigene Kurve
+
+Im "Verlauf"-Tab (Unteransicht "Speicherstand") zeigt ein Liniendiagramm
+den Ladezustand (State of Charge, %) des Batteriespeichers über die Zeit.
+Der Wert (`battery_soc_percent`, siehe `plenticore_client.py`,
+`devices:local:battery/SoC`) wird bei jeder Messung ohnehin schon
+gespeichert - dieses Diagramm macht ihn erstmals sichtbar.
+
+Wie der Leistungsverlauf zeigt die Standardansicht die letzten 24 Stunden
+auf einer festen 00:00–24:00-Achse; über die Buttons sind zusätzlich 2, 3,
+7 oder 14 Tage wählbar (dann mit fortlaufenden Datums-/Uhrzeit-Labels statt
+der festen Tagesachse, wie beim Leistungsverlauf ab über 24 Stunden).
+
+### Warum hier NICHT wie sonst kombiniert/summiert wird
+
+Bei mehreren konfigurierten Wechselrichtern werden Hausverbrauch, PV- und
+Batterieleistung im Leistungsverlauf normalerweise zu einer Gesamtgröße
+kombiniert (`combine_devices()`, siehe Abschnitt "Mehrere Wechselrichter"
+oben). Für den Ladezustand ist das nicht sinnvoll: ein Prozentwert darf
+nicht über mehrere Geräte aufsummiert werden (zwei Batterien bei je 50 %
+wären zusammen nicht "100 %", ein einzelnes Gerät bei 50 % nicht die
+Hälfte eines Durchschnitts mehrerer Geräte ohne Gewichtung nach
+Kapazität, die dem System gar nicht bekannt ist).
+
+Der Speicherstand-Verlauf verwendet deshalb eine eigene, von
+`HISTORY_FIELDS`/`combine_devices()` unabhängige Aggregation
+(`aggregate_battery_soc_per_device()`/`build_battery_soc_series()` in
+`aggregation.py`): jedes Gerät mit Batterie bekommt seine eigene Kurve.
+Geräte ganz ohne SoC-Messwert im betrachteten Zeitraum (z. B. weil sie
+keine Batterie haben) tauchen in der Antwort gar nicht erst auf - es gibt
+also keine leere/flache Phantom-Kurve für batterielose Wechselrichter.

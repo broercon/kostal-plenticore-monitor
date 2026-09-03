@@ -28,6 +28,13 @@ const state = {
     years: 3,
     chart: null,
   },
+  batterySoc: {
+    // Wie Leistungsverlauf: Standard 24 Std (fester 00:00-24:00-Achsenmodus),
+    // ueber die Buttons zusaetzlich 2/3/7/14 Tage waehlbar.
+    hours: 24,
+    chartMode: null, // "day" | "range", wie state.chartMode beim Leistungsverlauf
+    chart: null,
+  },
   autarky: {
     // Standard 24 Monate (2 Jahre) - genug, um saisonale Unterschiede
     // (Sommer/Winter) zu erkennen, ohne bei sehr langer Laufzeit die
@@ -2075,10 +2082,11 @@ function applyTrendSubView(view) {
   const isPower = view === "power";
   const isDailyTotals = view === "dailytotals";
   const isYearCompare = view === "yearcompare";
+  const isBatterySoc = view === "batterysoc";
   el("trend-view-power").classList.toggle("hidden", !isPower);
   el("trend-view-daycompare").classList.toggle(
     "hidden",
-    isPower || isDailyTotals || isYearCompare
+    isPower || isDailyTotals || isYearCompare || isBatterySoc
   );
   // "Tagesverbrauch" (urspruenglich im "Verbrauch & Wechselrichter"-Tab) ist
   // jetzt eine weitere Unteransicht des "Verlauf"-Tabs, siehe HTML - dort
@@ -2087,6 +2095,7 @@ function applyTrendSubView(view) {
   // gruenden (CSS/Tests/refreshDailyTotalsChart) behalten.
   el("consumption-view-dailytotals").classList.toggle("hidden", !isDailyTotals);
   el("trend-view-yearcompare").classList.toggle("hidden", !isYearCompare);
+  el("trend-view-batterysoc").classList.toggle("hidden", !isBatterySoc);
 }
 
 function setTrendSubView(view) {
@@ -2105,6 +2114,11 @@ function setTrendSubView(view) {
   if (view === "yearcompare") {
     state.yearCompare.chart?.resize();
     refreshYearCompareChart().catch(console.error);
+    return;
+  }
+  if (view === "batterysoc") {
+    state.batterySoc.chart?.resize();
+    refreshBatterySocChart().catch(console.error);
     return;
   }
   state.dayCompare.metric = view; // "pv" | "solar_battery" | "grid"
@@ -2357,6 +2371,143 @@ function setupYearCompareControls() {
     btn.classList.add("active");
     state.yearCompare.years = Number(btn.dataset.years);
     refreshYearCompareChart().catch(console.error);
+  });
+}
+
+// --- Speicherstand: Ladezustand (SoC, %) ueber die Zeit, eine Kurve je
+// Geraet mit Batterie (siehe backend aggregation.build_battery_soc_series -
+// Prozentwerte werden bewusst NICHT ueber mehrere Geraete kombiniert/
+// summiert wie beim Leistungsverlauf). Standard 24 Std mit fester
+// 00:00-24:00-Achse (wie Leistungsverlauf), zusaetzlich 2/3/7/14 Tage
+// waehlbar. Hausweite Uebersicht (kein device_id-Filter noetig - Geraete
+// ohne Batterie tauchen in der Antwort ohnehin nicht auf). ---
+
+function buildBatterySocDatasets(devices, points, isDayMode) {
+  return devices.map((device, i) => ({
+    label: device.device_name,
+    data: points.map((p) => {
+      const value = p.values[device.device_id];
+      const y = value === undefined ? null : value;
+      // Wie beim Leistungsverlauf: im Tagesmodus {x,y}-Punkte auf der
+      // festen Minuten-des-Tages-Achse, sonst ein einfacher Wert je
+      // Label (siehe labels in refreshBatterySocChart()).
+      return isDayMode ? { x: minuteOfLocalDay(new Date(p.timestamp)), y } : y;
+    }),
+    borderColor: dayColor(i),
+    backgroundColor: "transparent",
+    tension: 0.25,
+    pointRadius: 0,
+    spanGaps: true,
+  }));
+}
+
+async function refreshBatterySocChart() {
+  return withLoading(["#batterysoc-chart-wrapper"], async () => {
+    const reqHours = state.batterySoc.hours;
+    const isDayMode = reqHours <= 24;
+    const mode = isDayMode ? "day" : "range";
+    const bucketMinutes = bucketMinutesForRange(reqHours);
+    const params = new URLSearchParams({
+      hours: String(reqHours),
+      bucket_minutes: String(bucketMinutes),
+    });
+    const result = await fetchJson(`/api/readings/battery-soc-history?${params.toString()}`);
+    // Auswahl waehrend des Ladens geaendert? Dann Ergebnis verwerfen (wie
+    // beim Leistungsverlauf/Jahresvergleich).
+    if (state.batterySoc.hours !== reqHours) return;
+
+    const datasets = buildBatterySocDatasets(result.devices, result.points, isDayMode);
+    const labels = isDayMode
+      ? null
+      : result.points.map((p) =>
+          new Date(p.timestamp).toLocaleString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        );
+
+    if (state.batterySoc.chart && state.batterySoc.chartMode === mode) {
+      state.batterySoc.chart.data.labels = labels;
+      state.batterySoc.chart.data.datasets = datasets;
+      // options.events wird bei einer reinen Datenaktualisierung nicht
+      // automatisch neu ausgewertet - hier explizit nachziehen, da sich
+      // der Zeitraum ueber die Buttons jederzeit zwischen Tages- und
+      // Mehrtagesmodus wechseln kann, ohne dass der Chart neu erzeugt
+      // wird (siehe Kommentar in refreshDayCompareChart()).
+      state.batterySoc.chart.options.events = chartEventsFor(isDayMode);
+      state.batterySoc.chart.update();
+      return;
+    }
+
+    if (state.batterySoc.chart) {
+      state.batterySoc.chart.destroy();
+      state.batterySoc.chart = null;
+    }
+    state.batterySoc.chartMode = mode;
+
+    const ctx = el("batterysoc-chart").getContext("2d");
+    const xScale = isDayMode
+      ? {
+          type: "linear",
+          min: 0,
+          max: 1440,
+          ticks: { color: "#94a3b8", stepSize: 120, callback: (v) => minutesToLabel(v) },
+          grid: { color: "#334155" },
+        }
+      : {
+          ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
+          grid: { color: "#334155" },
+        };
+
+    state.batterySoc.chart = new Chart(ctx, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        // Wie beim Leistungsverlauf (kein Sonderfall wie bei Prognose/
+        // Autarkiegrad): Werte-Anzeige nur automatisch an, wenn genau ein
+        // Tag dargestellt wird.
+        events: chartEventsFor(isDayMode),
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: xScale,
+          y: {
+            min: 0,
+            max: 100,
+            ticks: { color: "#94a3b8", callback: (v) => `${v} %` },
+            grid: { color: "#334155" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0" } },
+          tooltip: {
+            callbacks: {
+              title: (items) =>
+                isDayMode && items.length ? minutesToLabel(items[0].parsed.x) : undefined,
+              label: (item) => {
+                const y = item.parsed.y;
+                return `${item.dataset.label}: ${y === null || y === undefined ? "–" : Math.round(y) + " %"}`;
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+}
+
+function setupBatterySocControls() {
+  const container = el("batterysoc-hour-buttons");
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-hours]");
+    if (!btn) return;
+    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.batterySoc.hours = Number(btn.dataset.hours);
+    refreshBatterySocChart().catch(console.error);
   });
 }
 
@@ -2793,12 +2944,14 @@ function refreshOverview() {
 function refreshTrendTab() {
   // refreshDailyTotalsChart gehoert seit der Verschiebung von
   // "Tagesverbrauch" hierher (siehe applyTrendSubView) mit zum Verlauf-Tab.
-  // refreshYearCompareChart ebenso (Jahresvergleich).
+  // refreshYearCompareChart (Jahresvergleich) und refreshBatterySocChart
+  // (Speicherstand) ebenso.
   return Promise.allSettled([
     refreshChart(),
     refreshDayCompareChart(),
     refreshDailyTotalsChart(),
     refreshYearCompareChart(),
+    refreshBatterySocChart(),
   ]);
 }
 
@@ -2918,6 +3071,7 @@ const TAB_CHARTS = {
     state.dayCompare.chart,
     state.dailyTotals.chart,
     state.yearCompare.chart,
+    state.batterySoc.chart,
   ],
   consumption: () => [state.hourlyCompare.chart],
   autarky: () => [state.autarky.chart],
@@ -3131,6 +3285,7 @@ async function init() {
   setupDayCompareControls();
   setupDailyTotalsControls();
   setupYearCompareControls();
+  setupBatterySocControls();
   setupAutarkyControls();
   setupHourlyCompareControls();
   updateHourlyCompareVisibility();

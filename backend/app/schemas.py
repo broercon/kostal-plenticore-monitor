@@ -121,6 +121,21 @@ class YearlyComparisonOut(BaseModel):
     years: list[YearlyComparisonYearOut]
 
 
+class BatterySocDeviceInfo(BaseModel):
+    device_id: str
+    device_name: str
+
+
+class BatterySocPoint(BaseModel):
+    timestamp: datetime
+    values: dict[str, float | None]  # device_id -> Ladezustand in Prozent
+
+
+class BatterySocHistoryOut(BaseModel):
+    devices: list[BatterySocDeviceInfo]
+    points: list[BatterySocPoint]
+
+
 class ImportDeviceResult(BaseModel):
     device_id: str
     device_name: str

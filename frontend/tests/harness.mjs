@@ -85,6 +85,8 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { months: [] };
       case "/api/readings/yearly-comparison":
         return { granularity: "month", labels: [], years: [] };
+      case "/api/readings/battery-soc-history":
+        return { devices: [], points: [] };
       case "/api/forecast":
         return {
           available: true,
