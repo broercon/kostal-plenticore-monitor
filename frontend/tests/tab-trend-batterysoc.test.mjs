@@ -40,6 +40,20 @@ function backendWithBatterySoc() {
   return handler;
 }
 
+test("Speicherstand-Bereich ist genau einmal und als eigene Verlauf-Ansicht vorhanden", async () => {
+  const app = await bootApp({ fetchHandler: backendWithBatterySoc() });
+  await waitFor(() => app.loadingCount() === 0);
+
+  const sections = app.document.querySelectorAll("#trend-view-batterysoc");
+  assert.equal(sections.length, 1);
+  assert.equal(sections[0].parentElement.id, "tab-panel-trend");
+  assert.equal(app.document.querySelectorAll("#batterysoc-chart").length, 1);
+  assert.equal(
+    app.document.getElementById("yearcompare-chart-wrapper").contains(sections[0]),
+    false
+  );
+});
+
 test("Speicherstand: Standardzeitraum ist 24 Std, entsprechender Button aktiv", async () => {
   const app = await bootApp({ fetchHandler: backendWithBatterySoc() });
   await waitFor(() => app.loadingCount() === 0);
