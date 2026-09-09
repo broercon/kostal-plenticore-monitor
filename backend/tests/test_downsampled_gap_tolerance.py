@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from app.aggregation import (
     DOWNSAMPLED_DAY_MAX_POINTS,
     gap_hours_for_day,
+    gap_hours_for_points,
     integrate_kwh,
 )
 from app.models import Reading
@@ -73,3 +74,25 @@ def test_integrate_kwh_downsampled_gap_still_catches_real_outage():
     result = integrate_kwh(rows, "pv_power_w", max_gap_hours=3.0)
     # Nur das erste (1h-)Intervall traegt bei, die 5h-Luecke wird uebersprungen.
     assert result == 1.0
+
+
+def test_gap_hours_for_points_two_close_points_are_not_treated_as_downsampled():
+    """Regressionstest: gap_hours_for_points() (genutzt von
+    daily_battery_energy_flows, das nicht vorab pro Kalendertag gruppiert)
+    darf den ueberspannten Zeitraum NICHT nach unten auf einen ganzen Tag
+    begrenzen - sonst wuerden zwei Punkte im Abstand von nur 1h (normale,
+    bloss knappe Daten) faelschlich als "verdichtet" gelten (2 Punkte / 1
+    Tag ergaebe eine niedrige Dichte, obwohl der tatsaechliche Abstand eng
+    ist) und eine echte kurze Datenluecke faelschlich ueberbruecken."""
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    close_points = [(base, 1.0), (base + timedelta(hours=1), 1.0)]
+    assert gap_hours_for_points(close_points) is None  # Standard-Schwelle, keine Sonderbehandlung
+
+
+def test_gap_hours_for_points_detects_real_hourly_density():
+    """Viele Punkte im ueber Tage/Wochen gleichmaessigen 1h-Abstand (wie nach
+    der Verdichtung, siehe downsampling.py) werden dagegen korrekt als
+    verdichtet erkannt."""
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    hourly_points = [(base + timedelta(hours=i), 1.0) for i in range(24 * 10)]  # 10 Tage
+    assert gap_hours_for_points(hourly_points) == 3.0

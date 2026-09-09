@@ -49,8 +49,7 @@ from .daily_summary import (
     build_autarky_yearly_comparison,
     build_daily_home_breakdown,
     build_daily_summaries,
-    build_battery_charge_summary,
-    build_battery_discharge_summary,
+    build_battery_energy_summary,
     build_feed_in_summary,
     build_pv_yield_summary,
     build_yearly_comparison,
@@ -694,21 +693,16 @@ def get_battery_summary(_user: User = Depends(auth.get_current_user)) -> Battery
     /pv-yield-summary: getrennt nach in den Speicher GELADENER und aus ihm
     ENTNOMMENER Energie.
 
-    Damit laesst sich die Tagesbilanz nachvollziehen: der PV-Ertrag (reine
-    DC-Erzeugung pv1+pv2) verteilt sich auf Einspeisung, direkten
-    Hausverbrauch und Speicherladung - zuzueglich der Wandlungsverluste, die
-    in keiner der drei Groessen auftauchen (PV-Ertrag ist DC vor dem
-    Wechselrichter, Einspeisung/Hausverbrauch sind AC dahinter).
+    Die Speicherwerte enthalten alle Energiequellen und -ziele, auch
+    Netzladung und Einspeisung aus dem Speicher. Aus der Differenz zu
+    PV-Ertrag und Einspeisung ergibt sich daher keine Verlustmessung.
 
     Berechnet aus der direkt gemessenen Batterieleistung, nicht aus der
     Energiebilanz (siehe aggregation.daily_battery_energy_totals). Geraete
     ohne Batterie tragen nichts bei; ein Zeitraum ganz ohne Batteriedaten
     liefert kwh=None.
     """
-    return BatterySummaryOut(
-        charge_periods=build_battery_charge_summary(),
-        discharge_periods=build_battery_discharge_summary(),
-    )
+    return BatterySummaryOut(**build_battery_energy_summary())
 
 
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)
@@ -755,7 +749,11 @@ def get_day_profile(
         # Sekunden-Bucket-Aggregation mit einem feinen Bucket (= Polling-
         # Intervall) und bauen daraus synthetische Reading-aehnliche Objekte.
         per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        # Subtraktion der Batterie aus dem rohen PV-Wert braucht Rohwerte.
+        combined = combine_devices(
+            per_device, _has_grid_meter_map(), _battery_inverted_map(),
+            raw_battery_output=True,
+        )
         synthetic_rows = [
             Reading(
                 device_id="_combined_",
