@@ -406,14 +406,14 @@ für die Aufschlüsselung des Hausverbrauchs nach Quelle genutzt wird: die
 Batterieleistung ist ein direkt gemessener Wert und liegt auch dann vor, wenn
 Haus- oder Netzwerte zu einem Zeitpunkt fehlen.
 
-Wichtig ist die Reihenfolge: Laden und Entladen werden **je Messpunkt** über
-das Vorzeichen getrennt (negativ = Laden) und erst danach integriert. Würde
-man erst die vorzeichenbehaftete Leistung über den Tag integrieren, kürzten
-sich Laden und Entladen gegenseitig weg und es bliebe nur die
-Netto-Verschiebung des Ladestands übrig – für die Frage „wie viel ist heute
-in den Speicher geflossen?" nutzlos. Geräte mit umgekehrter
-Vorzeichen-Konvention werden wie sonst über `battery_power_inverted`
-korrigiert.
+Zwischen Messpunkten wird die Leistung linear interpoliert. Wechselt ihr
+Vorzeichen, wird das Intervall am Nulldurchgang in Laden und Entladen
+geteilt. Beispiel: Von −4 kW auf +4 kW in 15 Minuten ergeben sich je
+0,25 kWh Laden und Entladen. Auch lokale Tagesgrenzen werden aufgeteilt;
+Lücken über 30 Minuten bleiben unbekannt. Geräte mit umgekehrter
+Vorzeichen-Konvention werden über `battery_power_inverted` korrigiert.
+Beide Richtungen werden gemeinsam verarbeitet. Versionierte Cache-Schlüssel
+berücksichtigen die Formel und die Vorzeichen-/Zeitzonenkonfiguration.
 
 ### Warum die Zeitraum-Übersichten nicht exakt aufgehen
 
@@ -429,11 +429,10 @@ nicht bei 100 % Autarkie – und das ist korrekt so:
   Prozent) und beim Speicher zusätzlich die Ladeverluste.
 
 Die Differenz `PV-Ertrag − Einspeisung − Direktverbrauch − Speicherladung`
-ist deshalb genau dieser Verlustanteil und nie null. Ein Rechenbeispiel für
-einen sonnigen Tag: 78 kWh PV-Ertrag, 60 kWh Einspeisung, 7,4 kWh
-Hausverbrauch → 10,6 kWh verteilen sich auf Speicherladung und Verluste.
-Ohne die Speicherzeilen fehlte für diese Rechnung der größte Posten – genau
-deshalb stehen sie mit denselben Zeiträumen daneben.
+ist keine allgemeine Verlustmessung: Netzladung erhöht die Speicherladung,
+und Einspeisung kann auch aus dem Speicher stammen. Messlücken und
+unterschiedliche Messgrenzen beeinflussen die Bilanz ebenfalls. Die
+Speicherzeilen zeigen deshalb Energieflüsse, keinen Speicherwirkungsgrad.
 
 Zusätzlich zu beachten: die Kachel „PV-Ertrag heute" und die Zeile
 „PV-Ertrag gesamt / Heute" sind zwei legitime Methoden derselben Größe (siehe

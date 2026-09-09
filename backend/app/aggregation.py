@@ -1,7 +1,7 @@
 """Hilfsfunktionen, um Rohmesswerte fuer Diagramme in Zeit-Buckets zu mitteln."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -123,6 +123,8 @@ def combine_devices(
     per_device: dict[str, dict[int, dict[str, float | None]]],
     has_grid_meter: dict[str, bool] | None = None,
     battery_power_inverted: dict[str, bool] | None = None,
+    *,
+    raw_battery_output: bool = False,
 ) -> dict[int, dict[str, float | None]]:
     """Kombiniert die pro-Geraet gemittelten Buckets zu einer Gesamtzeitreihe
     ("Alle (Summe)").
@@ -191,6 +193,9 @@ def combine_devices(
       Varianten (Standard-Summe und korrigierte Energiebilanz), da die
       physikalische Grenze unabhaengig vom Berechnungsweg gilt.
     """
+    # Energie-Auswertungen ziehen den Batterieanteil vom rohen PV-Wert ab.
+    # Dafuer muss auch die ausgegebene Batterie roh bleiben; die Hausbilanz
+    # verwendet unabhaengig davon weiterhin das korrigierte Vorzeichen.
     has_grid_meter = has_grid_meter or {}
     battery_power_inverted = battery_power_inverted or {}
     device_ids = list(per_device.keys())
@@ -302,7 +307,10 @@ def combine_devices(
             "feed_in_power_w": feed_in_true,
             "grid_draw_power_w": grid_draw_true,
             "pv_power_w": pv_total,
-            "battery_power_w": battery_total,
+            "battery_power_w": (
+                _sum_field("battery_power_w", device_ids, bk)
+                if raw_battery_output else battery_total
+            ),
             "ac_power_w": ac_total,
         }
     return combined
@@ -601,11 +609,8 @@ def battery_flow_power_w(
     `inverted` (config.battery_power_inverted, wie in combine_devices)
     korrigiert.
 
-    Die Trennung in Laden/Entladen MUSS je Messpunkt passieren und darf
-    nicht erst nach der Integration erfolgen - sonst wuerden sich Laden und
-    Entladen ueber den Tag gegenseitig wegkuerzen und nur die (fuer die
-    Frage "wie viel ist in den Speicher geflossen?" nutzlose)
-    Netto-Verschiebung des Ladestands uebrig bleiben.
+    Fuer Energiewerte muss zusaetzlich der Nulldurchgang zwischen zwei
+    Messpunkten beruecksichtigt werden, siehe daily_battery_energy_flows.
     """
     signed = -battery_power_w if inverted else battery_power_w
     if direction == BATTERY_CHARGE:
@@ -638,33 +643,75 @@ def daily_battery_energy_totals(
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float}, aufsteigend
     nach Datum sortiert; Tage ganz ohne Batteriedaten fehlen (statt
     kwh=None) - analog zu daily_pv_yield_totals."""
+    if direction not in (BATTERY_CHARGE, BATTERY_DISCHARGE):
+        raise ValueError(f"Unbekannte Richtung: {direction!r}")
+    return [
+        {"date": day["date"], "kwh": day[direction]}
+        for day in daily_battery_energy_flows(rows, timezone_name, battery_power_inverted)
+    ]
+
+
+def daily_battery_energy_flows(
+    rows: list[Reading],
+    timezone_name: str,
+    battery_power_inverted: dict[str, bool] | None = None,
+) -> list[dict]:
+    """Beide Energieflussrichtungen gemeinsam integrieren.
+
+    Zwischen Messungen gilt die lineare Interpolation der Trapezregel.
+    Intervalle werden am Nulldurchgang und an lokalen Tagesgrenzen geteilt.
+    Luecken ueber 30 Minuten werden wie bei integrate_kwh ausgelassen.
+    """
     inverted_map = battery_power_inverted or {}
     tz = ZoneInfo(timezone_name)
-    by_day_device: dict[tuple[str, str], list[SimpleNamespace]] = {}
+    by_device: dict[str, list[tuple[datetime, float]]] = {}
     for row in rows:
         if row.battery_power_w is None:
             continue
         ts = row.timestamp
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
-        date_str = ts.astimezone(tz).strftime("%Y-%m-%d")
-        by_day_device.setdefault((date_str, row.device_id), []).append(
-            SimpleNamespace(
-                timestamp=row.timestamp,
-                value=battery_flow_power_w(
-                    row.battery_power_w, direction, inverted_map.get(row.device_id, False)
-                ),
-            )
+        signed = (
+            -row.battery_power_w
+            if inverted_map.get(row.device_id, False) else row.battery_power_w
+        )
+        by_device.setdefault(row.device_id, []).append(
+            (ts.astimezone(timezone.utc), signed)
         )
 
-    per_day: dict[str, float] = {}
-    for (date_str, _device_id), points in by_day_device.items():
-        device_total = integrate_kwh(points, "value")
-        if device_total is None:
-            continue
-        per_day[date_str] = per_day.get(date_str, 0.0) + device_total
-
-    return [{"date": d, "kwh": round(per_day[d], 3)} for d in sorted(per_day)]
+    totals: dict[str, dict[str, float]] = {}
+    for points in by_device.values():
+        points.sort()
+        for (t0, p0), (t1, p1) in zip(points, points[1:]):
+            seconds = (t1 - t0).total_seconds()
+            if seconds <= 0 or seconds > MAX_INTEGRATION_GAP_HOURS * 3600:
+                continue
+            boundaries = [t0, t1]
+            if p0 * p1 < 0:
+                zero_fraction = abs(p0) / (abs(p0) + abs(p1))
+                boundaries.append(t0 + (t1 - t0) * zero_fraction)
+            next_day = t0.astimezone(tz).date() + timedelta(days=1)
+            midnight = datetime.combine(
+                next_day, datetime.min.time(), tzinfo=tz
+            ).astimezone(timezone.utc)
+            if t0 < midnight < t1:
+                boundaries.append(midnight)
+            boundaries.sort()
+            for start, end in zip(boundaries, boundaries[1:]):
+                start_power = p0 + (p1 - p0) * (start - t0).total_seconds() / seconds
+                end_power = p0 + (p1 - p0) * (end - t0).total_seconds() / seconds
+                hours = (end - start).total_seconds() / 3600
+                signed_kwh = (start_power + end_power) / 2 * hours / 1000
+                day = totals.setdefault(
+                    start.astimezone(tz).date().isoformat(),
+                    {BATTERY_CHARGE: 0.0, BATTERY_DISCHARGE: 0.0},
+                )
+                direction = BATTERY_CHARGE if signed_kwh < 0 else BATTERY_DISCHARGE
+                day[direction] += abs(signed_kwh)
+    return [
+        {"date": day, **{key: round(value, 3) for key, value in values.items()}}
+        for day, values in sorted(totals.items())
+    ]
 
 
 def hourly_kwh_per_device(
