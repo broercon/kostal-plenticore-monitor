@@ -340,8 +340,36 @@ def combine_latest_readings(
 # statt ueber die Luecke hinweg zu interpolieren.
 MAX_INTEGRATION_GAP_HOURS = 0.5  # 30 Minuten
 
+# Verdichtete Altdaten (siehe downsampling.py: alte Rohmesswerte werden ab
+# RAW_DATA_RETENTION_DAYS auf einen Punkt pro Stunde und Geraet reduziert)
+# haben normalerweise einen Abstand von genau 1h zwischen zwei Punkten -
+# das ist dort KEINE Datenluecke und darf nicht wie oben uebersprungen
+# werden. Ein Tag mit hoechstens DOWNSAMPLED_DAY_MAX_POINTS Punkten gilt
+# als verdichtet (ein normaler Tag hat bei 15s-Polling mehrere tausend, bei
+# importierten Logdaten immer noch typischerweise hunderte Punkte - die
+# Luecke zwischen "verdichtet" und "normal aufgeloest" ist strukturell
+# riesig, ein Schwellwert reicht daher zur Unterscheidung). Der grosszuegige
+# Faktor (3h statt genau 1h) toleriert dabei weiterhin kleinere
+# Unregelmaessigkeiten, faengt aber einen ECHTEN mehrstuendigen Ausfall
+# innerhalb bereits verdichteter Daten weiterhin als Luecke ab.
+DOWNSAMPLED_DAY_MAX_POINTS = 30
+DOWNSAMPLED_MAX_GAP_HOURS = 3.0
 
-def integrate_kwh(rows: list[Reading], field: str) -> float | None:
+
+def gap_hours_for_day(point_count: int) -> float | None:
+    """Welche max_gap_hours integrate_kwh() fuer eine Gruppe von Messpunkten
+    verwenden sollte, anhand von deren Anzahl - siehe Konstanten oben. None
+    bedeutet "Standard" (MAX_INTEGRATION_GAP_HOURS, normal aufgeloeste
+    Daten). Separate, kleine Funktion, damit alle taeglich gruppierenden
+    Aufrufer (daily_kwh_totals, daily_pv_yield_totals,
+    daily_battery_energy_totals, daily_home_source_breakdown_kwh) dieselbe
+    Schwelle verwenden."""
+    return DOWNSAMPLED_MAX_GAP_HOURS if point_count <= DOWNSAMPLED_DAY_MAX_POINTS else None
+
+
+def integrate_kwh(
+    rows: list[Reading], field: str, max_gap_hours: float | None = None
+) -> float | None:
     """Integriert eine Leistungs-Zeitreihe (Watt) zu einer Energiemenge (kWh),
     per Trapezregel ueber die vorhandenen Messpunkte.
 
@@ -350,13 +378,16 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     ohne Zugriff auf das Statistik-Modul, oder fehlende Batterie fuer den
     virtuellen Einspeise-Wert).
 
-    Intervalle, die laenger als MAX_INTEGRATION_GAP_HOURS auseinanderliegen
-    (z.B. durch eine Datenluecke), werden NICHT interpoliert, sondern
-    uebersprungen (siehe Konstante oben fuer die Begruendung) - das
-    unterschaetzt die tatsaechliche Energiemenge in der Luecke leicht (dort
-    fehlen dann echte Messwerte), ist aber deutlich naeher an der Wahrheit
-    als eine grobe lineare Fortschreibung ueber Stunden hinweg.
+    Intervalle, die laenger als max_gap_hours auseinanderliegen (Standard:
+    MAX_INTEGRATION_GAP_HOURS, siehe Konstante oben fuer die Begruendung -
+    z.B. durch eine Datenluecke), werden NICHT interpoliert, sondern
+    uebersprungen - das unterschaetzt die tatsaechliche Energiemenge in der
+    Luecke leicht (dort fehlen dann echte Messwerte), ist aber deutlich
+    naeher an der Wahrheit als eine grobe lineare Fortschreibung ueber
+    Stunden hinweg. Aufrufer mit verdichteten Altdaten (siehe
+    gap_hours_for_day) uebergeben hier einen groesseren Wert.
     """
+    gap_limit = MAX_INTEGRATION_GAP_HOURS if max_gap_hours is None else max_gap_hours
     points = sorted(
         (
             (row.timestamp, getattr(row, field))
@@ -371,7 +402,7 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     energy_wh = 0.0
     for (t0, p0), (t1, p1) in zip(points, points[1:]):
         dt_hours = (t1 - t0).total_seconds() / 3600
-        if dt_hours <= 0 or dt_hours > MAX_INTEGRATION_GAP_HOURS:
+        if dt_hours <= 0 or dt_hours > gap_limit:
             continue
         energy_wh += (p0 + p1) / 2 * dt_hours
     return round(energy_wh / 1000, 3)
@@ -400,10 +431,13 @@ def pure_pv_power_w(pv_power_w: float, battery_power_w: float | None) -> float:
     return max(0.0, pv_power_w - (battery_power_w or 0.0))
 
 
-def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
+def integrate_pure_pv_kwh(
+    rows: list[Reading], max_gap_hours: float | None = None
+) -> float | None:
     """Reine PV-Erzeugung (kWh) ueber mehrere Messpunkte - siehe
     pure_pv_power_w() fuer die zugrunde liegende Formel je Messpunkt.
-    """
+    max_gap_hours wird unveraendert an integrate_kwh() durchgereicht (siehe
+    dort/gap_hours_for_day - fuer verdichtete Altdaten)."""
     points = [
         SimpleNamespace(
             timestamp=r.timestamp,
@@ -412,7 +446,7 @@ def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
         for r in rows
         if r.pv_power_w is not None
     ]
-    return integrate_kwh(points, "value")
+    return integrate_kwh(points, "value", max_gap_hours=max_gap_hours)
 
 
 # Felder, die fuer das Tagesvergleichs-Diagramm gemittelt werden. feed_in_power_w
@@ -536,8 +570,11 @@ def daily_kwh_totals(
     ist dort im Gegensatz zu Netz-/Einspeisewerten verfuegbar).
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float|None},
-    aufsteigend nach Datum sortiert.
-    """
+    aufsteigend nach Datum sortiert. Fuer Tage mit verdichteten Altdaten
+    (siehe downsampling.py) wird eine groessere Luecken-Toleranz verwendet,
+    damit der normale 1h-Abstand zwischen verdichteten Punkten nicht
+    faelschlich als Datenluecke uebersprungen wird (siehe
+    gap_hours_for_day)."""
     tz = ZoneInfo(timezone_name)
     by_date: dict[str, list[Reading]] = {}
     for row in rows:
@@ -549,7 +586,10 @@ def daily_kwh_totals(
         by_date.setdefault(date_str, []).append(row)
 
     return [
-        {"date": date_str, "kwh": integrate_kwh(day_rows, field)}
+        {
+            "date": date_str,
+            "kwh": integrate_kwh(day_rows, field, max_gap_hours=gap_hours_for_day(len(day_rows))),
+        }
         for date_str, day_rows in sorted(by_date.items())
     ]
 
@@ -577,7 +617,11 @@ def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]
 
     per_day: dict[str, float] = {}
     for (date_str, _device_id), day_rows in by_day_device.items():
-        device_total = integrate_pure_pv_kwh(day_rows)
+        # Groessere Luecken-Toleranz fuer verdichtete Altdaten (siehe
+        # gap_hours_for_day/downsampling.py).
+        device_total = integrate_pure_pv_kwh(
+            day_rows, max_gap_hours=gap_hours_for_day(len(day_rows))
+        )
         if device_total is None:
             continue
         per_day[date_str] = per_day.get(date_str, 0.0) + device_total
@@ -659,7 +703,9 @@ def daily_battery_energy_totals(
 
     per_day: dict[str, float] = {}
     for (date_str, _device_id), points in by_day_device.items():
-        device_total = integrate_kwh(points, "value")
+        # Groessere Luecken-Toleranz fuer verdichtete Altdaten (siehe
+        # gap_hours_for_day/downsampling.py).
+        device_total = integrate_kwh(points, "value", max_gap_hours=gap_hours_for_day(len(points)))
         if device_total is None:
             continue
         per_day[date_str] = per_day.get(date_str, 0.0) + device_total
@@ -800,19 +846,23 @@ def daily_home_source_breakdown_kwh(
             (row.timestamp, home_from_pv, home_from_battery, home_from_grid)
         )
 
-    def _integrate(series: list[tuple[datetime, float]]) -> float | None:
+    def _integrate(series: list[tuple[datetime, float]], gap: float | None) -> float | None:
         objs = [SimpleNamespace(timestamp=ts, value=v) for ts, v in series]
-        return integrate_kwh(objs, "value")
+        return integrate_kwh(objs, "value", max_gap_hours=gap)
 
     result = []
     for date_str in sorted(by_date.keys()):
         entries = by_date[date_str]
+        # Groessere Luecken-Toleranz fuer verdichtete Altdaten (siehe
+        # gap_hours_for_day/downsampling.py) - alle drei Anteile stammen aus
+        # denselben Messpunkten dieses Tages, daher dieselbe Punktzahl.
+        gap = gap_hours_for_day(len(entries))
         result.append(
             {
                 "date": date_str,
-                "pv_kwh": _integrate([(ts, pv) for ts, pv, _bat, _grid in entries]),
-                "battery_kwh": _integrate([(ts, bat) for ts, _pv, bat, _grid in entries]),
-                "grid_kwh": _integrate([(ts, grid) for ts, _pv, _bat, grid in entries]),
+                "pv_kwh": _integrate([(ts, pv) for ts, pv, _bat, _grid in entries], gap),
+                "battery_kwh": _integrate([(ts, bat) for ts, _pv, bat, _grid in entries], gap),
+                "grid_kwh": _integrate([(ts, grid) for ts, _pv, _bat, grid in entries], gap),
             }
         )
     return result

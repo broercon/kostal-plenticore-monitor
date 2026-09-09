@@ -100,6 +100,8 @@ Die wichtigsten Werte sind:
 | `TIMEZONE` | `Europe/Berlin` | Zeitzone für Tagesgrenzen und Berichte |
 | `AUTO_IMPORT_HISTORY` | `true` | Historienabgleich beim Start |
 | `AUTO_IMPORT_DAYS` | `35` | Zeitraum des automatischen Imports |
+| `DOWNSAMPLE_OLD_READINGS` | `true` | Verdichtet alte Rohmesswerte auf Stundenmittel |
+| `RAW_DATA_RETENTION_DAYS` | `60` | Ab wann Rohmesswerte verdichtet werden |
 | `GRID_POWER_INVERTED` | `false` | Vertauscht Netzbezug und Einspeisung |
 
 Bei mehreren Wechselrichtern muss genau das Gerät mit dem echten

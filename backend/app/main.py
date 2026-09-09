@@ -56,6 +56,7 @@ from .daily_summary import (
     build_yearly_comparison,
 )
 from .database import SessionLocal, init_db
+from .downsampling import run_downsample_once
 from .models import Reading, User
 from .poller import poller
 from .schemas import (
@@ -145,12 +146,18 @@ async def lifespan(app: FastAPI):
     auto_import_task = asyncio.create_task(run_auto_import_for_all_devices())
     forecast_task = asyncio.create_task(_refresh_forecast_periodically())
     forecast_midnight_task = asyncio.create_task(_refresh_forecast_at_midnight())
+    downsample_task = asyncio.create_task(_downsample_old_readings_periodically())
     yield
     auto_import_task.cancel()
     forecast_task.cancel()
     forecast_midnight_task.cancel()
+    downsample_task.cancel()
     await asyncio.gather(
-        auto_import_task, forecast_task, forecast_midnight_task, return_exceptions=True
+        auto_import_task,
+        forecast_task,
+        forecast_midnight_task,
+        downsample_task,
+        return_exceptions=True,
     )
     await poller.stop()
     await daily_report_scheduler.stop()
@@ -192,6 +199,34 @@ async def _refresh_forecast_at_midnight() -> None:
             raise
         except Exception:  # noqa: BLE001
             logger.exception("Mitternaechtliche PV-Prognose-Aktualisierung fehlgeschlagen")
+
+
+async def _downsample_old_readings_periodically() -> None:
+    """Verdichtet einmal taeglich alte Rohmesswerte auf Stundenmittel (siehe
+    app/downsampling.py) - anders als der taegliche Report/die Mitternachts-
+    Prognose an KEINE feste Uhrzeit gebunden (reine Hintergrund-Wartung ohne
+    Nutzer-sichtbare "Faelligkeit"): laeuft kurz nach dem Start (fuellt bei
+    einer bereits lange laufenden Anlage sofort einen eventuellen
+    Nachholbedarf auf) und danach alle 24 Stunden erneut.
+
+    run_downsample_once() ist reine, synchrone DB-Arbeit - ueber
+    asyncio.to_thread() ausgefuehrt, damit ein groesserer Nachholbedarf
+    (viele Tage auf einmal) das Bedienen der Web-Oberflaeche nicht
+    blockiert."""
+    if not settings.downsample_enabled:
+        return
+    # Kurze Verzoegerung, damit dieser Hintergrund-Task nicht direkt beim
+    # Start mit dem (typischerweise wichtigeren) Logdaten-Abgleich um die
+    # Datenbank konkurriert.
+    await asyncio.sleep(5 * 60)
+    while True:
+        try:
+            await asyncio.to_thread(run_downsample_once)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception("Verdichtung alter Rohmesswerte fehlgeschlagen")
+        await asyncio.sleep(24 * 60 * 60)
 
 
 app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
@@ -437,10 +472,18 @@ def get_history(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading): liefert Core-Row-
+        # Tupel statt vollen ORM-Objekten - fuer grosse Zeitraeume (bis zu 90
+        # Tage, mehrere Wechselrichter) ist die ORM-Objekterzeugung mit
+        # Abstand der teuerste Teil dieser Anfrage (gemessen: >20s bei ~1 Mio.
+        # Zeilen vs. <3s als Core-Tupel). aggregate_per_device() greift nur
+        # per getattr() auf einzelne Felder zu, das funktioniert mit
+        # Row-Objekten identisch - siehe Korrektheitstest in
+        # test_readings_query_perf.py.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -694,10 +737,12 @@ def get_day_profile(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben - selber Effekt bei bis zu 30 Tagen Rohdaten.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -760,10 +805,12 @@ def get_daily_totals(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben - hier bis zu 400 Tage moeglich, also besonders relevant.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not house_wide_multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -878,11 +925,11 @@ def get_hourly_per_device(
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 
@@ -911,11 +958,11 @@ def get_battery_soc_history(
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 

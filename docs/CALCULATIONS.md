@@ -440,6 +440,112 @@ Zusätzlich zu beachten: die Kachel „PV-Ertrag heute" und die Zeile
 „Gerätezähler vs. Integration" oben) und können daher leicht voneinander
 abweichen.
 
+## Performance: Core-Select statt ORM-Objekte fuer Bulk-Zeitraum-Anfragen
+
+Alle Endpunkte/Funktionen, die Rohmesswerte fuer einen Zeitraum laden und
+direkt an eine Aggregationsfunktion weiterreichen (`/api/readings/history`,
+`/day-profile`, `/daily-totals`, `/hourly-per-device`,
+`/battery-soc-history` sowie `daily_summary._load_readings_range` - Letztere
+die Grundlage ALLER Zeitraum-Uebersichten oben) nutzen `select(Reading.
+__table__)` statt `select(Reading)`.
+
+Der Unterschied: `select(Reading)` liefert vollstaendige SQLAlchemy-ORM-
+Objekte (Identity-Map, alle 20+ Spalten materialisiert, aenderbar/loeschbar)
+- `select(Reading.__table__)` liefert leichtgewichtige Core-`Row`-Objekte
+mit denselben Attributen. Gemessen an einer synthetischen Datenbank mit
+realistischer Groesse (2 Wechselrichter, 15s-Polling, ~4,6 Mio. Zeilen): fuer
+eine 90-Tage-Anfrage (~1 Mio. Zeilen) brauchte `select(Reading)` **>20
+Sekunden**, ein reiner SQL-Scan derselben Daten dagegen **~1 Sekunde** - die
+ORM-Objekterzeugung war mit Abstand der teuerste Teil, nicht die
+Datenbankabfrage selbst. Mit `select(Reading.__table__)` sank dieselbe
+Anfrage auf **~3 Sekunden** (~8x schneller beim Laden). Ein SQLite- oder
+gar ein Wechsel auf ein Client-Server-DBMS haette an diesem Engpass nichts
+geaendert, da die Datenbank selbst nie das Problem war.
+
+Diese Umstellung ist rein mechanisch und aendert keine Berechnungslogik:
+die betroffenen Aggregationsfunktionen (`aggregate_per_device`,
+`day_profile`, `integrate_kwh`, ...) greifen ausschliesslich per `getattr()`
+auf einzelne Felder zu - das funktioniert mit Core-`Row`-Objekten identisch
+zu ORM-Objekten (siehe `test_readings_query_perf.py` fuer den
+Korrektheitsnachweis). Stellen, die geladene Zeilen nachtraeglich AENDERN
+(z.B. `import_logdata.import_rows()`, das bestehende Zeilen per `setattr()`
+nachtraeglich befuellt) bleiben bewusst bei `select(Reading)`, da Core-
+`Row`-Objekte unveraenderlich sind.
+
+**Nicht umgesetzt: numpy-Vektorisierung der Trapezregel-Integration.**
+Naheliegender naechster Schritt waere gewesen, die Python-Schleife in
+`integrate_kwh()` mit numpy zu vektorisieren (numpy ist bereits eine
+Abhaengigkeit, siehe `energy_forecast.py`). Gemessen ueber mehrere
+Groessenordnungen (5 bis 4,2 Mio. Punkte) war das jedoch durchgehend
+**langsamer** als die bestehende reine Python-Schleife - bis zu 9x bei
+sehr vielen Punkten. Grund: der Engpass ist dort nicht die Arithmetik
+(billig, da nur eine Trapezformel), sondern die Umwandlung von Python-
+`datetime`-Objekten in numpy-Arrays, die pro Element mehr kostet als die
+vektorisierte Rechnung einspart. Deshalb weiterhin eine reine
+Python-Schleife.
+
+## Performance: Verdichtung alter Rohdaten
+
+Rohmesswerte (15s-Polling) werden dauerhaft gespeichert - ohne Begrenzung
+waechst die `readings`-Tabelle unbeschraenkt weiter (pro Wechselrichter und
+Tag ueber 5.700 Zeilen). Ab `RAW_DATA_RETENTION_DAYS` (Standard 60 Tage)
+werden abgeschlossene lokale Kalendertage geraeteweise auf einen Messpunkt
+pro Stunde reduziert (siehe `app/downsampling.py`):
+
+- Alle Leistungsfelder (`pv_power_w`, `home_power_w`, `battery_power_w`, ...)
+  werden ueber die Stunde GEMITTELT - energieerhaltend, da Mittelwert × 1h
+  die Energie dieser Stunde ergibt (dieselbe Trapezregel wie `integrate_kwh`
+  wuerde ueber gleichmaessig verteilte Punkte auf denselben Wert kommen).
+- Der Ladezustand (`battery_soc_percent`) ist dagegen ein ZUSTAND, kein
+  Fluss - hierfuer wird stattdessen der letzte bekannte Wert der Stunde
+  uebernommen, nicht der Mittelwert.
+- Die urspruenglichen Einzelmesswerte dieser Stunde werden geloescht und
+  durch die eine gemittelte Zeile ersetzt, markiert mit
+  `Reading.is_downsampled = true`.
+- Diese groebere Aufloesung passt zur PV-Prognose (`energy_forecast.py`),
+  die ohnehin ausschliesslich mit Stundenwerten trainiert.
+
+**Betrifft nicht die bereits berechneten Zeitraum-Uebersichten:** ein
+abgeschlossener Kalendertag landet spaetestens am Folgetag dauerhaft im
+`daily_energy_cache` (siehe unten) - lange bevor er ueberhaupt 60 Tage alt
+und damit "verdichtungsreif" ist. Die einzigen Stellen, die verdichtete
+Rohdaten ueberhaupt noch einmal lesen, sind `/api/readings/daily-totals`
+und `/api/readings/history` fuer sehr weit zurueckliegende Zeitraeume (dort
+nur als Verlust an Anzeige-Feinheit - diese Funktionen MITTELN nur, ohne
+Luecken-Problematik) sowie ein nachtraeglicher Logdaten-Reimport, der eine
+bereits verdichtete Cache-Periode invalidiert.
+
+**Luecken-Toleranz bei der Integration:** `integrate_kwh()` uebergeht
+normalerweise Intervalle ueber 30 Minuten als vermutliche Datenluecke
+(siehe unten). Der normale 1h-Abstand zwischen zwei verdichteten Punkten
+waere danach IMMER eine "Luecke" - jede Tagessumme aus verdichteten Daten
+haette 0 kWh ergeben. `aggregation.gap_hours_for_day()` erkennt verdichtete
+Tage anhand ihrer Punktanzahl (ein normaler Tag hat hunderte bis tausende
+Punkte, ein verdichteter hoechstens 24) und erlaubt fuer diese eine groessere
+Toleranz (3h) - ein echter mehrstuendiger Ausfall wird dabei weiterhin
+erkannt.
+
+**Bekannter Randeffekt bei einer Neuberechnung verdichteter Tage:** der
+repraesentative Zeitstempel einer verdichteten Stunde liegt auf der
+Stundenmitte (00:30, 01:30, ..., 23:30 lokal) - die 24 Punkte eines Tages
+ueberspannen damit nur 23h statt 24h. Eine je Kalendertag GRUPPIERTE
+Integration (wie bei allen `daily_*`-Funktionen, die Rohmesswerte tages-
+weise trennen statt tageuebergreifend zu integrieren) unterschaetzt einen
+bereits verdichteten Tag dadurch bei einer Neuberechnung um bis zu 1 Stunde
+(~4 % bei einer 24h-Anlage) - siehe `test_downsampling.py` fuer eine
+konkrete Gegenueberstellung. Betrifft wie oben nur die seltene
+Neuberechnung nach einem Cache-invalidierenden Reimport, nie die normalen,
+bereits gecachten Zeitraum-Summen.
+
+**Wechselwirkung mit dem Logdaten-Import:** `import_logdata.import_rows()`
+erkennt bereits verdichtete Stunden (`is_downsampled=true`) und ueberspringt
+sie beim Import gezielt, statt sie mit den urspruenglichen, feineren
+Zeitstempeln wieder aufzublaehen - ohne diese Pruefung wuerde ein erneuter
+Import derselben historischen Logdaten (z.B. beim automatischen
+Start-Abgleich) die Energie einer bereits verdichteten Stunde doppelt
+zaehlen (einmal ueber die verdichtete Zeile, einmal ueber die
+wiederhergestellten Rohwerte).
+
 ## Performance: Energie-Zeitraum-Cache
 
 Die Zeitraum-Übersichten (PV-Ertrag, Einspeisung und Speicher

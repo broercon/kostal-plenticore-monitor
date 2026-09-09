@@ -395,21 +395,35 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     falscher Spalten-Erkennung lief) - echte/live erfasste Werte werden nie
     ueberschrieben.
 
+    Eine bereits verdichtete Stunde (siehe app/downsampling.py: alte
+    Rohmesswerte werden dort geraeteweise auf einen Punkt pro Stunde
+    reduziert und is_downsampled=True markiert) wird beim Import
+    UEBERSPRUNGEN statt eingefuegt: die urspruenglichen, feineren
+    Zeitstempel dieser Stunde existieren nach der Verdichtung nicht mehr in
+    der DB, wuerden vom exakten Zeitstempel-Abgleich unten also faelschlich
+    als "neu" erkannt und die Stunde wieder mit den Rohdaten aufblaehen -
+    parallel zu der bereits vorhandenen gemittelten Zeile, mit doppelt
+    gezaehlter Energie fuer diesen Zeitraum als Folge.
+
     Wird sowohl vom CLI-Tool (main(), s.o.) als auch vom automatischen
     Hintergrund-Abgleich beim Start (app/auto_import.py) genutzt.
     """
     from sqlalchemy import select
 
+    from .config import settings
     from .database import SessionLocal, init_db
+    from .downsampling import local_hour_start_utc
     from .models import Reading
 
     init_db()
+    tz = ZoneInfo(settings.timezone_name)
     session = SessionLocal()
     try:
         # SQLite gibt DateTime-Werte beim Zurücklesen als "naive" datetime
         # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert haben.
         # Fuer den Abgleich auf beiden Seiten UTC-aware normalisieren.
         existing_by_ts: dict[datetime, Reading] = {}
+        downsampled_hours: set[datetime] = set()
         for reading in session.scalars(
             select(Reading).where(Reading.device_id == device_id)
         ):
@@ -417,12 +431,19 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             existing_by_ts[ts] = reading
+            if reading.is_downsampled:
+                downsampled_hours.add(local_hour_start_utc(ts, tz))
 
         inserted = 0
         updated = 0
         skipped = 0
         for r in rows:
             ts = r["timestamp"]
+            if local_hour_start_utc(ts, tz) in downsampled_hours:
+                # Diese Stunde wurde bereits verdichtet - siehe Docstring.
+                skipped += 1
+                continue
+
             existing = existing_by_ts.get(ts)
             if existing is None:
                 new_reading = Reading(

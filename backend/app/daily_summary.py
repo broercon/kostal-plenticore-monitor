@@ -125,13 +125,17 @@ def build_daily_summaries() -> list[SummaryOut]:
         # Statistikwerte liefert.
         session = SessionLocal()
         try:
-            rows = list(
-                session.scalars(
-                    select(Reading)
-                    .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
-                    .order_by(Reading.timestamp)
-                )
-            )
+            # select(Reading.__table__) statt select(Reading): Core-Row-Tupel
+            # statt vollen ORM-Objekten - vermeidet den (gemessen) mit
+            # Abstand teuersten Teil einer solchen Bulk-Anfrage, die
+            # ORM-Objekterzeugung pro Zeile. integrate_pure_pv_kwh/
+            # integrate_kwh greifen nur per getattr() zu, das funktioniert
+            # mit Row-Objekten identisch.
+            rows = session.execute(
+                select(Reading.__table__)
+                .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
+                .order_by(Reading.timestamp)
+            ).all()
         finally:
             session.close()
 
@@ -160,11 +164,10 @@ def build_daily_summaries() -> list[SummaryOut]:
     if len(settings.inverters) > 1:
         session = SessionLocal()
         try:
-            rows = list(
-                session.scalars(
-                    select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-                )
-            )
+            # select(Reading.__table__) statt select(Reading), siehe oben.
+            rows = session.execute(
+                select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            ).all()
         finally:
             session.close()
 
@@ -280,13 +283,15 @@ def _load_readings_range(start_date: date, end_date_exclusive: date) -> list[Rea
     )
     session = SessionLocal()
     try:
-        return list(
-            session.scalars(
-                select(Reading)
-                .where(Reading.timestamp >= since, Reading.timestamp < until)
-                .order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading): siehe
+        # build_daily_summaries() oben - hier besonders relevant, da diese
+        # Funktion bei einem kalten Cache (z.B. "dieses/letztes Jahr" vor der
+        # ersten Berechnung) potenziell ein ganzes Jahr an Rohmesswerten laedt.
+        return session.execute(
+            select(Reading.__table__)
+            .where(Reading.timestamp >= since, Reading.timestamp < until)
+            .order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 
@@ -611,11 +616,11 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe oben - hier
+        # bis zu 400 Tage moeglich.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 

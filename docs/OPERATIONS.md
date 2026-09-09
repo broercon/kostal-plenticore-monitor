@@ -56,6 +56,26 @@ Neben den Docker-Logs schreibt die Anwendung nach
 Versionen werden aufbewahrt. Beim ersten Start ausgegebene Initialpasswörter
 können deshalb auch in diesen persistenten Logs stehen.
 
+## Verdichtung alter Rohmesswerte
+
+Etwa 5 Minuten nach dem Start (und danach alle 24 Stunden) verdichtet die
+Anwendung im Hintergrund abgeschlossene Kalendertage, die älter als
+`RAW_DATA_RETENTION_DAYS` (Standard 60) sind, auf einen Messpunkt pro
+Stunde und Gerät - siehe
+[docs/CALCULATIONS.md "Performance: Verdichtung alter Rohdaten"](CALCULATIONS.md#performance-verdichtung-alter-rohdaten)
+für Details. Im Log erscheint dazu eine Zeile wie:
+
+```
+Verdichtung alter Rohmesswerte: 3 Tag(e) verarbeitet, 34560 Rohmesswerte zusammengefasst.
+```
+
+Das ist normaler Betrieb, kein Fehler. Direkt nach der Einführung dieses
+Features bei einer bereits lange laufenden Anlage kann der erste Lauf
+entsprechend mehr Tage auf einmal verarbeiten (Nachholbedarf) - das läuft
+im Hintergrund, ohne die Web-Oberfläche zu blockieren. Mit
+`DOWNSAMPLE_OLD_READINGS=false` lässt sich die Verdichtung komplett
+abschalten.
+
 ## Daten sichern
 
 Die Anwendung verwendet SQLite im WAL-Modus. Für ein konsistentes Backup den
