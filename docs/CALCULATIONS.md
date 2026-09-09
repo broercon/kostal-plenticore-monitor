@@ -378,6 +378,22 @@ integrierte, korrigierte Hausbilanz und stimmen überein. Bei **nur einem**
 Wechselrichter kann die Kachel (Gerätezähler) minimal von der Summe der drei
 Anteile (Integration) abweichen – zwei legitime Methoden derselben Größe.
 
+**Batterie am PV3-String:** Die Aufteilung leitet den Batterie-Anteil aus der
+Energiebilanz her (`home + feed_in − PV − grid_draw`) – dabei **muss** die
+*reine* PV eingesetzt werden, nicht der rohe `pv_power_w`. Hängt die Batterie
+am PV3-String (siehe oben), steckt ihre Leistung bereits in `pv_power_w`; mit
+dem rohen Wert kürzt sich die Formel algebraisch immer exakt zu 0
+(`home + feed_in − pv_power_w − grid_draw` = `home + feed_in − reine_PV −
+battery_power_w − grid_draw`, und der verbleibende Teil ist per Definition
+`battery_power_w`) – jegliche Speicherentladung wäre dann fälschlich
+vollständig der Solarerzeugung zugeschlagen worden, statt als eigener Anteil
+zu erscheinen. Der Autarkiegrad selbst (Anteil PV **+** Batterie am
+Hausverbrauch) ist von diesem Fehler nicht betroffen, da sich die
+Fehlzuordnung zwischen den beiden Anteilen beim Summieren wieder aufhebt –
+nur die Aufschlüsselung „aus Solar" vs. „aus Batterie" (Tagesvergleich-Kurven
+und gestapelter Tagesverbrauch-Balken) zeigte zu wenig bzw. gar keinen
+Batterie-Anteil.
+
 ### Speicherbilanz je Zeitraum: geladen und entnommen getrennt
 
 Die Übersicht zeigt für jeden der neun Zeiträume auch, wie viel Energie in

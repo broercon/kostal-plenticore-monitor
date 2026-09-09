@@ -430,13 +430,23 @@ def day_profile(
     vergleichen lassen.
 
     Berechnet zusaetzlich eine Aufteilung des Hausverbrauchs in "aus Solar"
-    und "aus Batterie" - rein aus der Leistungsbilanz (PV + Netzbezug +
+    und "aus Batterie" - rein aus der Leistungsbilanz (reine PV + Netzbezug +
     Batterie = Hausverbrauch + Einspeisung), OHNE von einer bestimmten
     Vorzeichen-Konvention der Batterieleistung auszugehen (die je nach
     Geraet/Firmware unterschiedlich sein kann). Dafuer werden PV-, Haus- und
     Netzwerte benoetigt; bei importierten Altdaten ohne Netzmessung (KSEM-
     Limitation, siehe import_logdata.py) bleibt die Aufteilung leer - dort
     funktioniert nur die reine PV-Kurve.
+
+    WICHTIG: die Bilanz MUSS mit der reinen PV (pv_pure, Batterie am PV3-
+    String herausgerechnet) statt dem rohen pv_power_w rechnen. Haengt die
+    Batterie am PV3-String, gilt pv_power_w = pv_pure + battery_power_w (siehe
+    pure_pv_power_w) - mit dem rohen pv_power_w wuerde battery_net dann
+    IMMER zu 0 aufgehen (home + feed_in - pv_power_w - grid_draw =
+    home + feed_in - pv_pure - battery_power_w - grid_draw, und der erste
+    Teil ist per Definition battery_power_w), die Aufteilung wuerde also
+    jegliche Batterie-Entladung faelschlich komplett der Solarerzeugung
+    zuschlagen. Mit pv_pure kuerzt sich das korrekt zu battery_power_w.
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "points": [...]}, aufsteigend
     nach Datum sortiert (aeltester Tag zuerst).
@@ -472,9 +482,9 @@ def day_profile(
         grid_draw = avg["grid_draw_power_w"]
         feed_in = avg["feed_in_power_w"]
         battery = avg["battery_power_w"]
-        # Reine PV-Erzeugung fuer die Anzeige: die ggf. am PV3-String haengende
-        # Batterie herausrechnen (siehe integrate_pure_pv_kwh). Der rohe pv-Wert
-        # bleibt fuer die Energiebilanz unten (battery_net) erhalten.
+        # Reine PV-Erzeugung: die ggf. am PV3-String haengende Batterie
+        # herausrechnen (siehe integrate_pure_pv_kwh) - fuer die Anzeige UND
+        # fuer die Energiebilanz unten (battery_net), siehe Docstring oben.
         pv_pure = max(0.0, pv - (battery or 0.0)) if pv is not None else None
 
         home_from_solar = None
@@ -483,8 +493,10 @@ def day_profile(
             remaining_home = max(0.0, home - grid_draw)
             # Energiebilanz: positiver Wert = Batterie liefert gerade Leistung
             # (Entladung), negativer Wert = Batterie laedt gerade (nimmt einen
-            # Teil der PV-Erzeugung auf).
-            battery_net = home + feed_in - pv - grid_draw
+            # Teil der PV-Erzeugung auf). Mit der REINEN PV (pv_pure), nicht
+            # dem rohen pv - siehe Docstring oben (PV3-Batterie-Faelle sonst
+            # immer 0).
+            battery_net = home + feed_in - pv_pure - grid_draw
             battery_share = min(remaining_home, battery_net) if battery_net > 0 else 0.0
             home_from_battery = round(battery_share, 1)
             home_from_solar = round(remaining_home - battery_share, 1)
@@ -714,12 +726,14 @@ def daily_home_source_breakdown_kwh(
     Tagesvergleich "Verbrauch aus Solar & Batterie"/"aus dem Netz").
 
     Nutzt dieselbe Energiebilanz-Logik wie day_profile() (siehe dortigen
-    Docstring: PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung, ohne
-    von einer bestimmten Vorzeichen-Konvention der Batterieleistung
-    auszugehen), aber direkt auf den unveraenderten Messzeitpunkten
-    (nicht auf 15-Minuten-Mittelwerte gebucketet) und ueber den ganzen
-    Kalendertag hinweg integriert statt nur gemittelt - fuer eine
-    Energiemenge (kWh) statt einer Momentanleistung.
+    Docstring: reine PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung,
+    ohne von einer bestimmten Vorzeichen-Konvention der Batterieleistung
+    auszugehen - UND mit der reinen PV statt dem rohen pv_power_w, sonst
+    ergibt battery_net bei einer Batterie am PV3-String immer 0, siehe dort),
+    aber direkt auf den unveraenderten Messzeitpunkten (nicht auf
+    15-Minuten-Mittelwerte gebucketet) und ueber den ganzen Kalendertag
+    hinweg integriert statt nur gemittelt - fuer eine Energiemenge (kWh)
+    statt einer Momentanleistung.
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "pv_kwh": float|None,
     "battery_kwh": float|None, "grid_kwh": float|None}, aufsteigend nach
@@ -761,13 +775,17 @@ def daily_home_source_breakdown_kwh(
         # irrefuehrende negative Saeule zu zeigen.
         home = max(0.0, home)
         grid_draw = max(0.0, grid_draw)
+        # Reine PV (Batterie am PV3-String herausgerechnet) - siehe
+        # pure_pv_power_w sowie den Docstring oben, warum battery_net
+        # NICHT mit dem rohen pv gerechnet werden darf.
+        pv_pure = pure_pv_power_w(pv, row.battery_power_w)
 
         # Gleiche Herleitung wie in day_profile(): Anteil direkt aus dem Netz
         # kann Hausverbrauch nicht uebersteigen, Rest wird zwischen PV und
         # Batterie aufgeteilt (Batterie nur, wenn sie gerade tatsaechlich
         # per Energiebilanz Leistung abgibt - battery_net > 0).
         remaining_home = max(0.0, home - grid_draw)
-        battery_net = home + feed_in - pv - grid_draw
+        battery_net = home + feed_in - pv_pure - grid_draw
         battery_share = min(remaining_home, battery_net) if battery_net > 0 else 0.0
         home_from_battery = battery_share
         home_from_pv = remaining_home - battery_share
