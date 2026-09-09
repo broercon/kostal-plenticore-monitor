@@ -49,6 +49,8 @@ from .daily_summary import (
     build_autarky_yearly_comparison,
     build_daily_home_breakdown,
     build_daily_summaries,
+    build_battery_charge_summary,
+    build_battery_discharge_summary,
     build_feed_in_summary,
     build_pv_yield_summary,
     build_yearly_comparison,
@@ -61,6 +63,7 @@ from .schemas import (
     AdminResetPasswordOut,
     AdminUserOut,
     BatterySocHistoryOut,
+    BatterySummaryOut,
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
@@ -640,6 +643,29 @@ def get_pv_yield_summary(_user: User = Depends(auth.get_current_user)) -> PvYiel
     liefert kwh=None. Berechnung: daily_summary.build_pv_yield_summary().
     """
     return PvYieldSummaryOut(periods=build_pv_yield_summary())
+
+
+@app.get("/api/readings/battery-summary", response_model=BatterySummaryOut)
+def get_battery_summary(_user: User = Depends(auth.get_current_user)) -> BatterySummaryOut:
+    """Speicherbilanz (kWh) fuer dieselben Zeitraeume wie /feed-in-summary und
+    /pv-yield-summary: getrennt nach in den Speicher GELADENER und aus ihm
+    ENTNOMMENER Energie.
+
+    Damit laesst sich die Tagesbilanz nachvollziehen: der PV-Ertrag (reine
+    DC-Erzeugung pv1+pv2) verteilt sich auf Einspeisung, direkten
+    Hausverbrauch und Speicherladung - zuzueglich der Wandlungsverluste, die
+    in keiner der drei Groessen auftauchen (PV-Ertrag ist DC vor dem
+    Wechselrichter, Einspeisung/Hausverbrauch sind AC dahinter).
+
+    Berechnet aus der direkt gemessenen Batterieleistung, nicht aus der
+    Energiebilanz (siehe aggregation.daily_battery_energy_totals). Geraete
+    ohne Batterie tragen nichts bei; ein Zeitraum ganz ohne Batteriedaten
+    liefert kwh=None.
+    """
+    return BatterySummaryOut(
+        charge_periods=build_battery_charge_summary(),
+        discharge_periods=build_battery_discharge_summary(),
+    )
 
 
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)

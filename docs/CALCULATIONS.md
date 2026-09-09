@@ -378,10 +378,56 @@ integrierte, korrigierte Hausbilanz und stimmen überein. Bei **nur einem**
 Wechselrichter kann die Kachel (Gerätezähler) minimal von der Summe der drei
 Anteile (Integration) abweichen – zwei legitime Methoden derselben Größe.
 
+### Speicherbilanz je Zeitraum: geladen und entnommen getrennt
+
+Die Übersicht zeigt für jeden der neun Zeiträume auch, wie viel Energie in
+den Speicher **geladen** und wie viel aus ihm **entnommen** wurde
+(`/api/readings/battery-summary`).
+
+Beide Werte werden direkt aus der gemessenen Batterieleistung integriert –
+bewusst nicht aus der Energiebilanz (`home + feed_in − pv − grid_draw`), die
+für die Aufschlüsselung des Hausverbrauchs nach Quelle genutzt wird: die
+Batterieleistung ist ein direkt gemessener Wert und liegt auch dann vor, wenn
+Haus- oder Netzwerte zu einem Zeitpunkt fehlen.
+
+Wichtig ist die Reihenfolge: Laden und Entladen werden **je Messpunkt** über
+das Vorzeichen getrennt (negativ = Laden) und erst danach integriert. Würde
+man erst die vorzeichenbehaftete Leistung über den Tag integrieren, kürzten
+sich Laden und Entladen gegenseitig weg und es bliebe nur die
+Netto-Verschiebung des Ladestands übrig – für die Frage „wie viel ist heute
+in den Speicher geflossen?" nutzlos. Geräte mit umgekehrter
+Vorzeichen-Konvention werden wie sonst über `battery_power_inverted`
+korrigiert.
+
+### Warum die Zeitraum-Übersichten nicht exakt aufgehen
+
+Naheliegende Erwartung: PV-Ertrag = Einspeisung + Hausverbrauch +
+Speicherladung. Diese Rechnung geht systematisch **nicht** genau auf, auch
+nicht bei 100 % Autarkie – und das ist korrekt so:
+
+- Der **PV-Ertrag** ist die DC-Erzeugung der Module (pv1 + pv2), also der
+  Wert **vor** dem Wechselrichter.
+- **Einspeisung** und **Hausverbrauch** sind AC-Größen **hinter** dem
+  Wechselrichter, gemessen am Netzanschluss bzw. vom Gerät gemeldet.
+- Dazwischen liegen die DC→AC-Wandlungsverluste (typischerweise einige
+  Prozent) und beim Speicher zusätzlich die Ladeverluste.
+
+Die Differenz `PV-Ertrag − Einspeisung − Direktverbrauch − Speicherladung`
+ist deshalb genau dieser Verlustanteil und nie null. Ein Rechenbeispiel für
+einen sonnigen Tag: 78 kWh PV-Ertrag, 60 kWh Einspeisung, 7,4 kWh
+Hausverbrauch → 10,6 kWh verteilen sich auf Speicherladung und Verluste.
+Ohne die Speicherzeilen fehlte für diese Rechnung der größte Posten – genau
+deshalb stehen sie mit denselben Zeiträumen daneben.
+
+Zusätzlich zu beachten: die Kachel „PV-Ertrag heute" und die Zeile
+„PV-Ertrag gesamt / Heute" sind zwei legitime Methoden derselben Größe (siehe
+„Gerätezähler vs. Integration" oben) und können daher leicht voneinander
+abweichen.
+
 ## Performance: Energie-Zeitraum-Cache
 
-Die Zeitraum-Übersichten (PV-Ertrag und Einspeisung von "heute" bis
-"letztes Jahr") integrieren die Rohmesswerte je Kalendertag. Damit das
+Die Zeitraum-Übersichten (PV-Ertrag, Einspeisung und Speicher
+laden/entladen von "heute" bis "letztes Jahr") integrieren die Rohmesswerte je Kalendertag. Damit das
 Dashboard sie nicht bei jeder automatischen Aktualisierung (alle 5 Minuten)
 komplett neu aus sämtlichen Rohmesswerten seit Anfang des Vorjahres
 berechnen muss (bei 15s-Poll-Intervall potenziell mehrere Millionen Zeilen

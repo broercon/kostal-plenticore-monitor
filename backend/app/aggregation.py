@@ -573,6 +573,88 @@ def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]
     return [{"date": d, "kwh": round(per_day[d], 3)} for d in sorted(per_day)]
 
 
+BATTERY_CHARGE = "charge"
+BATTERY_DISCHARGE = "discharge"
+
+
+def battery_flow_power_w(
+    battery_power_w: float, direction: str, inverted: bool = False
+) -> float:
+    """Lade- ODER Entladeleistung (W, immer >= 0) fuer einen einzelnen
+    Messpunkt, aus der vorzeichenbehafteten Batterieleistung.
+
+    Vorzeichen-Konvention (siehe day_profile/models.Reading): positiv =
+    Batterie gibt Leistung ab (Entladen), negativ = Batterie nimmt Leistung
+    auf (Laden). Geraete/Firmwares mit umgekehrter Konvention werden ueber
+    `inverted` (config.battery_power_inverted, wie in combine_devices)
+    korrigiert.
+
+    Die Trennung in Laden/Entladen MUSS je Messpunkt passieren und darf
+    nicht erst nach der Integration erfolgen - sonst wuerden sich Laden und
+    Entladen ueber den Tag gegenseitig wegkuerzen und nur die (fuer die
+    Frage "wie viel ist in den Speicher geflossen?" nutzlose)
+    Netto-Verschiebung des Ladestands uebrig bleiben.
+    """
+    signed = -battery_power_w if inverted else battery_power_w
+    if direction == BATTERY_CHARGE:
+        return max(0.0, -signed)
+    if direction == BATTERY_DISCHARGE:
+        return max(0.0, signed)
+    raise ValueError(f"Unbekannte Richtung: {direction!r}")
+
+
+def daily_battery_energy_totals(
+    rows: list[Reading],
+    timezone_name: str,
+    direction: str,
+    battery_power_inverted: dict[str, bool] | None = None,
+) -> list[dict]:
+    """In den Speicher geladene (direction=BATTERY_CHARGE) bzw. aus ihm
+    entnommene (BATTERY_DISCHARGE) Energie (kWh) je lokalem Kalendertag,
+    hausweit ueber alle Geraete summiert.
+
+    Direkt aus der gemessenen Batterieleistung integriert (Trapezregel, siehe
+    integrate_kwh) - bewusst NICHT aus der Energiebilanz
+    (home + feed_in - pv - grid_draw, wie sie day_profile fuer die
+    Solar-/Batterie-Aufteilung des Hausverbrauchs nutzt) hergeleitet: die
+    Batterieleistung ist ein direkt gemessener Wert und damit unabhaengig
+    davon, ob PV-, Haus- und Netzwerte zum selben Zeitpunkt vorliegen.
+    Geraete ohne Batterie (battery_power_w = None) tragen nichts bei; bei
+    mehreren Geraeten mit Batterie wird je Geraet integriert und dann
+    summiert (Batterieleistungen sind additiv, siehe combine_devices).
+
+    Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float}, aufsteigend
+    nach Datum sortiert; Tage ganz ohne Batteriedaten fehlen (statt
+    kwh=None) - analog zu daily_pv_yield_totals."""
+    inverted_map = battery_power_inverted or {}
+    tz = ZoneInfo(timezone_name)
+    by_day_device: dict[tuple[str, str], list[SimpleNamespace]] = {}
+    for row in rows:
+        if row.battery_power_w is None:
+            continue
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        date_str = ts.astimezone(tz).strftime("%Y-%m-%d")
+        by_day_device.setdefault((date_str, row.device_id), []).append(
+            SimpleNamespace(
+                timestamp=row.timestamp,
+                value=battery_flow_power_w(
+                    row.battery_power_w, direction, inverted_map.get(row.device_id, False)
+                ),
+            )
+        )
+
+    per_day: dict[str, float] = {}
+    for (date_str, _device_id), points in by_day_device.items():
+        device_total = integrate_kwh(points, "value")
+        if device_total is None:
+            continue
+        per_day[date_str] = per_day.get(date_str, 0.0) + device_total
+
+    return [{"date": d, "kwh": round(per_day[d], 3)} for d in sorted(per_day)]
+
+
 def hourly_kwh_per_device(
     rows: list[Reading], field: str, timezone_name: str
 ) -> dict:

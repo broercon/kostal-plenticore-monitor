@@ -2,6 +2,8 @@
 daily_report.py) sowie für die zugehörigen API-Endpunkte: Tagessummen je
 Wechselrichter (build_daily_summaries), "aktiv/erreichbar"-Status
 (device_online_map), Einspeisung je Zeitraum (build_feed_in_summary),
+Speicherbilanz je Zeitraum (build_battery_charge_summary/
+build_battery_discharge_summary),
 Hausverbrauch nach Quelle PV/Batterie/Netz je Tag
 (build_daily_home_breakdown) sowie aktueller Batterie-Ladestand
 (device_battery_snapshot).
@@ -20,8 +22,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select
 
 from .aggregation import (
+    BATTERY_CHARGE,
+    BATTERY_DISCHARGE,
     aggregate_per_device,
     combine_devices,
+    daily_battery_energy_totals,
     daily_home_source_breakdown_kwh,
     daily_kwh_totals,
     daily_pv_yield_totals,
@@ -457,6 +462,57 @@ def build_pv_yield_summary() -> list[FeedInPeriod]:
 
     per_day = _cached_daily_totals("pv_yield", earliest, today, _compute_pv_yield_days)
     return _periods_from_per_day(periods, per_day)
+
+
+def _compute_battery_days(direction: str) -> Callable[[date, date], dict[str, float | None]]:
+    """Baut die compute_missing()-Funktion fuer _cached_daily_totals() zur
+    geladenen bzw. entnommenen Speicherenergie. Anders als bei Einspeisung/
+    Hausverbrauch wird hier NICHT auf _combined_rows() zusammengefasst: die
+    Batterieleistung ist je Geraet direkt gemessen und additiv (siehe
+    daily_battery_energy_totals), die hausweite Korrektur der Energiebilanz
+    ist dafuer also nicht noetig."""
+
+    def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
+        rows = _load_readings_range(start, end_exclusive)
+        return {
+            d["date"]: d["kwh"]
+            for d in daily_battery_energy_totals(
+                rows, settings.timezone_name, direction, _battery_inverted_map()
+            )
+        }
+
+    return compute
+
+
+def build_battery_energy_summary(direction: str) -> list[FeedInPeriod]:
+    """Geladene (direction=BATTERY_CHARGE) bzw. entnommene
+    (BATTERY_DISCHARGE) Speicherenergie (kWh) je Zeitraum - dieselben neun
+    Zeitraeume wie beim PV-Ertrag und bei der Einspeisung
+    (_energy_period_ranges), damit sich die Tagesbilanz
+    "PV-Ertrag = Einspeisung + Direktverbrauch + Speicherladung + Verluste"
+    Zeitraum fuer Zeitraum nachvollziehen laesst.
+
+    Abgeschlossene Tage werden - wie beim PV-Ertrag - über
+    _cached_daily_totals zwischengespeichert (eigene Cache-Felder
+    "battery:charge"/"battery:discharge")."""
+    periods = _energy_period_ranges()
+    earliest = min(start for _, start, _ in periods)
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+
+    per_day = _cached_daily_totals(
+        f"battery:{direction}", earliest, today, _compute_battery_days(direction)
+    )
+    return _periods_from_per_day(periods, per_day)
+
+
+def build_battery_charge_summary() -> list[FeedInPeriod]:
+    """In den Speicher geladene Energie (kWh) je Zeitraum."""
+    return build_battery_energy_summary(BATTERY_CHARGE)
+
+
+def build_battery_discharge_summary() -> list[FeedInPeriod]:
+    """Aus dem Speicher entnommene Energie (kWh) je Zeitraum."""
+    return build_battery_energy_summary(BATTERY_DISCHARGE)
 
 
 _YEARLY_COMPARISON_MONTH_LABELS = [

@@ -41,6 +41,11 @@ curl -b cookies.txt http://localhost:8000/api/devices
   dieses/letztes Jahr.
 - `GET /api/readings/pv-yield-summary` – reine, integrierte PV-Erzeugung
   für dieselben neun Zeiträume.
+- `GET /api/readings/battery-summary` – Speicherbilanz für dieselben neun
+  Zeiträume, getrennt nach in den Speicher **geladener**
+  (`charge_periods`) und aus ihm **entnommener** Energie
+  (`discharge_periods`). Direkt aus der gemessenen Batterieleistung
+  integriert, nicht aus der Energiebilanz hergeleitet.
 
 ### Zeitreihen
 
