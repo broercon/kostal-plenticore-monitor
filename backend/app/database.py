@@ -77,6 +77,7 @@ def init_db() -> None:
     _ensure_ac_power_column()
     _ensure_readings_timestamp_index()
     _ensure_weather_hourly_extra_columns()
+    _ensure_pv_string_columns()
 
 
 # Aufraeumregel fuer die Funktionen unten: eine Migration ist hier nur so
@@ -152,4 +153,19 @@ def _ensure_weather_hourly_extra_columns() -> None:
             if name in missing:
                 conn.exec_driver_sql(f"ALTER TABLE weather_hourly ADD COLUMN {name} {sql_type}")
         conn.exec_driver_sql("DELETE FROM weather_hourly")
+        conn.commit()
+
+
+def _ensure_pv_string_columns() -> None:
+    """Eingefuehrt: 2026-09-08. Ergaenzt die Spalten readings.pv1_power_w/pv2_power_w/pv3_power_w
+    (Leistung je einzelnem PV-String, siehe models.Reading), falls sie noch
+    fehlen. Wie bei _ensure_ac_power_column() bekommen bestehende Zeilen
+    NULL fuer die neuen Spalten, statt geloescht/neu berechnet zu werden -
+    die Werte lassen sich aus vorhandenen Daten ohnehin nicht rueckwirkend
+    rekonstruieren (frueher wurden die Strings gar nicht abgefragt)."""
+    with engine.connect() as conn:
+        columns = _table_columns(conn, "readings")
+        for name in ("pv1_power_w", "pv2_power_w", "pv3_power_w"):
+            if name not in columns:
+                conn.exec_driver_sql(f"ALTER TABLE readings ADD COLUMN {name} FLOAT")
         conn.commit()

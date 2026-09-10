@@ -128,6 +128,66 @@ def test_init_db_adds_missing_ac_power_column_without_losing_data():
     init_db()
 
 
+def test_init_db_adds_missing_pv_string_columns_without_losing_data():
+    """Simuliert eine Bestandsdatenbank von VOR der Erfassung der einzelnen
+    PV-String-Leistungen (pv1_power_w/pv2_power_w/pv3_power_w): init_db()
+    muss die fehlenden Spalten ergaenzen (ALTER TABLE), OHNE die
+    vorhandenen Messwerte zu verlieren oder zu veraendern."""
+    Base.metadata.drop_all(bind=engine)
+    with engine.connect() as conn:
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                device_id VARCHAR(64) NOT NULL,
+                device_name VARCHAR(128) NOT NULL,
+                timestamp DATETIME NOT NULL,
+                home_power_w FLOAT,
+                grid_power_w FLOAT,
+                feed_in_power_w FLOAT,
+                grid_draw_power_w FLOAT,
+                pv_power_w FLOAT,
+                ac_power_w FLOAT,
+                battery_power_w FLOAT,
+                battery_soc_percent FLOAT,
+                yield_day_kwh FLOAT,
+                home_consumption_day_kwh FLOAT,
+                energy_grid_day_kwh FLOAT
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO readings (device_id, device_name, timestamp, home_power_w, pv_power_w) "
+            "VALUES ('wr1', 'Bestands-Wechselrichter', '2026-01-01 00:00:00', 1234.5, 2000.0)"
+        )
+        conn.commit()
+
+    columns_before = {row[1] for row in engine.connect().exec_driver_sql("PRAGMA table_info(readings)")}
+    assert not {"pv1_power_w", "pv2_power_w", "pv3_power_w"} & columns_before
+
+    init_db()
+
+    columns_after = {row[1] for row in engine.connect().exec_driver_sql("PRAGMA table_info(readings)")}
+    assert {"pv1_power_w", "pv2_power_w", "pv3_power_w"} <= columns_after
+
+    db = SessionLocal()
+    try:
+        rows = list(db.scalars(select(Reading)))
+        assert len(rows) == 1
+        assert rows[0].home_power_w == 1234.5
+        assert rows[0].pv_power_w == 2000.0
+        # Fuer die alte Zeile sind die neuen Spalten NULL, nicht etwa 0 o.ae.
+        assert rows[0].pv1_power_w is None
+        assert rows[0].pv2_power_w is None
+        assert rows[0].pv3_power_w is None
+    finally:
+        db.close()
+
+    # Erneuter Aufruf (z.B. naechster Container-Neustart) darf nicht erneut
+    # versuchen, die Spalten hinzuzufuegen (waere ein SQL-Fehler).
+    init_db()
+
+
 def test_init_db_adds_weather_hourly_columns_and_clears_stale_cache():
     """Simuliert eine Bestandsdatenbank von VOR den zusaetzlichen
     Prognose-Wetterwerten (Bewoelkung/Wind/Feuchte/Schneehoehe/Luftdruck):

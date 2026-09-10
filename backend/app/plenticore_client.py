@@ -29,6 +29,15 @@ PROCESS_DATA_CANDIDATES: dict[str, list[str]] = {
     "devices:local": ["Home_P", "Grid_P", "Dc_P"],
     "devices:local:ac": ["P"],
     "devices:local:battery": ["P", "SoC"],
+    # Leistung je einzelnem PV-String, rein informativ (siehe
+    # models.Reading.pv1_power_w) - der virtuelle Wert "_virt_"/"pv_P" unten
+    # bleibt weiterhin die fuer alle Berechnungen genutzte Summe. Module
+    # existieren nicht auf jedem Geraet (z.B. nur 2 belegte Stringeingaenge)
+    # - _build_request() unten laesst dann automatisch nur die tatsaechlich
+    # vorhandenen weg, kein Fehler.
+    "devices:local:pv1": ["P"],
+    "devices:local:pv2": ["P"],
+    "devices:local:pv3": ["P"],
     "scb:statistic:EnergyFlow": ["Statistic:EnergyHome:Day", "Statistic:Yield:Day"],
     "_virt_": ["pv_P", "Statistic:EnergyGrid:Day"],
 }
@@ -201,6 +210,9 @@ class PlenticoreDevice:
             "feed_in_power_w": feed_in_w,
             "grid_draw_power_w": grid_draw_w,
             "pv_power_w": _to_float(val("_virt_", "pv_P")),
+            "pv1_power_w": _to_float(val("devices:local:pv1", "P")),
+            "pv2_power_w": _to_float(val("devices:local:pv2", "P")),
+            "pv3_power_w": _to_float(val("devices:local:pv3", "P")),
             # AC-seitige Netto-Leistung am Wechselrichter-Anschluss (positiv =
             # Leistung fliesst vom Geraet Richtung Hausnetz/Netz, negativ =
             # Leistung fliesst von aussen ins Geraet, z.B. um die eigene

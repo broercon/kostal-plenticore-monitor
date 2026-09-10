@@ -304,6 +304,23 @@ verloren oder werden verändert) – ein normales `docker compose up -d
 --build` reicht aus. Für Messwerte von vor diesem Update bleibt das Feld
 leer (`NULL`); für diese greift automatisch die [ältere Fallback-Formel](#die-lösung-dieser-app).
 
+### Neue Felder pv1_power_w/pv2_power_w/pv3_power_w (rein informativ)
+
+Zusätzlich zum bereits vom Wechselrichter aufsummierten `pv_power_w`
+(`_virt_`/`pv_P`) erfasst die App seit diesem Update auch die Leistung je
+einzelnem PV-String (`devices:local:pv1/pv2/pv3`, jeweils `P`). Das dient
+aktuell nur der Datensammlung für eine spätere Analyse bzw. eine mögliche
+stringgenaue Prognose – **keine bestehende Berechnung nutzt diese Felder**,
+sie fließen also nirgends in Anzeigen oder die Prognose mit ein. Migration
+und Rückwirkungslosigkeit für Bestandsdaten wie bei `ac_power_w` oben (NULL
+für ältere Zeilen, kein Datenverlust). Fehlt ein String am Gerät (z.B. nur
+2 belegte Eingänge) oder unterstützt die Firmware den Datenpunkt nicht,
+bleibt das jeweilige Feld dauerhaft `NULL`, ohne einen Fehler auszulösen.
+Bei Installationen, bei denen PV3 tatsächlich die Batterie ist (siehe
+[PV-Ertrag = reine PV-Erzeugung](#pv-ertrag--reine-pv-erzeugung) weiter
+unten bzw. `aggregation.pure_pv_power_w`), spiegelt `pv3_power_w`
+entsprechend die Batterieleistung wider, nicht echte PV-Erzeugung.
+
 ## Kennzahlen: PV-Ertrag, Hausverbrauch & Einspeisung – wie sie berechnet werden
 
 Damit dieselbe Größe überall denselben Wert zeigt, gelten feste Regeln.

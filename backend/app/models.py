@@ -42,6 +42,20 @@ class Reading(Base):
     ac_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_soc_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Leistung je PV-String (devices:local:pv1/pv2/pv3, jeweils "P") - rein
+    # informativ erfasst (siehe plenticore_client.py), NICHT Teil der
+    # bisherigen Berechnungen (die weiterhin ausschliesslich den bereits vom
+    # Geraet aufsummierten pv_power_w nutzen). NULL, wenn der jeweilige
+    # String am Geraet nicht existiert (z.B. nur 2 Stringeingaenge belegt)
+    # ODER bei vor diesem Update erfassten Zeilen (siehe
+    # database._ensure_pv_string_columns fuer die Migration bestehender
+    # Datenbanken). Bei manchen Installationen haengt an PV3 keine echte
+    # PV-Reihe, sondern die Batterie (siehe aggregation.pure_pv_power_w) -
+    # pv3_power_w spiegelt in diesem Fall die Batterieleistung wider, nicht
+    # echte PV-Erzeugung.
+    pv1_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pv2_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pv3_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Tagessummen in kWh (vom Wechselrichter kumuliert, seit Mitternacht)
     yield_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
