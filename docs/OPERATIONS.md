@@ -56,18 +56,6 @@ Neben den Docker-Logs schreibt die Anwendung nach
 Versionen werden aufbewahrt. Beim ersten Start ausgegebene Initialpasswörter
 können deshalb auch in diesen persistenten Logs stehen.
 
-## Zurueckgenommene Rohdatenverdichtung
-
-Die automatische Stundenverdichtung wurde wegen verfälschter Energiebilanzen
-entfernt. `DOWNSAMPLE_OLD_READINGS` und `RAW_DATA_RETENTION_DAYS` haben keine
-Wirkung mehr. Alte Rohmesswerte werden nicht automatisch gelöscht.
-
-Falls die vorherige Branch-Version bereits lief, prüfen Sie deren Logs auf
-„Verdichtung alter Rohmesswerte“. Bereits gelöschte Einzelwerte werden durch
-dieses Update nicht wiederhergestellt. Für verlässliche historische
-Neuberechnungen ist dann eine Sicherung vor der Verdichtung erforderlich.
-Vor einer Wiederherstellung auch den aktuellen Datenbestand sichern.
-
 ## Daten sichern
 
 Die Anwendung verwendet SQLite im WAL-Modus. Für ein konsistentes Backup den

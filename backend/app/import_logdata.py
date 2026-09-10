@@ -395,30 +395,21 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     falscher Spalten-Erkennung lief) - echte/live erfasste Werte werden nie
     ueberschrieben.
 
-    Stunden, die eine fruehere Branch-Version bereits verdichtet hat,
-    werden weiterhin uebersprungen: Sonst wuerden Rohdaten mit synthetischen
-    Stundenmitteln vermischt. Neue Verdichtungen finden nicht mehr statt.
-    Eine Wiederherstellung dieser historischen Daten erfordert eine Sicherung.
-
     Wird sowohl vom CLI-Tool (main(), s.o.) als auch vom automatischen
     Hintergrund-Abgleich beim Start (app/auto_import.py) genutzt.
     """
     from sqlalchemy import select
 
-    from .config import settings
     from .database import SessionLocal, init_db
-    from .downsampling import local_hour_start_utc
     from .models import Reading
 
     init_db()
-    tz = ZoneInfo(settings.timezone_name)
     session = SessionLocal()
     try:
         # SQLite gibt DateTime-Werte beim Zurücklesen als "naive" datetime
         # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert haben.
         # Fuer den Abgleich auf beiden Seiten UTC-aware normalisieren.
         existing_by_ts: dict[datetime, Reading] = {}
-        downsampled_hours: set[datetime] = set()
         for reading in session.scalars(
             select(Reading).where(Reading.device_id == device_id)
         ):
@@ -426,19 +417,12 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
             existing_by_ts[ts] = reading
-            if reading.is_downsampled:
-                downsampled_hours.add(local_hour_start_utc(ts, tz))
 
         inserted = 0
         updated = 0
         skipped = 0
         for r in rows:
             ts = r["timestamp"]
-            if local_hour_start_utc(ts, tz) in downsampled_hours:
-                # Diese Stunde wurde bereits verdichtet - siehe Docstring.
-                skipped += 1
-                continue
-
             existing = existing_by_ts.get(ts)
             if existing is None:
                 new_reading = Reading(

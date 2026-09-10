@@ -62,10 +62,6 @@ class Reading(Base):
     home_consumption_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     energy_grid_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # Legacy marker from the withdrawn hourly compaction. Retained so imports
-    # do not mix raw readings with existing synthetic hourly averages.
-    is_downsampled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-
 
 class User(Base):
     """Ein Benutzer der Weboberflaeche (Login/Passwort, Rolle)."""

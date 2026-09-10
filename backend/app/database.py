@@ -78,7 +78,6 @@ def init_db() -> None:
     _ensure_readings_timestamp_index()
     _ensure_weather_hourly_extra_columns()
     _ensure_pv_string_columns()
-    _ensure_is_downsampled_column()
 
 
 # Aufraeumregel fuer die Funktionen unten: eine Migration ist hier nur so
@@ -170,15 +169,3 @@ def _ensure_pv_string_columns() -> None:
             if name not in columns:
                 conn.exec_driver_sql(f"ALTER TABLE readings ADD COLUMN {name} FLOAT")
         conn.commit()
-
-
-def _ensure_is_downsampled_column() -> None:
-    """Eingefuehrt: 2026-09-09. Ergaenzt die Spalte readings.is_downsampled (siehe models.Reading
-    und app/downsampling.py), falls sie noch fehlt. Bestehende Zeilen
-    bekommen NULL (gleichbedeutend mit False - kein bestehender Messwert
-    ist rueckwirkend "verdichtet")."""
-    with engine.connect() as conn:
-        columns = _table_columns(conn, "readings")
-        if "is_downsampled" not in columns:
-            conn.exec_driver_sql("ALTER TABLE readings ADD COLUMN is_downsampled BOOLEAN")
-            conn.commit()

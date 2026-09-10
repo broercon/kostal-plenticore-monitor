@@ -483,26 +483,6 @@ sehr vielen Punkten. Grund: der Engpass ist dort nicht die Arithmetik
 vektorisierte Rechnung einspart. Deshalb weiterhin eine reine
 Python-Schleife.
 
-## Keine verlustbehaftete Verdichtung der Rohdaten
-
-Die zwischenzeitlich eingefuehrte automatische Stundenverdichtung wurde
-zurueckgenommen. Stundenmittel der vorzeichenbehafteten Batterieleistung
-heben Laden und Entladen gegeneinander auf. Auch unregelmaessige Messabstaende,
-Datenluecken und das Mitteln vor der PV-Korrektur veraendern die Energiebilanz.
-Ein Tagescache ist keine dauerhafte Sicherung: Er wird bedarfsgesteuert
-befuellt und kann spaeter invalidiert werden.
-
-Die Rohdaten bleiben deshalb erhalten. Die Core-Select-Optimierung oben
-bleibt unabhaengig davon aktiv. Wenige Messpunkte sind kein Nachweis fuer
-verdichtete Daten; die Integration ueberbrueckt weiterhin keine Luecken
-ueber 30 Minuten.
-
-Falls eine fruehere Branch-Version bereits Daten verdichtet hat, kann dieses
-Update die geloeschten Einzelwerte nicht rekonstruieren. Betroffene historische
-Berechnungen sind ohne Wiederherstellung aus einer Sicherung nicht verlaesslich.
-Der bestehende Marker `is_downsampled` und der Import-Schutz bleiben zur
-Kompatibilitaet erhalten; sie reparieren keine bereits verdichteten Daten.
-
 ## Performance: Energie-Zeitraum-Cache
 
 Die Zeitraum-Übersichten (PV-Ertrag, Einspeisung und Speicher
