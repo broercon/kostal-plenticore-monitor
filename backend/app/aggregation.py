@@ -1,7 +1,7 @@
 """Hilfsfunktionen, um Rohmesswerte fuer Diagramme in Zeit-Buckets zu mitteln."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -123,6 +123,8 @@ def combine_devices(
     per_device: dict[str, dict[int, dict[str, float | None]]],
     has_grid_meter: dict[str, bool] | None = None,
     battery_power_inverted: dict[str, bool] | None = None,
+    *,
+    raw_battery_output: bool = False,
 ) -> dict[int, dict[str, float | None]]:
     """Kombiniert die pro-Geraet gemittelten Buckets zu einer Gesamtzeitreihe
     ("Alle (Summe)").
@@ -191,6 +193,9 @@ def combine_devices(
       Varianten (Standard-Summe und korrigierte Energiebilanz), da die
       physikalische Grenze unabhaengig vom Berechnungsweg gilt.
     """
+    # Energie-Auswertungen ziehen den Batterieanteil vom rohen PV-Wert ab.
+    # Dafuer muss auch die ausgegebene Batterie roh bleiben; die Hausbilanz
+    # verwendet unabhaengig davon weiterhin das korrigierte Vorzeichen.
     has_grid_meter = has_grid_meter or {}
     battery_power_inverted = battery_power_inverted or {}
     device_ids = list(per_device.keys())
@@ -302,7 +307,10 @@ def combine_devices(
             "feed_in_power_w": feed_in_true,
             "grid_draw_power_w": grid_draw_true,
             "pv_power_w": pv_total,
-            "battery_power_w": battery_total,
+            "battery_power_w": (
+                _sum_field("battery_power_w", device_ids, bk)
+                if raw_battery_output else battery_total
+            ),
             "ac_power_w": ac_total,
         }
     return combined
@@ -430,13 +438,23 @@ def day_profile(
     vergleichen lassen.
 
     Berechnet zusaetzlich eine Aufteilung des Hausverbrauchs in "aus Solar"
-    und "aus Batterie" - rein aus der Leistungsbilanz (PV + Netzbezug +
+    und "aus Batterie" - rein aus der Leistungsbilanz (reine PV + Netzbezug +
     Batterie = Hausverbrauch + Einspeisung), OHNE von einer bestimmten
     Vorzeichen-Konvention der Batterieleistung auszugehen (die je nach
     Geraet/Firmware unterschiedlich sein kann). Dafuer werden PV-, Haus- und
     Netzwerte benoetigt; bei importierten Altdaten ohne Netzmessung (KSEM-
     Limitation, siehe import_logdata.py) bleibt die Aufteilung leer - dort
     funktioniert nur die reine PV-Kurve.
+
+    WICHTIG: die Bilanz MUSS mit der reinen PV (pv_pure, Batterie am PV3-
+    String herausgerechnet) statt dem rohen pv_power_w rechnen. Haengt die
+    Batterie am PV3-String, gilt pv_power_w = pv_pure + battery_power_w (siehe
+    pure_pv_power_w) - mit dem rohen pv_power_w wuerde battery_net dann
+    IMMER zu 0 aufgehen (home + feed_in - pv_power_w - grid_draw =
+    home + feed_in - pv_pure - battery_power_w - grid_draw, und der erste
+    Teil ist per Definition battery_power_w), die Aufteilung wuerde also
+    jegliche Batterie-Entladung faelschlich komplett der Solarerzeugung
+    zuschlagen. Mit pv_pure kuerzt sich das korrekt zu battery_power_w.
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "points": [...]}, aufsteigend
     nach Datum sortiert (aeltester Tag zuerst).
@@ -472,9 +490,9 @@ def day_profile(
         grid_draw = avg["grid_draw_power_w"]
         feed_in = avg["feed_in_power_w"]
         battery = avg["battery_power_w"]
-        # Reine PV-Erzeugung fuer die Anzeige: die ggf. am PV3-String haengende
-        # Batterie herausrechnen (siehe integrate_pure_pv_kwh). Der rohe pv-Wert
-        # bleibt fuer die Energiebilanz unten (battery_net) erhalten.
+        # Reine PV-Erzeugung: die ggf. am PV3-String haengende Batterie
+        # herausrechnen (siehe integrate_pure_pv_kwh) - fuer die Anzeige UND
+        # fuer die Energiebilanz unten (battery_net), siehe Docstring oben.
         pv_pure = max(0.0, pv - (battery or 0.0)) if pv is not None else None
 
         home_from_solar = None
@@ -483,8 +501,10 @@ def day_profile(
             remaining_home = max(0.0, home - grid_draw)
             # Energiebilanz: positiver Wert = Batterie liefert gerade Leistung
             # (Entladung), negativer Wert = Batterie laedt gerade (nimmt einen
-            # Teil der PV-Erzeugung auf).
-            battery_net = home + feed_in - pv - grid_draw
+            # Teil der PV-Erzeugung auf). Mit der REINEN PV (pv_pure), nicht
+            # dem rohen pv - siehe Docstring oben (PV3-Batterie-Faelle sonst
+            # immer 0).
+            battery_net = home + feed_in - pv_pure - grid_draw
             battery_share = min(remaining_home, battery_net) if battery_net > 0 else 0.0
             home_from_battery = round(battery_share, 1)
             home_from_solar = round(remaining_home - battery_share, 1)
@@ -573,6 +593,127 @@ def daily_pv_yield_totals(rows: list[Reading], timezone_name: str) -> list[dict]
     return [{"date": d, "kwh": round(per_day[d], 3)} for d in sorted(per_day)]
 
 
+BATTERY_CHARGE = "charge"
+BATTERY_DISCHARGE = "discharge"
+
+
+def battery_flow_power_w(
+    battery_power_w: float, direction: str, inverted: bool = False
+) -> float:
+    """Lade- ODER Entladeleistung (W, immer >= 0) fuer einen einzelnen
+    Messpunkt, aus der vorzeichenbehafteten Batterieleistung.
+
+    Vorzeichen-Konvention (siehe day_profile/models.Reading): positiv =
+    Batterie gibt Leistung ab (Entladen), negativ = Batterie nimmt Leistung
+    auf (Laden). Geraete/Firmwares mit umgekehrter Konvention werden ueber
+    `inverted` (config.battery_power_inverted, wie in combine_devices)
+    korrigiert.
+
+    Fuer Energiewerte muss zusaetzlich der Nulldurchgang zwischen zwei
+    Messpunkten beruecksichtigt werden, siehe daily_battery_energy_flows.
+    """
+    signed = -battery_power_w if inverted else battery_power_w
+    if direction == BATTERY_CHARGE:
+        return max(0.0, -signed)
+    if direction == BATTERY_DISCHARGE:
+        return max(0.0, signed)
+    raise ValueError(f"Unbekannte Richtung: {direction!r}")
+
+
+def daily_battery_energy_totals(
+    rows: list[Reading],
+    timezone_name: str,
+    direction: str,
+    battery_power_inverted: dict[str, bool] | None = None,
+) -> list[dict]:
+    """In den Speicher geladene (direction=BATTERY_CHARGE) bzw. aus ihm
+    entnommene (BATTERY_DISCHARGE) Energie (kWh) je lokalem Kalendertag,
+    hausweit ueber alle Geraete summiert.
+
+    Direkt aus der gemessenen Batterieleistung integriert (Trapezregel, siehe
+    integrate_kwh) - bewusst NICHT aus der Energiebilanz
+    (home + feed_in - pv - grid_draw, wie sie day_profile fuer die
+    Solar-/Batterie-Aufteilung des Hausverbrauchs nutzt) hergeleitet: die
+    Batterieleistung ist ein direkt gemessener Wert und damit unabhaengig
+    davon, ob PV-, Haus- und Netzwerte zum selben Zeitpunkt vorliegen.
+    Geraete ohne Batterie (battery_power_w = None) tragen nichts bei; bei
+    mehreren Geraeten mit Batterie wird je Geraet integriert und dann
+    summiert (Batterieleistungen sind additiv, siehe combine_devices).
+
+    Rueckgabe: Liste von {"date": "YYYY-MM-DD", "kwh": float}, aufsteigend
+    nach Datum sortiert; Tage ganz ohne Batteriedaten fehlen (statt
+    kwh=None) - analog zu daily_pv_yield_totals."""
+    if direction not in (BATTERY_CHARGE, BATTERY_DISCHARGE):
+        raise ValueError(f"Unbekannte Richtung: {direction!r}")
+    return [
+        {"date": day["date"], "kwh": day[direction]}
+        for day in daily_battery_energy_flows(rows, timezone_name, battery_power_inverted)
+    ]
+
+
+def daily_battery_energy_flows(
+    rows: list[Reading],
+    timezone_name: str,
+    battery_power_inverted: dict[str, bool] | None = None,
+) -> list[dict]:
+    """Beide Energieflussrichtungen gemeinsam integrieren.
+
+    Zwischen Messungen gilt die lineare Interpolation der Trapezregel.
+    Intervalle werden am Nulldurchgang und an lokalen Tagesgrenzen geteilt.
+    Luecken ueber 30 Minuten werden wie bei integrate_kwh ausgelassen.
+    """
+    inverted_map = battery_power_inverted or {}
+    tz = ZoneInfo(timezone_name)
+    by_device: dict[str, list[tuple[datetime, float]]] = {}
+    for row in rows:
+        if row.battery_power_w is None:
+            continue
+        ts = row.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        signed = (
+            -row.battery_power_w
+            if inverted_map.get(row.device_id, False) else row.battery_power_w
+        )
+        by_device.setdefault(row.device_id, []).append(
+            (ts.astimezone(timezone.utc), signed)
+        )
+
+    totals: dict[str, dict[str, float]] = {}
+    for points in by_device.values():
+        points.sort()
+        for (t0, p0), (t1, p1) in zip(points, points[1:]):
+            seconds = (t1 - t0).total_seconds()
+            if seconds <= 0 or seconds > MAX_INTEGRATION_GAP_HOURS * 3600:
+                continue
+            boundaries = [t0, t1]
+            if p0 * p1 < 0:
+                zero_fraction = abs(p0) / (abs(p0) + abs(p1))
+                boundaries.append(t0 + (t1 - t0) * zero_fraction)
+            next_day = t0.astimezone(tz).date() + timedelta(days=1)
+            midnight = datetime.combine(
+                next_day, datetime.min.time(), tzinfo=tz
+            ).astimezone(timezone.utc)
+            if t0 < midnight < t1:
+                boundaries.append(midnight)
+            boundaries.sort()
+            for start, end in zip(boundaries, boundaries[1:]):
+                start_power = p0 + (p1 - p0) * (start - t0).total_seconds() / seconds
+                end_power = p0 + (p1 - p0) * (end - t0).total_seconds() / seconds
+                hours = (end - start).total_seconds() / 3600
+                signed_kwh = (start_power + end_power) / 2 * hours / 1000
+                day = totals.setdefault(
+                    start.astimezone(tz).date().isoformat(),
+                    {BATTERY_CHARGE: 0.0, BATTERY_DISCHARGE: 0.0},
+                )
+                direction = BATTERY_CHARGE if signed_kwh < 0 else BATTERY_DISCHARGE
+                day[direction] += abs(signed_kwh)
+    return [
+        {"date": day, **{key: round(value, 3) for key, value in values.items()}}
+        for day, values in sorted(totals.items())
+    ]
+
+
 def hourly_kwh_per_device(
     rows: list[Reading], field: str, timezone_name: str
 ) -> dict:
@@ -632,12 +773,14 @@ def daily_home_source_breakdown_kwh(
     Tagesvergleich "Verbrauch aus Solar & Batterie"/"aus dem Netz").
 
     Nutzt dieselbe Energiebilanz-Logik wie day_profile() (siehe dortigen
-    Docstring: PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung, ohne
-    von einer bestimmten Vorzeichen-Konvention der Batterieleistung
-    auszugehen), aber direkt auf den unveraenderten Messzeitpunkten
-    (nicht auf 15-Minuten-Mittelwerte gebucketet) und ueber den ganzen
-    Kalendertag hinweg integriert statt nur gemittelt - fuer eine
-    Energiemenge (kWh) statt einer Momentanleistung.
+    Docstring: reine PV + Netzbezug + Batterie = Hausverbrauch + Einspeisung,
+    ohne von einer bestimmten Vorzeichen-Konvention der Batterieleistung
+    auszugehen - UND mit der reinen PV statt dem rohen pv_power_w, sonst
+    ergibt battery_net bei einer Batterie am PV3-String immer 0, siehe dort),
+    aber direkt auf den unveraenderten Messzeitpunkten (nicht auf
+    15-Minuten-Mittelwerte gebucketet) und ueber den ganzen Kalendertag
+    hinweg integriert statt nur gemittelt - fuer eine Energiemenge (kWh)
+    statt einer Momentanleistung.
 
     Rueckgabe: Liste von {"date": "YYYY-MM-DD", "pv_kwh": float|None,
     "battery_kwh": float|None, "grid_kwh": float|None}, aufsteigend nach
@@ -679,13 +822,17 @@ def daily_home_source_breakdown_kwh(
         # irrefuehrende negative Saeule zu zeigen.
         home = max(0.0, home)
         grid_draw = max(0.0, grid_draw)
+        # Reine PV (Batterie am PV3-String herausgerechnet) - siehe
+        # pure_pv_power_w sowie den Docstring oben, warum battery_net
+        # NICHT mit dem rohen pv gerechnet werden darf.
+        pv_pure = pure_pv_power_w(pv, row.battery_power_w)
 
         # Gleiche Herleitung wie in day_profile(): Anteil direkt aus dem Netz
         # kann Hausverbrauch nicht uebersteigen, Rest wird zwischen PV und
         # Batterie aufgeteilt (Batterie nur, wenn sie gerade tatsaechlich
         # per Energiebilanz Leistung abgibt - battery_net > 0).
         remaining_home = max(0.0, home - grid_draw)
-        battery_net = home + feed_in - pv - grid_draw
+        battery_net = home + feed_in - pv_pure - grid_draw
         battery_share = min(remaining_home, battery_net) if battery_net > 0 else 0.0
         home_from_battery = battery_share
         home_from_pv = remaining_home - battery_share

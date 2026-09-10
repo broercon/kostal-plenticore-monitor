@@ -558,6 +558,31 @@ canvas {
   background: var(--panel-border);
 }
 
+/* Zweite Leiste (Einspeisung) nutzt dieselbe Struktur, aber die
+   Einspeise-Farbe der Live-Karten (.card--feedin), damit die Zeile auf einen
+   Blick von der PV-Ertrag-Leiste zu unterscheiden ist. */
+
+.pvyield-summary--feedin .pvyield-value {
+  color: var(--accent-green);
+}
+
+/* Speicher-Leisten (Laden/Entladen) in der Batterie-Farbe der Live-Karten
+   (.card--battery). */
+
+.pvyield-summary--battery .pvyield-value {
+  color: var(--accent-purple);
+}
+
+/* Hinweis unter den vier Leisten: warum sich die Zeilen nicht exakt zu Null
+   verrechnen (DC vor / AC hinter dem Wechselrichter). */
+
+.pvyield-note {
+  margin: -8px 0 16px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  max-width: 90ch;
+}
+
 /* ---- Auth: Topbar-Elemente, Passwort-Dialog, Admin-Panel ---- */
 
 .hidden {

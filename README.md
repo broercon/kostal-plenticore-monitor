@@ -16,6 +16,8 @@ Docker-Container.
 - Live-Anzeige für PV-Leistung, Hausverbrauch, Netzbezug und Einspeisung
 - Batterie-Leistung und Ladezustand, sofern vorhanden
 - Tages-, Wochen-, Monats- und Jahresauswertungen
+- Zeitraum-Übersicht für PV-Ertrag, Einspeisung und Speicher
+  (geladen/entnommen) von "heute" bis "letztes Jahr"
 - Autarkiegrad (Anteil des Hausverbrauchs aus PV/Speicher statt Netz) je
   Kalendermonat sowie als Tageswert in der Übersicht
 - Vergleich mehrerer Wechselrichter und Kalendertage

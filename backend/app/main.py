@@ -49,6 +49,7 @@ from .daily_summary import (
     build_autarky_yearly_comparison,
     build_daily_home_breakdown,
     build_daily_summaries,
+    build_battery_energy_summary,
     build_feed_in_summary,
     build_pv_yield_summary,
     build_yearly_comparison,
@@ -61,6 +62,7 @@ from .schemas import (
     AdminResetPasswordOut,
     AdminUserOut,
     BatterySocHistoryOut,
+    BatterySummaryOut,
     ChangePasswordIn,
     ChangePasswordOut,
     DailyHomeBreakdownOut,
@@ -147,7 +149,10 @@ async def lifespan(app: FastAPI):
     forecast_task.cancel()
     forecast_midnight_task.cancel()
     await asyncio.gather(
-        auto_import_task, forecast_task, forecast_midnight_task, return_exceptions=True
+        auto_import_task,
+        forecast_task,
+        forecast_midnight_task,
+        return_exceptions=True,
     )
     await poller.stop()
     await daily_report_scheduler.stop()
@@ -434,10 +439,18 @@ def get_history(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading): liefert Core-Row-
+        # Tupel statt vollen ORM-Objekten - fuer grosse Zeitraeume (bis zu 90
+        # Tage, mehrere Wechselrichter) ist die ORM-Objekterzeugung mit
+        # Abstand der teuerste Teil dieser Anfrage (gemessen: >20s bei ~1 Mio.
+        # Zeilen vs. <3s als Core-Tupel). aggregate_per_device() greift nur
+        # per getattr() auf einzelne Felder zu, das funktioniert mit
+        # Row-Objekten identisch - siehe Korrektheitstest in
+        # test_readings_query_perf.py.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -642,6 +655,24 @@ def get_pv_yield_summary(_user: User = Depends(auth.get_current_user)) -> PvYiel
     return PvYieldSummaryOut(periods=build_pv_yield_summary())
 
 
+@app.get("/api/readings/battery-summary", response_model=BatterySummaryOut)
+def get_battery_summary(_user: User = Depends(auth.get_current_user)) -> BatterySummaryOut:
+    """Speicherbilanz (kWh) fuer dieselben Zeitraeume wie /feed-in-summary und
+    /pv-yield-summary: getrennt nach in den Speicher GELADENER und aus ihm
+    ENTNOMMENER Energie.
+
+    Die Speicherwerte enthalten alle Energiequellen und -ziele, auch
+    Netzladung und Einspeisung aus dem Speicher. Aus der Differenz zu
+    PV-Ertrag und Einspeisung ergibt sich daher keine Verlustmessung.
+
+    Berechnet aus der direkt gemessenen Batterieleistung, nicht aus der
+    Energiebilanz (siehe aggregation.daily_battery_energy_totals). Geraete
+    ohne Batterie tragen nichts bei; ein Zeitraum ganz ohne Batteriedaten
+    liefert kwh=None.
+    """
+    return BatterySummaryOut(**build_battery_energy_summary())
+
+
 @app.get("/api/readings/day-profile", response_model=DayProfileOut)
 def get_day_profile(
     device_id: str | None = Query(default=None, description="Leer = alle Geraete summiert"),
@@ -668,10 +699,12 @@ def get_day_profile(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben - selber Effekt bei bis zu 30 Tagen Rohdaten.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -684,7 +717,11 @@ def get_day_profile(
         # Sekunden-Bucket-Aggregation mit einem feinen Bucket (= Polling-
         # Intervall) und bauen daraus synthetische Reading-aehnliche Objekte.
         per_device = aggregate_per_device(rows, bucket_seconds=60)
-        combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+        # Subtraktion der Batterie aus dem rohen PV-Wert braucht Rohwerte.
+        combined = combine_devices(
+            per_device, _has_grid_meter_map(), _battery_inverted_map(),
+            raw_battery_output=True,
+        )
         synthetic_rows = [
             Reading(
                 device_id="_combined_",
@@ -734,10 +771,12 @@ def get_daily_totals(
 
     session = SessionLocal()
     try:
-        stmt = select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben - hier bis zu 400 Tage moeglich, also besonders relevant.
+        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not house_wide_multi:
             stmt = stmt.where(Reading.device_id == device_id)
-        rows = list(session.scalars(stmt))
+        rows = session.execute(stmt).all()
     finally:
         session.close()
 
@@ -852,11 +891,11 @@ def get_hourly_per_device(
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 
@@ -885,11 +924,11 @@ def get_battery_soc_history(
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe get_history()
+        # oben.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 

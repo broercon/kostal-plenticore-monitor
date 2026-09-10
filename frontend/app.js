@@ -1507,7 +1507,7 @@ async function loadDevices() {
     for (const btn of container.querySelectorAll("button")) {
       btn.classList.toggle("active", btn.dataset.deviceId === state.selectedDeviceId);
     }
-    updatePvYieldVisibility();
+    updateEnergyPeriodVisibility();
   }
 
   container.appendChild(
@@ -2881,32 +2881,84 @@ async function withLoading(selectors, fn) {
   }
 }
 
-// PV-Ertrag (kWh) je Zeitraum in der Leiste oben. Hausweite Groesse (Summe
-// ueber alle Wechselrichter) und daher nur im Gesamt-Tab ("Alle (Summe)")
-// sinnvoll - fuer einen einzelnen Wechselrichter wird die Leiste
+// Energie je Zeitraum in den Leisten oben: PV-Ertrag, Einspeisung sowie
+// Laden/Entladen des Speichers - alle vier mit denselben Zeitraeumen
+// (heute/gestern/vorgestern, Woche, Monat, Jahr), damit sich die Tagesbilanz
+// direkt nachvollziehen laesst: der PV-Ertrag (DC-Erzeugung der Module)
+// verteilt sich auf Einspeisung, direkten Hausverbrauch und Speicherladung
+// (plus Wandlungsverluste, siehe Hinweis unter den Leisten in index.html).
+// Alle vier sind hausweite Groessen und daher nur im Gesamt-Tab
+// ("Alle (Summe)") sinnvoll - fuer einen einzelnen Wechselrichter werden sie
 // ausgeblendet. Geladen wird beim Start, beim Zurueckwechseln auf den
 // Gesamt-Tab und periodisch.
 const PV_PERIOD_UNKNOWN = "–";
 
-function updatePvYieldVisibility() {
+// Alle Leisten haben identischen Aufbau (siehe index.html) und unterscheiden
+// sich nur in Section-ID, Zellen-Attribut, Endpunkt und - beim Speicher, wo
+// EIN Endpunkt Laden und Entladen liefert - dem Feld in der Antwort.
+const ENERGY_PERIOD_BARS = [
+  {
+    sectionId: "pv-yield-summary",
+    datasetKey: "pvyield",
+    path: "/api/readings/pv-yield-summary",
+    periodsKey: "periods",
+  },
+  {
+    sectionId: "feed-in-summary",
+    datasetKey: "feedin",
+    path: "/api/readings/feed-in-summary",
+    periodsKey: "periods",
+  },
+  {
+    sectionId: "battery-charge-summary",
+    datasetKey: "batterycharge",
+    path: "/api/readings/battery-summary",
+    periodsKey: "charge_periods",
+  },
+  {
+    sectionId: "battery-discharge-summary",
+    datasetKey: "batterydischarge",
+    path: "/api/readings/battery-summary",
+    periodsKey: "discharge_periods",
+  },
+];
+
+function updateEnergyPeriodVisibility() {
   const show = state.selectedDeviceId === "";
-  const section = el("pv-yield-summary");
-  if (section) section.classList.toggle("hidden", !show);
+  for (const bar of ENERGY_PERIOD_BARS) {
+    const section = el(bar.sectionId);
+    if (section) section.classList.toggle("hidden", !show);
+  }
+  const note = document.querySelector(".pvyield-note");
+  if (note) note.classList.toggle("hidden", !show);
   return show;
 }
 
-async function refreshPvYieldSummary() {
-  return withLoading(["#pv-yield-summary"], async () => {
-    if (!updatePvYieldVisibility()) return; // Einzel-WR: nichts anzeigen/laden
-    const data = await fetchJson("/api/readings/pv-yield-summary");
-    const byKey = {};
-    for (const period of data.periods) byKey[period.key] = period;
-    for (const cell of document.querySelectorAll("[data-pvyield]")) {
-      const period = byKey[cell.dataset.pvyield];
-      cell.textContent = period ? fmtKwh(period.kwh) : PV_PERIOD_UNKNOWN;
-      if (period) cell.title = `${period.from_date} – ${period.to_date}`;
-    }
-
+async function refreshEnergyPeriodSummaries() {
+  const selectors = ENERGY_PERIOD_BARS.map((bar) => `#${bar.sectionId}`);
+  return withLoading(selectors, async () => {
+    if (!updateEnergyPeriodVisibility()) return; // Einzel-WR: nichts anzeigen/laden
+    // Je Endpunkt nur EINE Anfrage, auch wenn zwei Leisten daraus gefuellt
+    // werden (Speicher: Laden + Entladen kommen aus derselben Antwort).
+    const pending = new Map();
+    const load = (path) => {
+      if (!pending.has(path)) pending.set(path, fetchJson(path));
+      return pending.get(path);
+    };
+    // Leisten unabhaengig voneinander fuellen - faellt ein Endpunkt aus,
+    // bleiben die uebrigen Leisten trotzdem aktuell.
+    await Promise.all(
+      ENERGY_PERIOD_BARS.map(async (bar) => {
+        const data = await load(bar.path);
+        const byKey = {};
+        for (const period of data[bar.periodsKey] || []) byKey[period.key] = period;
+        for (const cell of document.querySelectorAll(`[data-${bar.datasetKey}]`)) {
+          const period = byKey[cell.dataset[bar.datasetKey]];
+          cell.textContent = period ? fmtKwh(period.kwh) : PV_PERIOD_UNKNOWN;
+          if (period) cell.title = `${period.from_date} – ${period.to_date}`;
+        }
+      })
+    );
   });
 }
 
@@ -2920,7 +2972,7 @@ function refreshOverview() {
     refreshLiveCards(),
     refreshSummaryCards(),
     refreshAutarkyToday(),
-    refreshPvYieldSummary(),
+    refreshEnergyPeriodSummaries(),
   ]);
 }
 
@@ -3294,7 +3346,7 @@ async function init() {
     refreshSummaryCards().catch(console.error);
     restartRefreshRing();
   }, LIVE_REFRESH_MS);
-  setInterval(() => refreshPvYieldSummary().catch(console.error), 5 * 60 * 1000);
+  setInterval(() => refreshEnergyPeriodSummaries().catch(console.error), 5 * 60 * 1000);
   setInterval(
     () => refreshAutarkyToday().catch(console.error),
     AUTARKY_TODAY_REFRESH_MS

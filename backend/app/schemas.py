@@ -224,6 +224,17 @@ class PvYieldSummaryOut(BaseModel):
     periods: list[FeedInPeriod]
 
 
+class BatterySummaryOut(BaseModel):
+    """Speicherbilanz je Zeitraum: geladene und entnommene Energie getrennt.
+
+    Beide Listen nutzen dieselben Zeitraum-Keys wie Einspeisung/PV-Ertrag
+    (siehe FeedInPeriod), damit sie sich im Dashboard direkt nebeneinander
+    stellen lassen."""
+
+    charge_periods: list[FeedInPeriod]
+    discharge_periods: list[FeedInPeriod]
+
+
 class DailyReportStatusOut(BaseModel):
     enabled: bool
     scheduled_time: str  # "HH:MM"

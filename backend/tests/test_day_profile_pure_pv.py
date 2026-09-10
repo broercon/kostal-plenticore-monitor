@@ -40,3 +40,34 @@ def test_day_profile_battery_power_negative_when_charging():
     pt = days[0]["points"][0]
     assert pt["battery_power_w"] == -1000.0  # Laden -> negativ (wie Leistungsverlauf)
     assert pt["pv_power_w"] == 3000.0        # reine PV = 2000 - (-1000)
+
+
+def test_day_profile_battery_share_detected_with_pv3_battery():
+    """Regressionstest: haengt die Batterie am PV3-String (raw pv_power_w =
+    reine PV + battery_power_w, siehe pure_pv_power_w), MUSS die Solar-/
+    Batterie-Aufteilung des Hausverbrauchs die Entladung trotzdem erkennen.
+
+    Vor der Korrektur rechnete battery_net mit dem ROHEN pv_power_w statt der
+    reinen PV - das kuerzt sich fuer PV3-Batterie-Anlagen algebraisch immer
+    exakt zu 0 (home + feed_in - pv_roh - grid_draw = home + feed_in -
+    reine_pv - battery_power_w - grid_draw, und der Rest ist per Definition
+    battery_power_w), sodass die Batterie NIE als Quelle des Hausverbrauchs
+    erschien - jeglicher aus dem Speicher gedeckte Verbrauch wurde
+    faelschlich komplett "aus Solar" gezaehlt.
+
+    Szenario: Panels liefern 1000 W (pv1+pv2), die Batterie entlaedt
+    zusaetzlich 2000 W (battery_power_w=2000, positiv=Entladen) -> raw
+    pv_power_w = 1000 + 2000 = 3000 (PV3-Quirk). Kein Netzbezug, keine
+    Einspeisung, Hausverbrauch = 3000 W. Reine PV allein (1000 W) kann davon
+    nur 1000 W decken - die restlichen 2000 W MUESSEN aus der Batterie
+    stammen."""
+    rows = [
+        _r(0, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0),
+        _r(5, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0),
+    ]
+    days = day_profile(rows, bucket_minutes=15, timezone_name="Europe/Berlin")
+    point = days[0]["points"][0]
+
+    assert point["pv_power_w"] == 1000.0  # reine PV (Anzeige unveraendert)
+    assert point["home_from_battery_w"] == 2000.0  # vor dem Fix: 0.0
+    assert point["home_from_solar_w"] == 1000.0

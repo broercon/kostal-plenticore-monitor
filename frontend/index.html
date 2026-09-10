@@ -268,6 +268,79 @@
         <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-pvyield="last_year">–</span></div>
       </div>
     </section>
+
+    <!-- Einspeisung (kWh) je Zeitraum - bewusst dieselben Granularitaeten
+         wie die PV-Ertrag-Leiste darueber, damit sich Erzeugung und
+         tatsaechliche Einspeisung Zeitraum fuer Zeitraum direkt vergleichen
+         lassen. Quelle: /api/readings/feed-in-summary (gab es schon fuer den
+         taeglichen Mail-Report). Hausweite Groesse - wird zusammen mit der
+         PV-Ertrag-Leiste im Einzel-WR-Tab ausgeblendet. -->
+    <section class="pvyield-summary pvyield-summary--feedin" id="feed-in-summary">
+      <span class="pvyield-eyebrow">Einspeisung gesamt</span>
+      <div class="pvyield-items">
+        <div class="pvyield-item"><span class="pvyield-label">Heute</span><span class="pvyield-value" data-feedin="today">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Gestern</span><span class="pvyield-value" data-feedin="yesterday">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Vorgestern</span><span class="pvyield-value" data-feedin="day_before_yesterday">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Diese Woche</span><span class="pvyield-value" data-feedin="this_week">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzte Woche</span><span class="pvyield-value" data-feedin="last_week">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieser Monat</span><span class="pvyield-value" data-feedin="this_month">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzter Monat</span><span class="pvyield-value" data-feedin="last_month">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-feedin="this_year">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-feedin="last_year">–</span></div>
+      </div>
+    </section>
+
+    <!-- Speicherbilanz (kWh) je Zeitraum, getrennt nach Laden und Entladen -
+         gleiche Zeitraeume wie PV-Ertrag/Einspeisung darueber. Erst damit
+         laesst sich die Tagesbilanz nachvollziehen: der PV-Ertrag (reine
+         DC-Erzeugung) verteilt sich auf Einspeisung, direkten Hausverbrauch
+         und Speicherladung. Quelle: /api/readings/battery-summary. -->
+    <section class="pvyield-summary pvyield-summary--battery" id="battery-charge-summary">
+      <span class="pvyield-eyebrow">In den Speicher geladen</span>
+      <div class="pvyield-items">
+        <div class="pvyield-item"><span class="pvyield-label">Heute</span><span class="pvyield-value" data-batterycharge="today">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Gestern</span><span class="pvyield-value" data-batterycharge="yesterday">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Vorgestern</span><span class="pvyield-value" data-batterycharge="day_before_yesterday">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Diese Woche</span><span class="pvyield-value" data-batterycharge="this_week">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzte Woche</span><span class="pvyield-value" data-batterycharge="last_week">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieser Monat</span><span class="pvyield-value" data-batterycharge="this_month">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzter Monat</span><span class="pvyield-value" data-batterycharge="last_month">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-batterycharge="this_year">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-batterycharge="last_year">–</span></div>
+      </div>
+    </section>
+
+    <section class="pvyield-summary pvyield-summary--battery" id="battery-discharge-summary">
+      <span class="pvyield-eyebrow">Aus dem Speicher entnommen</span>
+      <div class="pvyield-items">
+        <div class="pvyield-item"><span class="pvyield-label">Heute</span><span class="pvyield-value" data-batterydischarge="today">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Gestern</span><span class="pvyield-value" data-batterydischarge="yesterday">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Vorgestern</span><span class="pvyield-value" data-batterydischarge="day_before_yesterday">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Diese Woche</span><span class="pvyield-value" data-batterydischarge="this_week">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzte Woche</span><span class="pvyield-value" data-batterydischarge="last_week">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieser Monat</span><span class="pvyield-value" data-batterydischarge="this_month">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letzter Monat</span><span class="pvyield-value" data-batterydischarge="last_month">–</span></div>
+        <span class="pvyield-divider" aria-hidden="true"></span>
+        <div class="pvyield-item"><span class="pvyield-label">Dieses Jahr</span><span class="pvyield-value" data-batterydischarge="this_year">–</span></div>
+        <div class="pvyield-item"><span class="pvyield-label">Letztes Jahr</span><span class="pvyield-value" data-batterydischarge="last_year">–</span></div>
+      </div>
+    </section>
+
+    <p class="pvyield-note muted">
+      PV-Ertrag wird auf der DC-Seite gemessen, Einspeisung auf der AC-Seite.
+      Die Speicherzeilen zeigen sämtliche Lade- und Entladeenergie,
+      einschließlich möglicher Netzladung oder Einspeisung aus dem Speicher.
+      Aus der Differenz dieser Zeilen lassen sich daher keine verlässlichen
+      Speicher- oder Wandlungsverluste berechnen.
+    </p>
   </div>
 
   <div class="tab-panel hidden" id="tab-panel-trend" data-tab-panel="trend">

@@ -81,6 +81,10 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
         return { periods: [] };
       case "/api/readings/pv-yield-summary":
         return { periods: [] };
+      case "/api/readings/battery-summary":
+        // Ein Endpunkt, zwei Leisten (Laden/Entladen) - siehe
+        // ENERGY_PERIOD_BARS in app.js.
+        return { charge_periods: [], discharge_periods: [] };
       case "/api/readings/autarky-yearly-comparison":
         return { granularity: "month", labels: [], years: [] };
       case "/api/readings/yearly-comparison":

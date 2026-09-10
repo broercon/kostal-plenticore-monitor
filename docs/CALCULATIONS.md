@@ -378,10 +378,115 @@ integrierte, korrigierte Hausbilanz und stimmen überein. Bei **nur einem**
 Wechselrichter kann die Kachel (Gerätezähler) minimal von der Summe der drei
 Anteile (Integration) abweichen – zwei legitime Methoden derselben Größe.
 
+**Batterie am PV3-String:** Die Aufteilung leitet den Batterie-Anteil aus der
+Energiebilanz her (`home + feed_in − PV − grid_draw`) – dabei **muss** die
+*reine* PV eingesetzt werden, nicht der rohe `pv_power_w`. Hängt die Batterie
+am PV3-String (siehe oben), steckt ihre Leistung bereits in `pv_power_w`; mit
+dem rohen Wert kürzt sich die Formel algebraisch immer exakt zu 0
+(`home + feed_in − pv_power_w − grid_draw` = `home + feed_in − reine_PV −
+battery_power_w − grid_draw`, und der verbleibende Teil ist per Definition
+`battery_power_w`) – jegliche Speicherentladung wäre dann fälschlich
+vollständig der Solarerzeugung zugeschlagen worden, statt als eigener Anteil
+zu erscheinen. Der Autarkiegrad selbst (Anteil PV **+** Batterie am
+Hausverbrauch) ist von diesem Fehler nicht betroffen, da sich die
+Fehlzuordnung zwischen den beiden Anteilen beim Summieren wieder aufhebt –
+nur die Aufschlüsselung „aus Solar" vs. „aus Batterie" (Tagesvergleich-Kurven
+und gestapelter Tagesverbrauch-Balken) zeigte zu wenig bzw. gar keinen
+Batterie-Anteil.
+
+### Speicherbilanz je Zeitraum: geladen und entnommen getrennt
+
+Die Übersicht zeigt für jeden der neun Zeiträume auch, wie viel Energie in
+den Speicher **geladen** und wie viel aus ihm **entnommen** wurde
+(`/api/readings/battery-summary`).
+
+Beide Werte werden direkt aus der gemessenen Batterieleistung integriert –
+bewusst nicht aus der Energiebilanz (`home + feed_in − pv − grid_draw`), die
+für die Aufschlüsselung des Hausverbrauchs nach Quelle genutzt wird: die
+Batterieleistung ist ein direkt gemessener Wert und liegt auch dann vor, wenn
+Haus- oder Netzwerte zu einem Zeitpunkt fehlen.
+
+Zwischen Messpunkten wird die Leistung linear interpoliert. Wechselt ihr
+Vorzeichen, wird das Intervall am Nulldurchgang in Laden und Entladen
+geteilt. Beispiel: Von −4 kW auf +4 kW in 15 Minuten ergeben sich je
+0,25 kWh Laden und Entladen. Auch lokale Tagesgrenzen werden aufgeteilt;
+Lücken über 30 Minuten bleiben unbekannt. Geräte mit umgekehrter
+Vorzeichen-Konvention werden über `battery_power_inverted` korrigiert.
+Beide Richtungen werden gemeinsam verarbeitet. Versionierte Cache-Schlüssel
+berücksichtigen die Formel und die Vorzeichen-/Zeitzonenkonfiguration.
+
+### Warum die Zeitraum-Übersichten nicht exakt aufgehen
+
+Naheliegende Erwartung: PV-Ertrag = Einspeisung + Hausverbrauch +
+Speicherladung. Diese Rechnung geht systematisch **nicht** genau auf, auch
+nicht bei 100 % Autarkie – und das ist korrekt so:
+
+- Der **PV-Ertrag** ist die DC-Erzeugung der Module (pv1 + pv2), also der
+  Wert **vor** dem Wechselrichter.
+- **Einspeisung** und **Hausverbrauch** sind AC-Größen **hinter** dem
+  Wechselrichter, gemessen am Netzanschluss bzw. vom Gerät gemeldet.
+- Dazwischen liegen die DC→AC-Wandlungsverluste (typischerweise einige
+  Prozent) und beim Speicher zusätzlich die Ladeverluste.
+
+Die Differenz `PV-Ertrag − Einspeisung − Direktverbrauch − Speicherladung`
+ist keine allgemeine Verlustmessung: Netzladung erhöht die Speicherladung,
+und Einspeisung kann auch aus dem Speicher stammen. Messlücken und
+unterschiedliche Messgrenzen beeinflussen die Bilanz ebenfalls. Die
+Speicherzeilen zeigen deshalb Energieflüsse, keinen Speicherwirkungsgrad.
+
+Zusätzlich zu beachten: die Kachel „PV-Ertrag heute" und die Zeile
+„PV-Ertrag gesamt / Heute" sind zwei legitime Methoden derselben Größe (siehe
+„Gerätezähler vs. Integration" oben) und können daher leicht voneinander
+abweichen.
+
+## Performance: Core-Select statt ORM-Objekte fuer Bulk-Zeitraum-Anfragen
+
+Alle Endpunkte/Funktionen, die Rohmesswerte fuer einen Zeitraum laden und
+direkt an eine Aggregationsfunktion weiterreichen (`/api/readings/history`,
+`/day-profile`, `/daily-totals`, `/hourly-per-device`,
+`/battery-soc-history` sowie `daily_summary._load_readings_range` - Letztere
+die Grundlage ALLER Zeitraum-Uebersichten oben) nutzen `select(Reading.
+__table__)` statt `select(Reading)`.
+
+Der Unterschied: `select(Reading)` liefert vollstaendige SQLAlchemy-ORM-
+Objekte (Identity-Map, alle 20+ Spalten materialisiert, aenderbar/loeschbar)
+- `select(Reading.__table__)` liefert leichtgewichtige Core-`Row`-Objekte
+mit denselben Attributen. Gemessen an einer synthetischen Datenbank mit
+realistischer Groesse (2 Wechselrichter, 15s-Polling, ~4,6 Mio. Zeilen): fuer
+eine 90-Tage-Anfrage (~1 Mio. Zeilen) brauchte `select(Reading)` **>20
+Sekunden**, ein reiner SQL-Scan derselben Daten dagegen **~1 Sekunde** - die
+ORM-Objekterzeugung war mit Abstand der teuerste Teil, nicht die
+Datenbankabfrage selbst. Mit `select(Reading.__table__)` sank dieselbe
+Anfrage auf **~3 Sekunden** (~8x schneller beim Laden). Ein SQLite- oder
+gar ein Wechsel auf ein Client-Server-DBMS haette an diesem Engpass nichts
+geaendert, da die Datenbank selbst nie das Problem war.
+
+Diese Umstellung ist rein mechanisch und aendert keine Berechnungslogik:
+die betroffenen Aggregationsfunktionen (`aggregate_per_device`,
+`day_profile`, `integrate_kwh`, ...) greifen ausschliesslich per `getattr()`
+auf einzelne Felder zu - das funktioniert mit Core-`Row`-Objekten identisch
+zu ORM-Objekten (siehe `test_readings_query_perf.py` fuer den
+Korrektheitsnachweis). Stellen, die geladene Zeilen nachtraeglich AENDERN
+(z.B. `import_logdata.import_rows()`, das bestehende Zeilen per `setattr()`
+nachtraeglich befuellt) bleiben bewusst bei `select(Reading)`, da Core-
+`Row`-Objekte unveraenderlich sind.
+
+**Nicht umgesetzt: numpy-Vektorisierung der Trapezregel-Integration.**
+Naheliegender naechster Schritt waere gewesen, die Python-Schleife in
+`integrate_kwh()` mit numpy zu vektorisieren (numpy ist bereits eine
+Abhaengigkeit, siehe `energy_forecast.py`). Gemessen ueber mehrere
+Groessenordnungen (5 bis 4,2 Mio. Punkte) war das jedoch durchgehend
+**langsamer** als die bestehende reine Python-Schleife - bis zu 9x bei
+sehr vielen Punkten. Grund: der Engpass ist dort nicht die Arithmetik
+(billig, da nur eine Trapezformel), sondern die Umwandlung von Python-
+`datetime`-Objekten in numpy-Arrays, die pro Element mehr kostet als die
+vektorisierte Rechnung einspart. Deshalb weiterhin eine reine
+Python-Schleife.
+
 ## Performance: Energie-Zeitraum-Cache
 
-Die Zeitraum-Übersichten (PV-Ertrag und Einspeisung von "heute" bis
-"letztes Jahr") integrieren die Rohmesswerte je Kalendertag. Damit das
+Die Zeitraum-Übersichten (PV-Ertrag, Einspeisung und Speicher
+laden/entladen von "heute" bis "letztes Jahr") integrieren die Rohmesswerte je Kalendertag. Damit das
 Dashboard sie nicht bei jeder automatischen Aktualisierung (alle 5 Minuten)
 komplett neu aus sämtlichen Rohmesswerten seit Anfang des Vorjahres
 berechnen muss (bei 15s-Poll-Intervall potenziell mehrere Millionen Zeilen

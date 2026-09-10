@@ -2,6 +2,7 @@
 daily_report.py) sowie für die zugehörigen API-Endpunkte: Tagessummen je
 Wechselrichter (build_daily_summaries), "aktiv/erreichbar"-Status
 (device_online_map), Einspeisung je Zeitraum (build_feed_in_summary),
+Speicherbilanz je Zeitraum (build_battery_energy_summary),
 Hausverbrauch nach Quelle PV/Batterie/Netz je Tag
 (build_daily_home_breakdown) sowie aktueller Batterie-Ladestand
 (device_battery_snapshot).
@@ -13,6 +14,7 @@ ohne die Logik doppelt zu pflegen.
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -20,8 +22,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select
 
 from .aggregation import (
+    BATTERY_CHARGE,
+    BATTERY_DISCHARGE,
     aggregate_per_device,
     combine_devices,
+    daily_battery_energy_flows,
     daily_home_source_breakdown_kwh,
     daily_kwh_totals,
     daily_pv_yield_totals,
@@ -90,7 +95,10 @@ def _combined_rows(rows: list[Reading]) -> list[Reading]:
     mehrere der Funktionen unten, die bei >1 Wechselrichter alle auf
     derselben Logik beruhen wie main.py's Endpunkte."""
     per_device = aggregate_per_device(rows, bucket_seconds=60)
-    combined = combine_devices(per_device, _has_grid_meter_map(), _battery_inverted_map())
+    combined = combine_devices(
+        per_device, _has_grid_meter_map(), _battery_inverted_map(),
+        raw_battery_output=True,
+    )
     return [
         Reading(
             device_id="_combined_",
@@ -120,13 +128,17 @@ def build_daily_summaries() -> list[SummaryOut]:
         # Statistikwerte liefert.
         session = SessionLocal()
         try:
-            rows = list(
-                session.scalars(
-                    select(Reading)
-                    .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
-                    .order_by(Reading.timestamp)
-                )
-            )
+            # select(Reading.__table__) statt select(Reading): Core-Row-Tupel
+            # statt vollen ORM-Objekten - vermeidet den (gemessen) mit
+            # Abstand teuersten Teil einer solchen Bulk-Anfrage, die
+            # ORM-Objekterzeugung pro Zeile. integrate_pure_pv_kwh/
+            # integrate_kwh greifen nur per getattr() zu, das funktioniert
+            # mit Row-Objekten identisch.
+            rows = session.execute(
+                select(Reading.__table__)
+                .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
+                .order_by(Reading.timestamp)
+            ).all()
         finally:
             session.close()
 
@@ -155,11 +167,10 @@ def build_daily_summaries() -> list[SummaryOut]:
     if len(settings.inverters) > 1:
         session = SessionLocal()
         try:
-            rows = list(
-                session.scalars(
-                    select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-                )
-            )
+            # select(Reading.__table__) statt select(Reading), siehe oben.
+            rows = session.execute(
+                select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            ).all()
         finally:
             session.close()
 
@@ -260,7 +271,9 @@ def _energy_period_ranges() -> list[tuple[str, date, date]]:
     ]
 
 
-def _load_readings_range(start_date: date, end_date_exclusive: date) -> list[Reading]:
+def _load_readings_range(
+    start_date: date, end_date_exclusive: date, *, padding: timedelta = timedelta(0)
+) -> list[Reading]:
     """Laedt Messwerte fuer [start_date, end_date_exclusive) - anders als
     frueher (_load_readings_since bis "jetzt") ein SCHMALES Zeitfenster,
     passend zu _cached_daily_totals: fuer bereits gecachte Tage wird diese
@@ -275,13 +288,15 @@ def _load_readings_range(start_date: date, end_date_exclusive: date) -> list[Rea
     )
     session = SessionLocal()
     try:
-        return list(
-            session.scalars(
-                select(Reading)
-                .where(Reading.timestamp >= since, Reading.timestamp < until)
-                .order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading): siehe
+        # build_daily_summaries() oben - hier besonders relevant, da diese
+        # Funktion bei einem kalten Cache (z.B. "dieses/letztes Jahr" vor der
+        # ersten Berechnung) potenziell ein ganzes Jahr an Rohmesswerten laedt.
+        return session.execute(
+            select(Reading.__table__)
+            .where(Reading.timestamp >= since - padding, Reading.timestamp < until + padding)
+            .order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 
@@ -459,6 +474,41 @@ def build_pv_yield_summary() -> list[FeedInPeriod]:
     return _periods_from_per_day(periods, per_day)
 
 
+def build_battery_energy_summary() -> dict[str, list[FeedInPeriod]]:
+    """Laden und Entladen gemeinsam berechnen und abgeschlossene Tage cachen.
+
+    Ein angefragtes Zeitfenster wird nur einmal geladen und integriert.
+    Cache-Version und Konfiguration verhindern die Wiederverwendung alter
+    Ergebnisse nach Formel- oder Vorzeichenkorrekturen.
+    """
+    periods = _energy_period_ranges()
+    earliest = min(start for _, start, _ in periods)
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    inverted = _battery_inverted_map()
+    config_key = hashlib.sha256(
+        repr((settings.timezone_name, sorted(inverted.items()))).encode()
+    ).hexdigest()[:16]
+    computed: dict[tuple[date, date], list[dict]] = {}
+
+    def compute(start: date, end: date) -> list[dict]:
+        key = (start, end)
+        if key not in computed:
+            # Nur ein maximales Integrationsintervall je Seite hinzuladen,
+            # damit Messpaare ueber Mitternacht beruecksichtigt werden.
+            rows = _load_readings_range(start, end, padding=timedelta(minutes=30))
+            computed[key] = daily_battery_energy_flows(rows, settings.timezone_name, inverted)
+        return computed[key]
+
+    result = {}
+    for direction in (BATTERY_CHARGE, BATTERY_DISCHARGE):
+        per_day = _cached_daily_totals(
+            f"battery:v2:{config_key}:{direction}", earliest, today,
+            lambda start, end: {d["date"]: d[direction] for d in compute(start, end)},
+        )
+        result[f"{direction}_periods"] = _periods_from_per_day(periods, per_day)
+    return result
+
+
 _YEARLY_COMPARISON_MONTH_LABELS = [
     "Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
     "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
@@ -555,11 +605,11 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
 
     session = SessionLocal()
     try:
-        rows = list(
-            session.scalars(
-                select(Reading).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-            )
-        )
+        # select(Reading.__table__) statt select(Reading), siehe oben - hier
+        # bis zu 400 Tage moeglich.
+        rows = session.execute(
+            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        ).all()
     finally:
         session.close()
 

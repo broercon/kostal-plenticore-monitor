@@ -420,3 +420,35 @@ def test_daily_home_source_breakdown_treats_missing_grid_as_zero():
     total = day["pv_kwh"] + day["battery_kwh"] + day["grid_kwh"]
     expected_total = integrate_kwh(rows, "home_power_w")
     assert total == pytest.approx(expected_total, abs=0.01)
+
+
+def test_daily_home_source_breakdown_detects_battery_with_pv3_quirk():
+    """Regressionstest, analog zu test_day_profile_battery_share_detected_
+    with_pv3_battery in test_day_profile_pure_pv.py: haengt die Batterie am
+    PV3-String (raw pv_power_w enthaelt die Batterieleistung bereits), muss
+    die Tagesaufteilung die Speicherentladung trotzdem als eigenen Anteil
+    erkennen statt sie der PV zuzuschlagen.
+
+    Zwei identische Messpunkte (15 min auseinander, damit integrate_kwh eine
+    Energiemenge > 0 liefert): 1000 W reine PV, 2000 W Batterie-Entladung
+    (raw pv_power_w = 3000), Hausverbrauch 3000 W, kein Netz. 15 Minuten bei
+    2000 W Batterie-Anteil = 0.5 kWh."""
+    base = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        Reading(
+            device_id="wr1",
+            device_name="WR1",
+            timestamp=base + timedelta(minutes=m),
+            home_power_w=3000.0,
+            grid_draw_power_w=0.0,
+            feed_in_power_w=0.0,
+            pv_power_w=3000.0,
+            battery_power_w=2000.0,
+        )
+        for m in (0, 15)
+    ]
+    days = daily_home_source_breakdown_kwh(rows, "Europe/Berlin")
+    assert len(days) == 1
+    day = days[0]
+    assert day["battery_kwh"] == pytest.approx(0.5, abs=1e-6)  # vor dem Fix: 0.0
+    assert day["pv_kwh"] == pytest.approx(0.25, abs=1e-6)
