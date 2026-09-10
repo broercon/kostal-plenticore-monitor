@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from . import auth
 from .aggregation import (
+    HISTORY_FIELDS,
     aggregate_per_device,
     build_battery_soc_day_series,
     combine_devices,
@@ -106,6 +107,20 @@ DAILY_TOTAL_FIELDS = {
 # "Alle (Summe)"-Ansicht bei mehreren Wechselrichtern (siehe
 # aggregation.combine_devices/combine_latest_readings) - kein echtes Geraet.
 COMBINED_DEVICE_ID = "_all_"
+
+# Spaltenlisten fuer Bulk-Zeitraum-Anfragen (select(*cols) statt
+# select(Reading.__table__)): device_id + timestamp + HISTORY_FIELDS deckt
+# aggregate_per_device/day_profile/daily_kwh_totals/hourly_kwh_per_device ab,
+# ohne die uebrigen ~14 Spalten von Reading (device_name, PV-String-Werte,
+# Tageszaehler, Ladezustand, ...) unnoetig mitzuladen - bei grossen
+# Zeitraeumen (mehrere Mio. Zeilen) macht allein das einen deutlichen
+# Unterschied (gemessen: ca. 2x zusaetzlich zum Wegfall der vollen
+# ORM-Objekterzeugung, siehe docs/CALCULATIONS.md "Performance:
+# Core-Select..."). Zwei Varianten je nachdem, ob device_name gebraucht wird
+# (z.B. fuer eine Legende je Geraet).
+_BULK_READING_COLUMNS = [Reading.device_id, Reading.timestamp, *[getattr(Reading, f) for f in HISTORY_FIELDS]]
+_BULK_READING_COLUMNS_WITH_NAME = [*_BULK_READING_COLUMNS, Reading.device_name]
+_SOC_READING_COLUMNS = [Reading.device_id, Reading.device_name, Reading.timestamp, Reading.battery_soc_percent]
 
 
 def _has_grid_meter_map() -> dict[str, bool]:
@@ -439,15 +454,15 @@ def get_history(
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading): liefert Core-Row-
-        # Tupel statt vollen ORM-Objekten - fuer grosse Zeitraeume (bis zu 90
-        # Tage, mehrere Wechselrichter) ist die ORM-Objekterzeugung mit
-        # Abstand der teuerste Teil dieser Anfrage (gemessen: >20s bei ~1 Mio.
-        # Zeilen vs. <3s als Core-Tupel). aggregate_per_device() greift nur
-        # per getattr() auf einzelne Felder zu, das funktioniert mit
+        # select(nur benoetigte Spalten) statt select(Reading): vermeidet
+        # sowohl die volle ORM-Objekterzeugung (mit Abstand der teuerste Teil
+        # dieser Anfrage, gemessen: >20s bei ~1 Mio. Zeilen vs. <3s als
+        # Core-Tupel) als auch das Mitladen ungenutzter Spalten (siehe
+        # _BULK_READING_COLUMNS oben). aggregate_per_device() greift nur per
+        # getattr() auf einzelne Felder zu, das funktioniert mit
         # Row-Objekten identisch - siehe Korrektheitstest in
         # test_readings_query_perf.py.
-        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        stmt = select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = session.execute(stmt).all()
@@ -699,9 +714,9 @@ def get_day_profile(
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading), siehe get_history()
-        # oben - selber Effekt bei bis zu 30 Tagen Rohdaten.
-        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(nur benoetigte Spalten) statt select(Reading), siehe
+        # get_history() oben - selber Effekt bei bis zu 30 Tagen Rohdaten.
+        stmt = select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = session.execute(stmt).all()
@@ -771,9 +786,10 @@ def get_daily_totals(
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading), siehe get_history()
-        # oben - hier bis zu 400 Tage moeglich, also besonders relevant.
-        stmt = select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+        # select(nur benoetigte Spalten) statt select(Reading), siehe
+        # get_history() oben - hier bis zu 400 Tage moeglich, also besonders
+        # relevant.
+        stmt = select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         if device_id and not house_wide_multi:
             stmt = stmt.where(Reading.device_id == device_id)
         rows = session.execute(stmt).all()
@@ -891,10 +907,13 @@ def get_hourly_per_device(
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading), siehe get_history()
-        # oben.
+        # select(nur benoetigte Spalten) statt select(Reading), siehe
+        # get_history() oben - hier zusaetzlich device_name (fuer die
+        # Geraete-Legende, siehe hourly_kwh_per_device()).
         rows = session.execute(
-            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            select(*_BULK_READING_COLUMNS_WITH_NAME)
+            .where(Reading.timestamp >= since)
+            .order_by(Reading.timestamp)
         ).all()
     finally:
         session.close()
@@ -924,10 +943,12 @@ def get_battery_soc_history(
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading), siehe get_history()
-        # oben.
+        # select(nur benoetigte Spalten) statt select(Reading), siehe
+        # get_history() oben - hier reichen device_id/-name und der
+        # Ladezustand (siehe build_battery_soc_day_series()), HISTORY_FIELDS
+        # wird gar nicht gebraucht.
         rows = session.execute(
-            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            select(*_SOC_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         ).all()
     finally:
         session.close()

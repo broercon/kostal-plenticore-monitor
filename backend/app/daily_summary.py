@@ -24,6 +24,7 @@ from sqlalchemy import delete, func, select
 from .aggregation import (
     BATTERY_CHARGE,
     BATTERY_DISCHARGE,
+    HISTORY_FIELDS,
     aggregate_per_device,
     combine_devices,
     daily_battery_energy_flows,
@@ -43,6 +44,16 @@ from .timeutil import local_midnight_utc
 # Synthetische device_id für die "Alle (Summe)"-Zeile bei mehreren
 # Wechselrichtern (siehe main.COMBINED_DEVICE_ID).
 COMBINED_DEVICE_ID = "_all_"
+
+# Spaltenliste fuer Bulk-Zeitraum-Anfragen (select(*cols) statt
+# select(Reading.__table__)) - device_id + timestamp + HISTORY_FIELDS deckt
+# alle Aufrufer unten ab (integrate_kwh/integrate_pure_pv_kwh,
+# aggregate_per_device/combine_devices, daily_kwh_totals,
+# daily_pv_yield_totals, daily_battery_energy_flows,
+# daily_home_source_breakdown_kwh), ohne die uebrigen ~14 Spalten von
+# Reading unnoetig mitzuladen - siehe main._BULK_READING_COLUMNS fuer
+# dieselbe Ueberlegung auf main.py-Seite.
+_BULK_READING_COLUMNS = [Reading.device_id, Reading.timestamp, *[getattr(Reading, f) for f in HISTORY_FIELDS]]
 
 
 def _has_grid_meter_map() -> dict[str, bool]:
@@ -128,14 +139,14 @@ def build_daily_summaries() -> list[SummaryOut]:
         # Statistikwerte liefert.
         session = SessionLocal()
         try:
-            # select(Reading.__table__) statt select(Reading): Core-Row-Tupel
-            # statt vollen ORM-Objekten - vermeidet den (gemessen) mit
-            # Abstand teuersten Teil einer solchen Bulk-Anfrage, die
-            # ORM-Objekterzeugung pro Zeile. integrate_pure_pv_kwh/
-            # integrate_kwh greifen nur per getattr() zu, das funktioniert
-            # mit Row-Objekten identisch.
+            # select(nur benoetigte Spalten) statt select(Reading): vermeidet
+            # sowohl die volle ORM-Objekterzeugung (mit Abstand der teuerste
+            # Teil einer solchen Bulk-Anfrage) als auch das Mitladen
+            # ungenutzter Spalten (siehe _BULK_READING_COLUMNS oben).
+            # integrate_pure_pv_kwh/integrate_kwh greifen nur per getattr()
+            # zu, das funktioniert mit Row-Objekten identisch.
             rows = session.execute(
-                select(Reading.__table__)
+                select(*_BULK_READING_COLUMNS)
                 .where(Reading.device_id == cfg.id, Reading.timestamp >= since)
                 .order_by(Reading.timestamp)
             ).all()
@@ -167,9 +178,9 @@ def build_daily_summaries() -> list[SummaryOut]:
     if len(settings.inverters) > 1:
         session = SessionLocal()
         try:
-            # select(Reading.__table__) statt select(Reading), siehe oben.
+            # select(nur benoetigte Spalten) statt select(Reading), siehe oben.
             rows = session.execute(
-                select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+                select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
             ).all()
         finally:
             session.close()
@@ -288,12 +299,19 @@ def _load_readings_range(
     )
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading): siehe
-        # build_daily_summaries() oben - hier besonders relevant, da diese
-        # Funktion bei einem kalten Cache (z.B. "dieses/letztes Jahr" vor der
-        # ersten Berechnung) potenziell ein ganzes Jahr an Rohmesswerten laedt.
+        # NUR die tatsaechlich von den Aufrufern (build_feed_in_summary,
+        # build_pv_yield_summary, build_battery_energy_summary,
+        # build_daily_home_breakdown - direkt oder ueber _combined_rows())
+        # benoetigten Felder laden, nicht select(Reading.__table__) mit
+        # allen 20+ Spalten (siehe _BULK_READING_COLUMNS oben): bei einem
+        # kalten Cache (z.B. "dieses/letztes Jahr" vor der ersten Berechnung,
+        # potenziell ein ganzes Jahr an Rohmesswerten) macht allein das
+        # ungenutzte Mitladen von device_name, den drei PV-String- und den
+        # drei Tageszaehler-Feldern einen spuerbaren Unterschied (gemessen:
+        # mehrere Sekunden bis in den zweistelligen Sekundenbereich bei
+        # einigen Mio. Zeilen).
         return session.execute(
-            select(Reading.__table__)
+            select(*_BULK_READING_COLUMNS)
             .where(Reading.timestamp >= since - padding, Reading.timestamp < until + padding)
             .order_by(Reading.timestamp)
         ).all()
@@ -605,10 +623,10 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
 
     session = SessionLocal()
     try:
-        # select(Reading.__table__) statt select(Reading), siehe oben - hier
-        # bis zu 400 Tage moeglich.
+        # select(nur benoetigte Spalten) statt select(Reading), siehe oben -
+        # hier bis zu 400 Tage moeglich.
         rows = session.execute(
-            select(Reading.__table__).where(Reading.timestamp >= since).order_by(Reading.timestamp)
+            select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
         ).all()
     finally:
         session.close()
