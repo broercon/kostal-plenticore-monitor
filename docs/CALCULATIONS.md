@@ -483,73 +483,25 @@ sehr vielen Punkten. Grund: der Engpass ist dort nicht die Arithmetik
 vektorisierte Rechnung einspart. Deshalb weiterhin eine reine
 Python-Schleife.
 
-## Performance: Verdichtung alter Rohdaten
+## Keine verlustbehaftete Verdichtung der Rohdaten
 
-Rohmesswerte (15s-Polling) werden dauerhaft gespeichert - ohne Begrenzung
-waechst die `readings`-Tabelle unbeschraenkt weiter (pro Wechselrichter und
-Tag ueber 5.700 Zeilen). Ab `RAW_DATA_RETENTION_DAYS` (Standard 60 Tage)
-werden abgeschlossene lokale Kalendertage geraeteweise auf einen Messpunkt
-pro Stunde reduziert (siehe `app/downsampling.py`):
+Die zwischenzeitlich eingefuehrte automatische Stundenverdichtung wurde
+zurueckgenommen. Stundenmittel der vorzeichenbehafteten Batterieleistung
+heben Laden und Entladen gegeneinander auf. Auch unregelmaessige Messabstaende,
+Datenluecken und das Mitteln vor der PV-Korrektur veraendern die Energiebilanz.
+Ein Tagescache ist keine dauerhafte Sicherung: Er wird bedarfsgesteuert
+befuellt und kann spaeter invalidiert werden.
 
-- Alle Leistungsfelder (`pv_power_w`, `home_power_w`, `battery_power_w`, ...)
-  werden ueber die Stunde GEMITTELT - energieerhaltend, da Mittelwert × 1h
-  die Energie dieser Stunde ergibt (dieselbe Trapezregel wie `integrate_kwh`
-  wuerde ueber gleichmaessig verteilte Punkte auf denselben Wert kommen).
-- Der Ladezustand (`battery_soc_percent`) ist dagegen ein ZUSTAND, kein
-  Fluss - hierfuer wird stattdessen der letzte bekannte Wert der Stunde
-  uebernommen, nicht der Mittelwert.
-- Die urspruenglichen Einzelmesswerte dieser Stunde werden geloescht und
-  durch die eine gemittelte Zeile ersetzt, markiert mit
-  `Reading.is_downsampled = true`.
-- Diese groebere Aufloesung passt zur PV-Prognose (`energy_forecast.py`),
-  die ohnehin ausschliesslich mit Stundenwerten trainiert.
+Die Rohdaten bleiben deshalb erhalten. Die Core-Select-Optimierung oben
+bleibt unabhaengig davon aktiv. Wenige Messpunkte sind kein Nachweis fuer
+verdichtete Daten; die Integration ueberbrueckt weiterhin keine Luecken
+ueber 30 Minuten.
 
-**Betrifft nicht die bereits berechneten Zeitraum-Uebersichten:** ein
-abgeschlossener Kalendertag landet spaetestens am Folgetag dauerhaft im
-`daily_energy_cache` (siehe unten) - lange bevor er ueberhaupt 60 Tage alt
-und damit "verdichtungsreif" ist. Die einzigen Stellen, die verdichtete
-Rohdaten ueberhaupt noch einmal lesen, sind `/api/readings/daily-totals`
-und `/api/readings/history` fuer sehr weit zurueckliegende Zeitraeume (dort
-nur als Verlust an Anzeige-Feinheit - diese Funktionen MITTELN nur, ohne
-Luecken-Problematik) sowie ein nachtraeglicher Logdaten-Reimport, der eine
-bereits verdichtete Cache-Periode invalidiert.
-
-**Luecken-Toleranz bei der Integration:** `integrate_kwh()` uebergeht
-normalerweise Intervalle ueber 30 Minuten als vermutliche Datenluecke
-(siehe unten). Der normale 1h-Abstand zwischen zwei verdichteten Punkten
-waere danach IMMER eine "Luecke" - jede Tagessumme aus verdichteten Daten
-haette 0 kWh ergeben. `aggregation.gap_hours_for_day()` erkennt verdichtete
-Tage anhand ihrer Punktanzahl (ein normaler Tag hat hunderte bis tausende
-Punkte, ein verdichteter hoechstens 24) und erlaubt fuer diese eine groessere
-Toleranz (3h) - ein echter mehrstuendiger Ausfall wird dabei weiterhin
-erkannt. Die Speicherbilanz (`daily_battery_energy_flows`, siehe "Speicherbilanz
-je Zeitraum" oben) gruppiert nicht vorab pro Kalendertag, sondern integriert
-ueber den gesamten angefragten Zeitraum am Stueck - dort entscheidet
-`aggregation.gap_hours_for_points()` stattdessen anhand der Punkt-DICHTE
-(Punkte pro Tag im ueberspannten Zeitraum, nicht der absoluten Anzahl),
-damit zwei zufaellig nahe beieinanderliegende Punkte nicht faelschlich als
-"verdichtet" gelten.
-
-**Bekannter Randeffekt bei einer Neuberechnung verdichteter Tage:** der
-repraesentative Zeitstempel einer verdichteten Stunde liegt auf der
-Stundenmitte (00:30, 01:30, ..., 23:30 lokal) - die 24 Punkte eines Tages
-ueberspannen damit nur 23h statt 24h. Eine je Kalendertag GRUPPIERTE
-Integration (wie bei allen `daily_*`-Funktionen, die Rohmesswerte tages-
-weise trennen statt tageuebergreifend zu integrieren) unterschaetzt einen
-bereits verdichteten Tag dadurch bei einer Neuberechnung um bis zu 1 Stunde
-(~4 % bei einer 24h-Anlage) - siehe `test_downsampling.py` fuer eine
-konkrete Gegenueberstellung. Betrifft wie oben nur die seltene
-Neuberechnung nach einem Cache-invalidierenden Reimport, nie die normalen,
-bereits gecachten Zeitraum-Summen.
-
-**Wechselwirkung mit dem Logdaten-Import:** `import_logdata.import_rows()`
-erkennt bereits verdichtete Stunden (`is_downsampled=true`) und ueberspringt
-sie beim Import gezielt, statt sie mit den urspruenglichen, feineren
-Zeitstempeln wieder aufzublaehen - ohne diese Pruefung wuerde ein erneuter
-Import derselben historischen Logdaten (z.B. beim automatischen
-Start-Abgleich) die Energie einer bereits verdichteten Stunde doppelt
-zaehlen (einmal ueber die verdichtete Zeile, einmal ueber die
-wiederhergestellten Rohwerte).
+Falls eine fruehere Branch-Version bereits Daten verdichtet hat, kann dieses
+Update die geloeschten Einzelwerte nicht rekonstruieren. Betroffene historische
+Berechnungen sind ohne Wiederherstellung aus einer Sicherung nicht verlaesslich.
+Der bestehende Marker `is_downsampled` und der Import-Schutz bleiben zur
+Kompatibilitaet erhalten; sie reparieren keine bereits verdichteten Daten.
 
 ## Performance: Energie-Zeitraum-Cache
 

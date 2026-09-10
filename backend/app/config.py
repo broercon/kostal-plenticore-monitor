@@ -123,23 +123,6 @@ class Settings:
         else:
             self.auto_import_days = int(raw_days)
 
-        # --- Verdichtung alter Rohmesswerte (siehe app/downsampling.py) ---
-        # Rohmesswerte (15s-Polling) werden dauerhaft gespeichert - ohne
-        # Begrenzung waechst die readings-Tabelle unbeschraenkt weiter. Ab
-        # RAW_DATA_RETENTION_DAYS werden abgeschlossene Kalendertage auf
-        # einen Punkt pro Stunde und Geraet reduziert (Mittelwert je Feld -
-        # siehe downsampling.py fuer die genaue Formel und die
-        # Wechselwirkung mit der Trapez-Integration). Die bereits
-        # berechneten Zeitraum-Uebersichten (daily_energy_cache) bleiben
-        # davon unberuehrt, da abgeschlossene Tage dort dauerhaft
-        # zwischengespeichert werden, sobald sie zum ersten Mal berechnet
-        # wurden (siehe daily_summary._cached_daily_totals) - lange bevor
-        # sie ueberhaupt "alt genug" fuer die Verdichtung sind.
-        self.downsample_enabled = os.environ.get(
-            "DOWNSAMPLE_OLD_READINGS", "true"
-        ).strip().lower() not in ("false", "0", "no")
-        self.raw_data_retention_days = int(os.environ.get("RAW_DATA_RETENTION_DAYS", "60"))
-
         # Manche Installationen liefern Grid_P mit umgekehrtem Vorzeichen
         # (haengt von der Ausrichtung des Stromzaehlers/CT-Clamps ab). Mit
         # GRID_POWER_INVERTED=true die Interpretation von Einspeisung/Netzbezug

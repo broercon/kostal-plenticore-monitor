@@ -56,25 +56,17 @@ Neben den Docker-Logs schreibt die Anwendung nach
 Versionen werden aufbewahrt. Beim ersten Start ausgegebene Initialpasswörter
 können deshalb auch in diesen persistenten Logs stehen.
 
-## Verdichtung alter Rohmesswerte
+## Zurueckgenommene Rohdatenverdichtung
 
-Etwa 5 Minuten nach dem Start (und danach alle 24 Stunden) verdichtet die
-Anwendung im Hintergrund abgeschlossene Kalendertage, die älter als
-`RAW_DATA_RETENTION_DAYS` (Standard 60) sind, auf einen Messpunkt pro
-Stunde und Gerät - siehe
-[docs/CALCULATIONS.md "Performance: Verdichtung alter Rohdaten"](CALCULATIONS.md#performance-verdichtung-alter-rohdaten)
-für Details. Im Log erscheint dazu eine Zeile wie:
+Die automatische Stundenverdichtung wurde wegen verfälschter Energiebilanzen
+entfernt. `DOWNSAMPLE_OLD_READINGS` und `RAW_DATA_RETENTION_DAYS` haben keine
+Wirkung mehr. Alte Rohmesswerte werden nicht automatisch gelöscht.
 
-```
-Verdichtung alter Rohmesswerte: 3 Tag(e) verarbeitet, 34560 Rohmesswerte zusammengefasst.
-```
-
-Das ist normaler Betrieb, kein Fehler. Direkt nach der Einführung dieses
-Features bei einer bereits lange laufenden Anlage kann der erste Lauf
-entsprechend mehr Tage auf einmal verarbeiten (Nachholbedarf) - das läuft
-im Hintergrund, ohne die Web-Oberfläche zu blockieren. Mit
-`DOWNSAMPLE_OLD_READINGS=false` lässt sich die Verdichtung komplett
-abschalten.
+Falls die vorherige Branch-Version bereits lief, prüfen Sie deren Logs auf
+„Verdichtung alter Rohmesswerte“. Bereits gelöschte Einzelwerte werden durch
+dieses Update nicht wiederhergestellt. Für verlässliche historische
+Neuberechnungen ist dann eine Sicherung vor der Verdichtung erforderlich.
+Vor einer Wiederherstellung auch den aktuellen Datenbestand sichern.
 
 ## Daten sichern
 

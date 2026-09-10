@@ -62,16 +62,8 @@ class Reading(Base):
     home_consumption_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     energy_grid_day_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # True fuer eine synthetische Zeile, die app/downsampling.py aus vielen
-    # urspruenglichen Messpunkten EINER lokalen Kalenderstunde durch Mitteln
-    # erzeugt hat (siehe dort) - ersetzt dann die ehemaligen Einzelmesswerte
-    # dieser Stunde. NULL/False bei allen live erfassten oder importierten
-    # Rohmesswerten. Wird von import_logdata.import_rows() genutzt, um eine
-    # bereits verdichtete Stunde bei einem erneuten Logdaten-Import nicht
-    # wieder mit den urspruenglichen (feineren) Zeitstempeln aufzublaehen -
-    # siehe dortiger Docstring. Bei vor diesem Update erfassten Zeilen NULL
-    # (siehe database._ensure_is_downsampled_column fuer die Migration
-    # bestehender Datenbanken).
+    # Legacy marker from the withdrawn hourly compaction. Retained so imports
+    # do not mix raw readings with existing synthetic hourly averages.
     is_downsampled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
@@ -289,21 +281,3 @@ class Session(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class DownsampleState(Base):
-    """Fortschritts-Merker fuer die Verdichtung alter Rohmesswerte (siehe
-    app/downsampling.py) - bewusst eine einzelne Zeile (id=1), analog zu
-    DailyReportSettings/ForecastSettings.
-
-    downsampled_until_date ist die erste lokale Kalendertag-Grenze, die noch
-    NICHT verdichtet wurde ("YYYY-MM-DD", exklusiv) - alle Tage davor gelten
-    als abgeschlossen bearbeitet. So muss bei jedem taeglichen Lauf nur ab
-    dieser Stelle weitergemacht werden, statt bei jedem Lauf erneut die
-    gesamte Historie nach noch-nicht-verdichteten Tagen zu durchsuchen."""
-
-    __tablename__ = "downsample_state"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    downsampled_until_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

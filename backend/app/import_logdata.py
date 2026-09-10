@@ -395,15 +395,10 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     falscher Spalten-Erkennung lief) - echte/live erfasste Werte werden nie
     ueberschrieben.
 
-    Eine bereits verdichtete Stunde (siehe app/downsampling.py: alte
-    Rohmesswerte werden dort geraeteweise auf einen Punkt pro Stunde
-    reduziert und is_downsampled=True markiert) wird beim Import
-    UEBERSPRUNGEN statt eingefuegt: die urspruenglichen, feineren
-    Zeitstempel dieser Stunde existieren nach der Verdichtung nicht mehr in
-    der DB, wuerden vom exakten Zeitstempel-Abgleich unten also faelschlich
-    als "neu" erkannt und die Stunde wieder mit den Rohdaten aufblaehen -
-    parallel zu der bereits vorhandenen gemittelten Zeile, mit doppelt
-    gezaehlter Energie fuer diesen Zeitraum als Folge.
+    Stunden, die eine fruehere Branch-Version bereits verdichtet hat,
+    werden weiterhin uebersprungen: Sonst wuerden Rohdaten mit synthetischen
+    Stundenmitteln vermischt. Neue Verdichtungen finden nicht mehr statt.
+    Eine Wiederherstellung dieser historischen Daten erfordert eine Sicherung.
 
     Wird sowohl vom CLI-Tool (main(), s.o.) als auch vom automatischen
     Hintergrund-Abgleich beim Start (app/auto_import.py) genutzt.
