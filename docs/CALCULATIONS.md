@@ -439,27 +439,40 @@ Zusätzlich zu beachten: die Kachel „PV-Ertrag heute" und die Zeile
 „Gerätezähler vs. Integration" oben) und können daher leicht voneinander
 abweichen.
 
-## Performance: Core-Select statt ORM-Objekte fuer Bulk-Zeitraum-Anfragen
+## Performance: Core-Select mit nur den benoetigten Spalten fuer Bulk-Zeitraum-Anfragen
 
 Alle Endpunkte/Funktionen, die Rohmesswerte fuer einen Zeitraum laden und
 direkt an eine Aggregationsfunktion weiterreichen (`/api/readings/history`,
 `/day-profile`, `/daily-totals`, `/hourly-per-device`,
 `/battery-soc-history` sowie `daily_summary._load_readings_range` - Letztere
-die Grundlage ALLER Zeitraum-Uebersichten oben) nutzen `select(Reading.
-__table__)` statt `select(Reading)`.
+die Grundlage ALLER Zeitraum-Uebersichten oben) nutzen `select(*cols)` mit
+nur den tatsaechlich benoetigten Spalten statt `select(Reading)`. Zwei
+unabhaengige Effekte tragen dazu bei, beide gemessen an einer synthetischen
+Datenbank mit realistischer Groesse (2 Wechselrichter, 15s-Polling,
+~4,6 Mio. Zeilen):
 
-Der Unterschied: `select(Reading)` liefert vollstaendige SQLAlchemy-ORM-
-Objekte (Identity-Map, alle 20+ Spalten materialisiert, aenderbar/loeschbar)
-- `select(Reading.__table__)` liefert leichtgewichtige Core-`Row`-Objekte
-mit denselben Attributen. Gemessen an einer synthetischen Datenbank mit
-realistischer Groesse (2 Wechselrichter, 15s-Polling, ~4,6 Mio. Zeilen): fuer
-eine 90-Tage-Anfrage (~1 Mio. Zeilen) brauchte `select(Reading)` **>20
-Sekunden**, ein reiner SQL-Scan derselben Daten dagegen **~1 Sekunde** - die
-ORM-Objekterzeugung war mit Abstand der teuerste Teil, nicht die
-Datenbankabfrage selbst. Mit `select(Reading.__table__)` sank dieselbe
-Anfrage auf **~3 Sekunden** (~8x schneller beim Laden). Ein SQLite- oder
-gar ein Wechsel auf ein Client-Server-DBMS haette an diesem Engpass nichts
-geaendert, da die Datenbank selbst nie das Problem war.
+1. **ORM-Objekterzeugung vermeiden.** `select(Reading)` liefert
+   vollstaendige SQLAlchemy-ORM-Objekte (Identity-Map, alle 20+ Spalten
+   materialisiert, aenderbar/loeschbar) - eine Core-Query liefert
+   leichtgewichtige `Row`-Objekte mit denselben Attributen. Fuer eine
+   90-Tage-Anfrage (~1 Mio. Zeilen) brauchte `select(Reading)` **>20
+   Sekunden**, ein reiner SQL-Scan derselben Daten dagegen **~1 Sekunde** -
+   die ORM-Objekterzeugung war mit Abstand der teuerste Teil, nicht die
+   Datenbankabfrage selbst. Ein SQLite- oder gar ein Wechsel auf ein
+   Client-Server-DBMS haette an diesem Engpass nichts geaendert, da die
+   Datenbank selbst nie das Problem war.
+2. **Nur benoetigte Spalten laden.** `Reading` hat ueber 20 Spalten (drei
+   PV-String-Werte, drei Tageszaehler, device_name, ...), von denen die
+   meisten Aufrufer nur eine Handvoll brauchen (typischerweise
+   `HISTORY_FIELDS` - sechs Leistungsfelder - plus device_id/timestamp).
+   Eine erste Version dieser Umstellung nutzte trotzdem `select(Reading.
+   __table__)` (alle Spalten, nur ohne ORM-Mapping) - das spart bereits
+   die ORM-Objekterzeugung, laedt aber weiterhin unnoetige Spalten mit. Bei
+   ~4,2 Mio. Zeilen (ein Jahr, 2 Geraete) machte allein das nochmal einen
+   Faktor **~2x** aus (gemessen: ~72s vs. ~35s fuer denselben Datensatz, im
+   selben Lauf). Zusammengenommen sinkt eine 90-Tage-Anfrage von
+   `select(Reading)` auf `select(*cols)` um schaetzungsweise das
+   **10-15-fache**.
 
 Diese Umstellung ist rein mechanisch und aendert keine Berechnungslogik:
 die betroffenen Aggregationsfunktionen (`aggregate_per_device`,
@@ -470,6 +483,18 @@ Korrektheitsnachweis). Stellen, die geladene Zeilen nachtraeglich AENDERN
 (z.B. `import_logdata.import_rows()`, das bestehende Zeilen per `setattr()`
 nachtraeglich befuellt) bleiben bewusst bei `select(Reading)`, da Core-
 `Row`-Objekte unveraenderlich sind.
+
+**Kaltstart-Kosten nach einer Formelaenderung bleiben unabhaengig davon
+bestehen:** `build_battery_energy_summary()` (siehe "Speicherbilanz je
+Zeitraum" oben) verwendet einen versionierten Cache-Schluessel
+(`battery:v2:...`), der bei einer Korrektur der Berechnungsformel bewusst
+NICHT mit alten (nach der alten, fehlerhaften Formel berechneten)
+Cache-Eintraegen kollidiert. Nach einem Update, das die Formel aendert,
+muss die komplette Historie (Standard: seit Anfang des Vorjahres) daher
+einmalig neu berechnet werden, bevor der Cache wieder greift - je nach
+Datenmenge kann dieser EINMALIGE erste Seitenaufruf spuerbar dauern,
+folgende Aufrufe sind wieder schnell (siehe "Performance:
+Energie-Zeitraum-Cache" unten).
 
 **Nicht umgesetzt: numpy-Vektorisierung der Trapezregel-Integration.**
 Naheliegender naechster Schritt waere gewesen, die Python-Schleife in
