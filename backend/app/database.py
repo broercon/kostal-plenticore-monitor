@@ -1,35 +1,72 @@
-"""SQLite-Anbindung ueber SQLAlchemy."""
+"""Datenbank-Anbindung ueber SQLAlchemy - SQLite (Standard) oder PostgreSQL.
+
+Welche der beiden verwendet wird, entscheidet allein settings.database_url
+(Umgebungsvariable DATABASE_URL). Ohne diese Variable bleibt es bei der
+SQLite-Datei unter DB_PATH, eine bestehende Installation aendert sich also
+nicht. Die wenigen Stellen im Code, die sich zwischen den Dialekten
+tatsaechlich unterscheiden (skalares GREATEST, Stunden-Trunkierung,
+Upsert), fragen IS_SQLITE ab - siehe energy_forecast.py und
+forecast_evaluation.py.
+"""
 from __future__ import annotations
 
-from sqlalchemy import create_engine, event, inspect
+from sqlalchemy import create_engine, event, inspect, make_url
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import settings
 
-settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+_url = make_url(settings.database_url)
 
-engine = create_engine(
-    f"sqlite:///{settings.db_path}",
-    connect_args={"check_same_thread": False},
-)
+# "postgresql://..." waehlt in SQLAlchemy standardmaessig den Treiber
+# psycopg2; installiert ist hier aber psycopg (Version 3, siehe
+# requirements.txt). Statt jeden Aufrufer zu zwingen, das laengere
+# "postgresql+psycopg://" zu schreiben, wird der Treiber hier ergaenzt -
+# so laesst sich der fertige Connection-String aus der Datenbank-
+# Infrastruktur unveraendert uebernehmen.
+if _url.get_backend_name() == "postgresql" and _url.get_driver_name() == "psycopg2":
+    _url = _url.set(drivername="postgresql+psycopg")
 
+IS_SQLITE = _url.get_backend_name() == "sqlite"
 
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ARG001
-    """WAL-Modus statt SQLites Standard-Rollback-Journal: lesende Zugriffe
-    (Dashboard-/API-Abfragen) blockieren dann nicht mehr gegenseitig mit dem
-    Poller, der alle paar Sekunden neue Messwerte schreibt (und umgekehrt) -
-    relevant, weil diese App staendig gleichzeitig liest und schreibt.
-    synchronous=NORMAL ist die fuer WAL uebliche Kombination (etwas
-    schwaecheres Crash-Sicherheitsversprechen als FULL, aber weiterhin
-    konsistente Daten nach einem Prozess-Absturz, nur nicht zwingend nach
-    einem Betriebssystem-/Stromausfall genau im Schreibmoment)."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
+if IS_SQLITE:
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    engine = create_engine(_url, connect_args={"check_same_thread": False})
 
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection, connection_record) -> None:  # noqa: ARG001
+        """WAL-Modus statt SQLites Standard-Rollback-Journal: lesende Zugriffe
+        (Dashboard-/API-Abfragen) blockieren dann nicht mehr gegenseitig mit dem
+        Poller, der alle paar Sekunden neue Messwerte schreibt (und umgekehrt) -
+        relevant, weil diese App staendig gleichzeitig liest und schreibt.
+        synchronous=NORMAL ist die fuer WAL uebliche Kombination (etwas
+        schwaecheres Crash-Sicherheitsversprechen als FULL, aber weiterhin
+        konsistente Daten nach einem Prozess-Absturz, nur nicht zwingend nach
+        einem Betriebssystem-/Stromausfall genau im Schreibmoment).
+
+        Bei PostgreSQL entfaellt das ersatzlos: dessen MVCC laesst Leser und
+        Schreiber ohnehin nicht aufeinander warten."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+else:
+    engine = create_engine(
+        _url,
+        # Die Datenbank liegt bei PostgreSQL in einem anderen Container und
+        # damit am Ende einer Netzwerkverbindung, die zwischen zwei Pollings
+        # (Standard: 15s) abreissen kann - etwa wenn der Datenbank-Container
+        # neu startet. pool_pre_ping verwirft solche Verbindungen beim
+        # naechsten Zugriff, statt dem Aufrufer einen Fehler durchzureichen.
+        pool_pre_ping=True,
+        # Alle Zeitstempel dieser Anwendung sind UTC (siehe models.py). Ohne
+        # diese Festlegung liefert PostgreSQL timestamptz-Werte in der
+        # Zeitzone des Servers zurueck (hier Europe/Berlin) - rechnerisch
+        # zwar derselbe Zeitpunkt, aber jede Stelle, die einen Zeitstempel
+        # nur formatiert statt umzurechnen, saehe dann Ortszeit.
+        connect_args={"options": "-c timezone=UTC"},
+    )
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 

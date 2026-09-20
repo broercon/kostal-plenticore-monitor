@@ -26,7 +26,7 @@ Docker-Container.
 - Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten, mit
   automatischem Rückvergleich sowie Erwartet-/Ist-Auswertung im Dashboard
 - Optionaler täglicher E-Mail-Bericht
-- Persistente Speicherung in SQLite
+- Persistente Speicherung in SQLite (wahlweise PostgreSQL, siehe [Installation](docs/INSTALLATION.md#postgresql-statt-sqlite))
 
 ## Voraussetzungen
 

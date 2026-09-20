@@ -14,6 +14,8 @@ from app import auth
 from app.database import Base, SessionLocal, engine, init_db
 from app.models import Reading
 
+from .conftest import sqlite_only
+
 
 def test_init_db_only_adds_missing_tables_existing_readings_survive():
     # Ausgangslage nachstellen: nur die (alte) readings-Tabelle existiert,
@@ -60,6 +62,7 @@ def test_init_db_only_adds_missing_tables_existing_readings_survive():
     assert {u.username for u in auth.list_users()} == {"admin", "betreiber1", "betreiber2"}
 
 
+@sqlite_only
 def test_init_db_adds_missing_ac_power_column_without_losing_data():
     """Simuliert eine Bestandsdatenbank von VOR dem ac_power_w-Feature: die
     readings-Tabelle existiert bereits, aber ohne diese Spalte (per
@@ -128,6 +131,7 @@ def test_init_db_adds_missing_ac_power_column_without_losing_data():
     init_db()
 
 
+@sqlite_only
 def test_init_db_adds_missing_pv_string_columns_without_losing_data():
     """Simuliert eine Bestandsdatenbank von VOR der Erfassung der einzelnen
     PV-String-Leistungen (pv1_power_w/pv2_power_w/pv3_power_w): init_db()
@@ -188,6 +192,7 @@ def test_init_db_adds_missing_pv_string_columns_without_losing_data():
     init_db()
 
 
+@sqlite_only
 def test_init_db_adds_weather_hourly_columns_and_clears_stale_cache():
     """Simuliert eine Bestandsdatenbank von VOR den zusaetzlichen
     Prognose-Wetterwerten (Bewoelkung/Wind/Feuchte/Schneehoehe/Luftdruck):

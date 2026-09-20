@@ -92,6 +92,15 @@ class Settings:
     def __init__(self) -> None:
         self.config_path = Path(os.environ.get("CONFIG_PATH", "/app/config/inverters.json"))
         self.db_path = Path(os.environ.get("DB_PATH", "/app/data/kostal.db"))
+        # Vollstaendige SQLAlchemy-URL der Datenbank. Ist sie NICHT gesetzt,
+        # bleibt es bei der bisherigen SQLite-Datei unter DB_PATH - eine
+        # bestehende Installation verhaelt sich also unveraendert. Fuer
+        # PostgreSQL z.B.
+        #   DATABASE_URL=postgresql://kostal_app:...@postgres:5432/kostal_app
+        # (siehe docs/INSTALLATION.md, Abschnitt "PostgreSQL statt SQLite").
+        self.database_url = (
+            os.environ.get("DATABASE_URL", "").strip() or f"sqlite:///{self.db_path}"
+        )
         # Persistente App-Logdatei (im selben data-Volume wie die DB), damit
         # sich Logs nach einem Vorfall herauskopieren lassen.
         self.log_file = Path(

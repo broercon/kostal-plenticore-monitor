@@ -36,9 +36,23 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import auth  # noqa: E402
-from app.database import Base, SessionLocal, engine, init_db  # noqa: E402
+from app.database import IS_SQLITE, Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
 from app.models import User  # noqa: E402
+
+# Die Testsuite laeuft standardmaessig gegen SQLite (DB_PATH oben), kann
+# aber ueber DATABASE_URL auch gegen PostgreSQL gefahren werden - siehe
+# docs/DEVELOPMENT.md. Ein paar wenige Tests pruefen ausdruecklich
+# SQLite-eigene Mechanik (WAL-Journal) oder stellen eine BESTEHENDE
+# SQLite-Installation nach, um die Schema-Nachtraege in database.py zu
+# pruefen (per Hand geschriebenes SQLite-DDL). Beides hat unter PostgreSQL
+# keine Entsprechung: eine PostgreSQL-Datenbank dieser App wird immer
+# frisch ueber create_all() mit dem vollstaendigen Schema angelegt, es kann
+# dort also gar keine Bestandsdatenbank mit fehlenden Spalten geben.
+sqlite_only = pytest.mark.skipif(
+    not IS_SQLITE,
+    reason="Prueft SQLite-spezifisches Verhalten (WAL bzw. Bestandsdatenbank-Nachtraege).",
+)
 
 
 @pytest.fixture()

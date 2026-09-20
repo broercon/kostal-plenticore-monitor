@@ -32,6 +32,22 @@ def _round_coord(value: float) -> float:
     return round(value, _COORD_PRECISION)
 
 
+def _utc(value: datetime) -> datetime:
+    """Zeitstempel aus der Datenbank verlaesslich als UTC-aware datetime.
+
+    SQLite gibt DateTime(timezone=True)-Spalten naiv zurueck (die Zonen-Info
+    wird beim Schreiben nicht mitgespeichert) - dann muss UTC angeheftet
+    werden, denn alle Zeitstempel dieser Tabelle sind laut Vertrag UTC
+    (siehe _store_points/fetch_historical_weather). PostgreSQL liefert sie
+    dagegen bereits zonenbehaftet; dort wuerde ein unbedingtes
+    replace(tzinfo=utc) den Wert um den Zonenversatz VERSCHIEBEN, statt ihn
+    nur zu kennzeichnen - deshalb astimezone() fuer den bereits
+    zonenbehafteten Fall."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _load_cached_points(
     latitude: float, longitude: float, start: date, end: date
 ) -> list[WeatherPoint]:
@@ -54,13 +70,11 @@ def _load_cached_points(
         session.close()
     return [
         WeatherPoint(
-            # SQLite gibt DateTime(timezone=True)-Spalten naiv zurueck (die
-            # tz-Info wird beim Schreiben nicht mitgespeichert) - ohne dieses
-            # Wiederanheften waeren die aus dem Cache geladenen Zeitstempel
-            # nicht mehr mit den frisch von Open-Meteo geholten (aware)
-            # Zeitstempeln vergleichbar. Alle Zeitstempel in dieser Tabelle
-            # sind laut Vertrag UTC (siehe _store_points/fetch_historical_weather).
-            timestamp=row.timestamp.replace(tzinfo=timezone.utc),
+            # Ohne diese Normalisierung waeren die aus dem Cache geladenen
+            # Zeitstempel nicht mehr mit den frisch von Open-Meteo geholten
+            # (aware) Zeitstempeln vergleichbar - siehe _utc() fuer den
+            # Unterschied zwischen SQLite und PostgreSQL.
+            timestamp=_utc(row.timestamp),
             shortwave_w_m2=row.shortwave_w_m2,
             direct_w_m2=row.direct_w_m2,
             diffuse_w_m2=row.diffuse_w_m2,

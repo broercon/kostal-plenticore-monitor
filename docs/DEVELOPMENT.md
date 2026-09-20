@@ -25,10 +25,47 @@ Vorlage). Ein Werkzeug wie Alembic lohnt sich für dieses Einzelplatz-Projekt
 Für die Existenzprüfungen ("hat die Tabelle/Spalte/der Index das schon?")
 verwenden diese Funktionen SQLAlchemys eigene, dialektunabhängige
 `sqlalchemy.inspect(conn)`-API (`get_columns()`, `get_indexes()`,
-`has_table()`) statt der SQLite-spezifischen `PRAGMA table_info(...)`. Damit
-liefe die reine Prüfung unverändert mit, falls die App irgendwann auf
-PostgreSQL oder SQL Server umzieht – nur die eigentlichen `CREATE`/`ALTER`-
-Statements müssten dann dialektspezifisch angepasst werden.
+`has_table()`) statt der SQLite-spezifischen `PRAGMA table_info(...)`. Die
+verwendeten `CREATE`/`ALTER`-Statements sind Standard-SQL und laufen unter
+beiden unterstützten Datenbanken unverändert.
+
+Diese Nachtrag-Funktionen betreffen in der Praxis allerdings nur SQLite:
+eine PostgreSQL-Datenbank dieser App entsteht immer frisch über
+`create_all()` mit dem vollständigen Schema, eine Bestandsdatenbank mit
+fehlenden Spalten kann es dort also gar nicht geben. Die zugehörigen Tests
+sind entsprechend mit `sqlite_only` markiert (siehe `backend/tests/conftest.py`).
+
+## Zwei Datenbanken: worauf beim Ändern von Abfragen zu achten ist
+
+Die App läuft wahlweise auf SQLite (Standard) oder PostgreSQL – welche,
+entscheidet `DATABASE_URL`, siehe
+[PostgreSQL statt SQLite](INSTALLATION.md#postgresql-statt-sqlite).
+`database.py` stellt dafür `IS_SQLITE` bereit. Nur an drei Stellen
+unterscheiden sich die Dialekte wirklich, und alle drei sind dort
+gekapselt, wo sie gebraucht werden:
+
+| Was | SQLite | PostgreSQL | Gekapselt in |
+| --- | --- | --- | --- |
+| Größter Wert je Zeile | `max(a, b)` | `greatest(a, b)` | `energy_forecast._greatest()` |
+| Zeitstempel auf Stunde kürzen | `strftime(...)` | `date_trunc(...)` + `to_char(...)` | `energy_forecast._hour_bucket_expression()` |
+| Upsert (`ON CONFLICT`) | `dialects.sqlite.insert` | `dialects.postgresql.insert` | Import in `forecast_evaluation.py` |
+
+Drei Fallstricke, die SQLite verzeiht und PostgreSQL nicht – daran denken,
+wenn neue Abfragen oder Modelle dazukommen:
+
+1. **`VARCHAR`-Längen** erzwingt nur PostgreSQL. Eine im Modell zu knapp
+   deklarierte Spalte fällt unter SQLite jahrelang nicht auf und schlägt
+   beim Umstieg zu. (Genau so passiert bei `daily_energy_cache.field`.)
+2. **Fremdschlüssel** erzwingt nur PostgreSQL (SQLite bräuchte dafür
+   `PRAGMA foreign_keys=ON`). Beim Löschen auf die Reihenfolge achten.
+3. **Zeitzonen**: SQLite gibt `DateTime(timezone=True)`-Spalten *naiv*
+   zurück, PostgreSQL *zonenbehaftet*. Ein unbedingtes
+   `replace(tzinfo=timezone.utc)` auf einen Wert aus der Datenbank
+   verschiebt unter PostgreSQL still den Zeitpunkt – richtig ist das
+   Muster `if value.tzinfo is None: replace(...) else: astimezone(...)`
+   (siehe `weather_cache._utc()`). Die Verbindung wird zwar ohnehin auf
+   UTC festgelegt (`database.py`), aber darauf sollte sich kein Aufrufer
+   verlassen müssen.
 
 **Migrationen werden nicht für immer mitgeschleppt.** Jede Migrationsfunktion
 trägt in ihrem Docstring das Einführungsdatum. Etwa 6 Monate nach diesem
@@ -65,7 +102,21 @@ python -m pytest tests/ -v
 
 Die Tests laufen gegen eine temporäre, isolierte SQLite-Datenbank (nicht
 gegen `data/kostal.db`) und starten bewusst keinen echten Poller/Import
-gegen einen Wechselrichter. Abgedeckt sind u.a.: Standard-Nutzer werden nur
+gegen einen Wechselrichter.
+
+Dieselbe Suite lässt sich über `DATABASE_URL` auch gegen PostgreSQL fahren –
+unbedingt gegen eine **eigene Test-Datenbank**, denn jeder Testfall leert
+das Schema vollständig:
+
+```bash
+DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app_test \
+  python -m pytest tests/ -v
+```
+
+Vier Testfälle werden dabei übersprungen: sie prüfen SQLite-eigene Mechanik
+(WAL-Journal) bzw. stellen eine bestehende SQLite-Installation mit
+fehlenden Spalten nach – beides hat unter PostgreSQL keine Entsprechung
+(siehe `sqlite_only` in `conftest.py`). Abgedeckt sind u.a.: Standard-Nutzer werden nur
 einmal angelegt, falsches/unbekanntes Passwort wird abgelehnt, erfolgreicher
 Login setzt ein Cookie und schaltet die API frei, Logout invalidiert die
 Sitzung, eigenes Passwort ändern (inkl. Ablehnung bei falschem aktuellem

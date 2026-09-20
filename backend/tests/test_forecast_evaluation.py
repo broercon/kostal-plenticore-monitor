@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.forecast_evaluation import (
     _tolerant_hour_error_w,
+    _utc,
     get_forecast_accuracy,
     get_yesterday_hourly_comparison,
     save_forecast_predictions,
@@ -43,7 +44,12 @@ def test_prediction_is_updated_freely_before_freeze_cutoff(client):
         assert len(rows) == 1
         assert rows[0].expected_w == 3200.0
         assert rows[0].model_method == "learned"
-        assert rows[0].first_generated_at == first_generated.replace(tzinfo=None)
+        # Nicht gegen einen naiven Zeitstempel vergleichen: SQLite gibt
+        # DateTime(timezone=True) ohne Zonen-Info zurueck, PostgreSQL mit -
+        # beide meinen denselben Zeitpunkt. Der Vergleich laeuft deshalb
+        # ueber die normalisierte Form, die auch die Anwendung verwendet
+        # (forecast_evaluation._utc).
+        assert _utc(rows[0].first_generated_at) == first_generated
     finally:
         session.close()
 

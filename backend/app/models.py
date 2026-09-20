@@ -166,8 +166,12 @@ class DailyEnergyCache(Base):
 
     # z.B. "pv_yield" oder "feed_in_power_w" - erlaubt mehrere unabhängige
     # Zeitraum-Übersichten im selben Cache, ohne dass sie sich gegenseitig
-    # überschreiben.
-    field: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # überschreiben. 64 statt 32 Zeichen: der längste tatsächlich erzeugte
+    # Schlüssel ist "battery:v2:<16 Hex-Zeichen>:discharge" mit 37 Zeichen
+    # (siehe daily_summary.build_battery_energy_summary). SQLite erzwingt
+    # VARCHAR-Längen nicht und hat das klaglos gespeichert, PostgreSQL weist
+    # zu lange Werte dagegen ab.
+    field: Mapped[str] = mapped_column(String(64), primary_key=True)
     date: Mapped[str] = mapped_column(String(10), primary_key=True)  # "YYYY-MM-DD"
     kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

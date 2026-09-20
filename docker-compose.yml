@@ -8,6 +8,12 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Leer lassen = weiterhin die SQLite-Datei unter ./data (Standard).
+      # Fuer PostgreSQL den fertigen Connection-String aus der Datenbank-
+      # Infrastruktur eintragen, z.B.
+      #   DATABASE_URL=postgresql://kostal_app:...@postgres:5432/kostal_app
+      # Dann greift auch das Netzwerk "dbnet" weiter unten.
+      - DATABASE_URL=${DATABASE_URL:-}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
       - TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
@@ -22,3 +28,16 @@ services:
     volumes:
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro
+
+    networks:
+      - dbnet
+
+networks:
+  # Gemeinsames Netzwerk des PostgreSQL-Stacks (siehe
+  # infrastruktur/PostgreSQL). Wird dort angelegt, hier nur mitbenutzt -
+  # darueber ist der Datenbank-Container unter dem Namen "postgres"
+  # erreichbar. Schadet nicht, solange DATABASE_URL leer ist und die App
+  # noch auf SQLite laeuft.
+  dbnet:
+    external: true
+    name: dbnet
