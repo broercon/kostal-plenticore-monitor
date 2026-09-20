@@ -260,8 +260,8 @@ class WeatherHourly(Base):
     # nachtraeglich per ALTER TABLE (siehe database.init_db) und dabei werden
     # alte Zeilen bewusst geloescht statt mit Platzhaltern aufgefuellt (siehe
     # dortiger Kommentar) - "nullable" ist hier nur ein technisches
-    # Zugestaendnis an SQLite, im laufenden Betrieb sind neu geschriebene
-    # Zeilen immer vollstaendig befuellt.
+    # Zugestaendnis an diesen Nachtrag, im laufenden Betrieb sind neu
+    # geschriebene Zeilen immer vollstaendig befuellt.
     cloud_cover_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     wind_speed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     humidity_percent: Mapped[float | None] = mapped_column(Float, nullable=True)

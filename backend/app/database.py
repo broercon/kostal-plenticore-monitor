@@ -78,11 +78,10 @@ class Base(DeclarativeBase):
 def _table_columns(conn: Connection, table_name: str) -> set[str]:
     """Spaltennamen einer Tabelle - dialektunabhaengig ueber SQLAlchemys
     eigene Inspector-API statt des SQLite-spezifischen "PRAGMA
-    table_info(...)". Funktioniert unveraendert unter SQLite, PostgreSQL,
-    SQL Server etc., falls die App irgendwann auf eine andere Datenbank
-    umzieht - dann muessten nur noch die CREATE/ALTER-Statements selbst
-    dialektspezifisch angepasst werden, nicht mehr die Existenzpruefungen.
-    Liefert ein leeres Set, wenn die Tabelle noch gar nicht existiert."""
+    table_info(...)". Laeuft dadurch unter beiden unterstuetzten Datenbanken
+    unveraendert (und wuerde auch bei einem weiteren Dialekt nichts
+    kosten). Liefert ein leeres Set, wenn die Tabelle noch gar nicht
+    existiert."""
     inspector = inspect(conn)
     if not inspector.has_table(table_name):
         return set()
@@ -92,9 +91,8 @@ def _table_columns(conn: Connection, table_name: str) -> set[str]:
 def _index_exists(conn: Connection, table_name: str, index_name: str) -> bool:
     """Dialektunabhaengige Alternative zu "CREATE INDEX IF NOT EXISTS":
     SQLite und PostgreSQL kennen dieses IF-NOT-EXISTS-Suffix zwar beide,
-    SQL Server (T-SQL) jedoch nicht - dort muesste man den Index ueber
-    sys.indexes abfragen. inspect(conn).get_indexes(...) funktioniert
-    ueberall gleich."""
+    andere Dialekte (z.B. T-SQL) jedoch nicht.
+    inspect(conn).get_indexes(...) funktioniert ueberall gleich."""
     if not inspect(conn).has_table(table_name):
         return False
     existing = {index["name"] for index in inspect(conn).get_indexes(table_name)}
@@ -131,9 +129,11 @@ def _ensure_ac_power_column() -> None:
     """Eingefuehrt: 2026-07-13. Ergaenzt die Spalte readings.ac_power_w, falls sie noch fehlt (z.B.
     Bestandsdatenbank von vor diesem Update). Bei einer frisch angelegten
     Tabelle (ueber create_all() oben) ist die Spalte bereits vorhanden - dann
-    passiert hier nichts. SQLite unterstuetzt ADD COLUMN direkt, ohne die
-    Tabelle neu anlegen zu muessen; bestehende Zeilen bekommen NULL fuer die
-    neue Spalte (siehe README fuer die Auswirkung auf die Berechnung)."""
+    passiert hier nichts. ALTER TABLE ... ADD COLUMN ist Standard-SQL und
+    laeuft unter beiden Datenbanken; bestehende Zeilen bekommen NULL fuer
+    die neue Spalte (siehe README fuer die Auswirkung auf die Berechnung).
+    In der Praxis greift dieser Nachtrag nur unter SQLite - siehe
+    docs/DEVELOPMENT.md, Abschnitt "Datenbank-Migrationen"."""
     with engine.connect() as conn:
         columns = _table_columns(conn, "readings")
         if "ac_power_w" not in columns:

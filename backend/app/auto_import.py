@@ -79,8 +79,8 @@ def trigger_manual_import() -> bool:
     unabhaengig von AUTO_IMPORT_HISTORY (das steuert nur den automatischen
     Lauf beim Start, nicht diesen expliziten manuellen Anstoss). Gibt False
     zurueck, wenn bereits ein Lauf aktiv ist (kein zweiter, parallel
-    laufender Import - sonst koennten zwei Laeufe gleichzeitig in die
-    SQLite-Datenbank schreiben)."""
+    laufender Import - sonst koennten zwei Laeufe gleichzeitig dieselben
+    Zeitstempel in die Datenbank schreiben)."""
     if not settings.inverters:
         return False
     if not _try_acquire_run():

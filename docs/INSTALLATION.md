@@ -98,7 +98,8 @@ Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 ```
 
 Standortdaten müssen nur bei einem Wechselrichter hinterlegt werden. Nach dem
-ersten Speichern im Admin-Bereich liegt die Konfiguration in SQLite und hat
+ersten Speichern im Admin-Bereich liegt die Konfiguration in der Datenbank
+und hat
 Vorrang vor den Startwerten aus `inverters.json`. Die Datei selbst bleibt
 unverändert, da sie im Container absichtlich nur lesbar eingebunden ist.
 
@@ -292,7 +293,8 @@ Oberfläche automatisch den Dialog zum Ändern dieses Passworts.
   `Secure`-Flag. Die Anwendung ist deshalb für das interne Netz gedacht.
   Vor einer Veröffentlichung im Internet sollte neben HTTPS auch das
   Cookie-Verhalten im Code gehärtet und unverschlüsseltes HTTP gesperrt werden.
-- Sitzungs-Token und der Mail-Service-API-Key werden in SQLite gespeichert.
+- Sitzungs-Token und der Mail-Service-API-Key werden in der Datenbank
+  gespeichert.
   Der API-Key wird zwar nie an das Frontend zurückgegeben, liegt in der
   Datenbank aber im Klartext vor. Backups der Datenbank sind daher geheim zu
   halten.

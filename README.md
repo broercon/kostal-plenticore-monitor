@@ -8,7 +8,8 @@ Webanwendung zum lokalen Erfassen und Auswerten von Leistungs- und
 Energiedaten eines oder mehrerer Kostal-Plenticore-Wechselrichter.
 
 Die Anwendung besteht aus einem FastAPI-Backend, einem statischen Dashboard
-mit Chart.js und einer SQLite-Datenbank. Alles läuft gemeinsam in einem
+mit Chart.js und einer Datenbank (SQLite als Standard, wahlweise
+PostgreSQL). Alles läuft gemeinsam in einem
 Docker-Container.
 
 ## Funktionen

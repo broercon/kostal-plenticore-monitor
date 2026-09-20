@@ -58,7 +58,11 @@ können deshalb auch in diesen persistenten Logs stehen.
 
 ## Daten sichern
 
-Die Anwendung verwendet SQLite im WAL-Modus. Für ein konsistentes Backup den
+Das Vorgehen hängt davon ab, welche Datenbank die Anwendung verwendet
+(siehe [PostgreSQL statt SQLite](INSTALLATION.md#postgresql-statt-sqlite)).
+
+**Bei SQLite (Standard).** Die Datei läuft im WAL-Modus, es gibt also neben
+`kostal.db` noch `-wal` und `-shm`. Für ein konsistentes Backup den
 Container stoppen und anschließend das gesamte Verzeichnis `data/` sichern:
 
 ```bash
@@ -67,8 +71,23 @@ cp -a data/ /pfad/zum/backup/
 docker compose up -d
 ```
 
-`kostal.db` enthält nicht nur Messwerte, sondern auch Benutzerkonten,
-Passwort-Hashes, aktive Sitzungstoken, den Energie-Cache und die
-Mail-Report-Konfiguration einschließlich eines eventuell gespeicherten
+**Bei PostgreSQL.** Die Messwerte liegen dann nicht mehr in `data/`, sondern
+in der Datenbank – ein Kopieren des Verzeichnisses sichert sie *nicht*.
+Stattdessen im laufenden Betrieb (kein Stoppen nötig, `pg_dump` arbeitet auf
+einem konsistenten Snapshot):
+
+```bash
+pg_dump -Fc -d "$DATABASE_URL" > kostal_app.dump
+```
+
+Wer die Datenbank über einen eigenen Infrastruktur-Stack betreibt, hat dafür
+üblicherweise bereits ein Backup-Skript, das alle App-Datenbanken erfasst –
+dann genügt es, dort einmal zu prüfen, dass die Datenbank dieser App
+enthalten ist. Das Verzeichnis `data/` enthält weiterhin die Logdateien und
+sollte mitgesichert werden.
+
+Die Datenbank enthält in beiden Fällen nicht nur Messwerte, sondern auch
+Benutzerkonten, Passwort-Hashes, aktive Sitzungstoken, den Energie-Cache und
+die Mail-Report-Konfiguration einschließlich eines eventuell gespeicherten
 API-Keys. Backup und Logdateien müssen daher wie Zugangsdaten behandelt
 werden.

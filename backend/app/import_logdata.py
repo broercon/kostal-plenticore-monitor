@@ -11,7 +11,7 @@ Nutzung (innerhalb des laufenden Containers):
 Standardmaessig ist es ein Dry-Run: es wird nur eine Vorschau angezeigt
 (gefundene Spalten, erkannte Zuordnung, Anzahl Datenpunkte, erste/letzte
 Werte), nichts wird gespeichert. Erst mit zusaetzlichem Flag --commit
-werden die Daten wirklich in die SQLite-Datenbank geschrieben. Ein erneuter
+werden die Daten wirklich in die Datenbank geschrieben. Ein erneuter
 Lauf ueberspringt bereits vorhandene Zeitstempel (kein doppelter Import).
 
 WICHTIGER HINWEIS: Das genaue Spaltenformat des Kostal-Logdaten-Exports ist
@@ -407,8 +407,11 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     session = SessionLocal()
     try:
         # SQLite gibt DateTime-Werte beim Zurücklesen als "naive" datetime
-        # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert haben.
-        # Fuer den Abgleich auf beiden Seiten UTC-aware normalisieren.
+        # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert
+        # haben; PostgreSQL liefert sie zonenbehaftet. Fuer den Abgleich
+        # unten muessen beide Seiten dieselbe Form haben, sonst wuerde der
+        # Vergleich existing_by_ts[ts] nie treffen und der Import saemtliche
+        # bereits vorhandenen Zeilen als neu einfuegen.
         existing_by_ts: dict[datetime, Reading] = {}
         for reading in session.scalars(
             select(Reading).where(Reading.device_id == device_id)

@@ -6,10 +6,13 @@
 
 - **Backend**: Python + FastAPI. Ein Hintergrund-Task fragt die konfigurierten
   Wechselrichter über die REST-API (via [pykoplenti](https://github.com/stegm/pykoplenti))
-  in einem festen Intervall ab und schreibt jeden Messwert in SQLite.
+  in einem festen Intervall ab und schreibt jeden Messwert in die Datenbank.
 - **Frontend**: statisches HTML/JS-Dashboard (Chart.js), wird direkt vom
   Backend mit ausgeliefert – kein separater Webserver nötig.
-- **Datenbank**: SQLite-Datei, per Docker-Volume persistiert.
+- **Datenbank**: standardmäßig eine SQLite-Datei, per Docker-Volume
+  persistiert; wahlweise PostgreSQL über `DATABASE_URL` (siehe
+  [Installation](INSTALLATION.md#postgresql-statt-sqlite) sowie den
+  Abschnitt "Zwei Datenbanken" weiter unten).
 - Alles läuft in einem einzigen Container über Docker Compose.
 
 ## Datenbank-Migrationen
