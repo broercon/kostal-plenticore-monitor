@@ -99,9 +99,10 @@ Alle folgenden Endpunkte benötigen die Rolle `admin`:
   Bestehende Sitzungen des Nutzers werden beendet.
 - `GET /api/admin/forecast/config` – Aktivierung und Standortkoordinaten
   abrufen. `source` zeigt, ob die Startwerte aus
-  `inverters.json` oder die gespeicherten SQLite-Werte verwendet werden.
+  `inverters.json` oder die in der Datenbank gespeicherten Werte verwendet
+  werden.
 - `PUT /api/admin/forecast/config` – Aktivierung und Standortkoordinaten in
-  SQLite speichern.
+  der Datenbank speichern.
 - `POST /api/admin/import-history` – Historienabgleich im Hintergrund
   starten; funktioniert auch bei `AUTO_IMPORT_HISTORY=false`.
 - `GET /api/admin/import-history/status` – Laufstatus und Ergebnis je Gerät.

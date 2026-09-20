@@ -32,6 +32,21 @@ def _round_coord(value: float) -> float:
     return round(value, _COORD_PRECISION)
 
 
+def _utc(value: datetime) -> datetime:
+    """Zeitstempel aus der Datenbank verlaesslich als UTC-aware datetime.
+
+    PostgreSQL liefert DateTime(timezone=True)-Spalten zonenbehaftet. Ein
+    unbedingtes replace(tzinfo=utc) wuerde den Wert deshalb um den
+    Zonenversatz VERSCHIEBEN, statt ihn nur zu kennzeichnen - daher
+    astimezone(). Der naive Fall bleibt als Sicherheitsnetz fuer
+    Zeitstempel, die nicht aus der Datenbank stammen; alle Zeitstempel
+    dieser Tabelle sind laut Vertrag UTC (siehe
+    _store_points/fetch_historical_weather)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _load_cached_points(
     latitude: float, longitude: float, start: date, end: date
 ) -> list[WeatherPoint]:
@@ -54,13 +69,10 @@ def _load_cached_points(
         session.close()
     return [
         WeatherPoint(
-            # SQLite gibt DateTime(timezone=True)-Spalten naiv zurueck (die
-            # tz-Info wird beim Schreiben nicht mitgespeichert) - ohne dieses
-            # Wiederanheften waeren die aus dem Cache geladenen Zeitstempel
-            # nicht mehr mit den frisch von Open-Meteo geholten (aware)
-            # Zeitstempeln vergleichbar. Alle Zeitstempel in dieser Tabelle
-            # sind laut Vertrag UTC (siehe _store_points/fetch_historical_weather).
-            timestamp=row.timestamp.replace(tzinfo=timezone.utc),
+            # Ohne diese Normalisierung waeren die aus dem Cache geladenen
+            # Zeitstempel nicht zuverlaessig mit den frisch von Open-Meteo
+            # geholten vergleichbar - siehe _utc().
+            timestamp=_utc(row.timestamp),
             shortwave_w_m2=row.shortwave_w_m2,
             direct_w_m2=row.direct_w_m2,
             diffuse_w_m2=row.diffuse_w_m2,
@@ -72,11 +84,9 @@ def _load_cached_points(
             pressure_hpa=row.pressure_hpa,
         )
         for row in rows
-        # Zeilen aus einer Zeit vor den zusaetzlichen Wetterwerten (siehe
-        # database._ensure_weather_hourly_extra_columns) haben fuer die
-        # neuen Spalten NULL - die Migration loescht solche Zeilen zwar
-        # bereits beim Start, dieser Filter ist nur ein zusaetzliches
-        # Sicherheitsnetz, damit WeatherPoint nie mit None-Werten gebaut
+        # Zeilen aus einer Zeit vor den zusaetzlichen Wetterwerten haben
+        # fuer die neuen Spalten NULL - dieser Filter sorgt dafuer, dass
+        # WeatherPoint nie mit None-Werten gebaut
         # wird (die Felder sind dort als float, nicht float | None, typisiert).
         if row.cloud_cover_percent is not None
     ]

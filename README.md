@@ -8,8 +8,8 @@ Webanwendung zum lokalen Erfassen und Auswerten von Leistungs- und
 Energiedaten eines oder mehrerer Kostal-Plenticore-Wechselrichter.
 
 Die Anwendung besteht aus einem FastAPI-Backend, einem statischen Dashboard
-mit Chart.js und einer SQLite-Datenbank. Alles läuft gemeinsam in einem
-Docker-Container.
+mit Chart.js und einer PostgreSQL-Datenbank. Backend und Dashboard laufen
+gemeinsam in einem Docker-Container, die Datenbank daneben.
 
 ## Funktionen
 
@@ -26,11 +26,13 @@ Docker-Container.
 - Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten, mit
   automatischem Rückvergleich sowie Erwartet-/Ist-Auswertung im Dashboard
 - Optionaler täglicher E-Mail-Bericht
-- Persistente Speicherung in SQLite
+- Persistente Speicherung in PostgreSQL (siehe [Installation](docs/INSTALLATION.md#datenbank-einrichten))
 
 ## Voraussetzungen
 
 - Docker mit Docker Compose
+- Eine erreichbare PostgreSQL-Instanz (siehe
+  [Datenbank einrichten](docs/INSTALLATION.md#datenbank-einrichten))
 - Netzwerkzugriff vom Docker-Host auf den Wechselrichter
 - IP-Adresse und Gerätepasswort jedes Wechselrichters
 - Internetzugriff im Browser auf `cdnjs.cloudflare.com`, da Chart.js derzeit

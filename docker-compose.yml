@@ -8,6 +8,12 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # PFLICHT. Fertiger Connection-String der PostgreSQL-Datenbank, z.B.
+      #   DATABASE_URL=postgresql://kostal_app:...@postgres:5432/kostal_app
+      # Der Datenbank-Host ist ueber das Netzwerk "dbnet" erreichbar (siehe
+      # unten). Ohne diese Variable bricht die Anwendung beim Start mit
+      # einer entsprechenden Meldung ab.
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL muss in .env gesetzt sein}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-15}
       - TIMEZONE=${TIMEZONE:-Europe/Berlin}
       - AUTO_IMPORT_HISTORY=${AUTO_IMPORT_HISTORY:-true}
@@ -20,5 +26,19 @@ services:
       - MAIL_SERVICE_API_KEY=${MAIL_SERVICE_API_KEY:-}
       - MAIL_SERVICE_FROM_NAME=${MAIL_SERVICE_FROM_NAME:-Kostal Plenticore Monitor}
     volumes:
+      # Enthaelt nur noch die Logdateien - die Messwerte liegen in der
+      # Datenbank.
       - ./data:/app/data
       - ./config/inverters.json:/app/config/inverters.json:ro
+
+    networks:
+      - dbnet
+
+networks:
+  # Gemeinsames Netzwerk des PostgreSQL-Stacks. Wird dort angelegt, hier
+  # nur mitbenutzt - darueber ist der Datenbank-Container unter dem Namen
+  # "postgres" erreichbar. Wer die Datenbank anders betreibt, passt Namen
+  # und Adresse hier und in DATABASE_URL an.
+  dbnet:
+    external: true
+    name: dbnet

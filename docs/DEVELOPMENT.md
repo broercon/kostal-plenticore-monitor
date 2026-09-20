@@ -6,10 +6,12 @@
 
 - **Backend**: Python + FastAPI. Ein Hintergrund-Task fragt die konfigurierten
   Wechselrichter über die REST-API (via [pykoplenti](https://github.com/stegm/pykoplenti))
-  in einem festen Intervall ab und schreibt jeden Messwert in SQLite.
+  in einem festen Intervall ab und schreibt jeden Messwert in die Datenbank.
 - **Frontend**: statisches HTML/JS-Dashboard (Chart.js), wird direkt vom
   Backend mit ausgeliefert – kein separater Webserver nötig.
-- **Datenbank**: SQLite-Datei, per Docker-Volume persistiert.
+- **Datenbank**: PostgreSQL, über `DATABASE_URL` konfiguriert (siehe
+  [Installation](INSTALLATION.md#datenbank-einrichten)). Das Docker-Volume
+  `./data` enthält nur noch die Logdateien.
 - Alles läuft in einem einzigen Container über Docker Compose.
 
 ## Datenbank-Migrationen
@@ -17,18 +19,10 @@
 `init_db()` (`backend/app/database.py`) legt über `Base.metadata.create_all()`
 fehlende Tabellen an, ändert aber **keine** bestehenden Tabellen ab. Kommt mit
 einem Update ein neues Feld zu einem bestehenden Modell hinzu (z.B.
-`readings.ac_power_w`), übernimmt das eine kleine, manuell geschriebene
-Migrationsfunktion direkt in `database.py` (`_ensure_ac_power_column()` als
-Vorlage). Ein Werkzeug wie Alembic lohnt sich für dieses Einzelplatz-Projekt
+`readings.ac_power_w`), braucht es dafür eine kleine, manuell geschriebene
+Migrationsfunktion direkt in `database.py`, die das Feld per `ALTER TABLE`
+ergänzt. Ein Werkzeug wie Alembic lohnt sich für dieses Einzelplatz-Projekt
 (noch) nicht.
-
-Für die Existenzprüfungen ("hat die Tabelle/Spalte/der Index das schon?")
-verwenden diese Funktionen SQLAlchemys eigene, dialektunabhängige
-`sqlalchemy.inspect(conn)`-API (`get_columns()`, `get_indexes()`,
-`has_table()`) statt der SQLite-spezifischen `PRAGMA table_info(...)`. Damit
-liefe die reine Prüfung unverändert mit, falls die App irgendwann auf
-PostgreSQL oder SQL Server umzieht – nur die eigentlichen `CREATE`/`ALTER`-
-Statements müssten dann dialektspezifisch angepasst werden.
 
 **Migrationen werden nicht für immer mitgeschleppt.** Jede Migrationsfunktion
 trägt in ihrem Docstring das Einführungsdatum. Etwa 6 Monate nach diesem
@@ -37,12 +31,45 @@ Instanz(en) dieser App längst darüber gelaufen sind – die Migration kann
 dann ersatzlos entfernt werden, statt unbegrenzt Code für ein Altschema zu
 pflegen, das niemand mehr hat. Bei einem Update, das eine Migrationsfunktion
 entfernt, immer auch den zugehörigen Test in `backend/tests/` mit entfernen.
-Ausnahme: Migrationen, die eine Tabelle bereits vor ihrer ersten
-Veröffentlichung (Merge nach `master`) wieder geändert haben, können sofort
-entfernt werden – dann gab es nie eine reale Installation mit dem Altschema
-(siehe `_simplify_forecast_settings`, entfernt im selben Zug wie diese
-Dokumentation, weil das betroffene Schema nur für wenige Stunden vor dem
-ersten Release existierte).
+
+Beim Umstieg von SQLite auf PostgreSQL (September 2026) sind alle damals
+vorhandenen Migrationsfunktionen entfallen: die PostgreSQL-Datenbank wurde
+frisch über `create_all()` mit dem vollständigen Schema angelegt, eine
+Bestandsdatenbank mit fehlenden Spalten kann es dort also nicht geben.
+`init_db()` legt seitdem nur noch fehlende Tabellen an.
+
+## Worauf beim Ändern von Abfragen zu achten ist
+
+Die Anwendung lief bis September 2026 auf SQLite. Beim Umstieg kamen drei
+Fehler ans Licht, die SQLite jahrelang verziehen hatte – sie beschreiben
+gut, worauf PostgreSQL besteht:
+
+1. **`VARCHAR`-Längen werden erzwungen.** Eine im Modell zu knapp
+   deklarierte Spalte fällt unter SQLite nie auf. Genau so passiert bei
+   `daily_energy_cache.field`: deklariert als `String(32)`, beschrieben mit
+   37 Zeichen.
+2. **Fremdschlüssel werden erzwungen** (SQLite bräuchte dafür
+   `PRAGMA foreign_keys=ON`). Beim Löschen auf die Reihenfolge achten:
+   erst die verweisende Tabelle, dann die verwiesene.
+3. **Zeitstempel kommen zonenbehaftet zurück.** Ein unbedingtes
+   `replace(tzinfo=timezone.utc)` auf einen Wert aus der Datenbank
+   verschiebt den Zeitpunkt still um den Zonenversatz – richtig ist
+   `astimezone()` für den bereits zonenbehafteten Fall (siehe
+   `weather_cache._utc()`). Die Verbindung wird zwar auf UTC festgelegt
+   (`database.py`), aber darauf sollte sich kein Aufrufer verlassen müssen.
+
+Zwei SQL-Eigenheiten, die im Code bewusst so stehen:
+
+- **`greatest()` statt `max()`** für den größeren zweier Werte *je Zeile* –
+  `max()` ist in PostgreSQL ausschließlich eine Aggregatfunktion und
+  existiert mit zwei Argumenten gar nicht
+  (`energy_forecast._pure_pv_sql_expression()`).
+- **`date_trunc(... AT TIME ZONE 'UTC')`** für die Stunden-Einteilung, statt
+  sich auf die Zeitzone der Sitzung zu verlassen
+  (`energy_forecast._hour_bucket_expression()`).
+
+Alle fünf Punkte sind in `backend/tests/test_postgres_contract.py`
+abgesichert.
 
 ## Tests
 
@@ -60,12 +87,24 @@ Funktionsaufrufe). Lokal ausführen:
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+TEST_DATABASE_URL=postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test \
+  python -m pytest tests/ -v
 ```
 
-Die Tests laufen gegen eine temporäre, isolierte SQLite-Datenbank (nicht
-gegen `data/kostal.db`) und starten bewusst keinen echten Poller/Import
-gegen einen Wechselrichter. Abgedeckt sind u.a.: Standard-Nutzer werden nur
+Die Tests brauchen eine laufende PostgreSQL-Instanz. **Unbedingt eine
+eigene Test-Datenbank angeben, niemals die produktive** – vor jedem
+einzelnen Testfall wird das gesamte Schema geleert. Ohne
+`TEST_DATABASE_URL` wird genau die oben gezeigte Adresse versucht (siehe
+`conftest.py`). Schnell aufgesetzt mit:
+
+```bash
+docker run --rm -d --name kpm-testdb -p 5432:5432 \
+  -e POSTGRES_USER=kostal_app -e POSTGRES_PASSWORD=kostal_app \
+  -e POSTGRES_DB=kostal_app_test postgres:17
+```
+
+Die Tests starten bewusst keinen echten Poller/Import gegen einen
+Wechselrichter. Abgedeckt sind u.a.: Standard-Nutzer werden nur
 einmal angelegt, falsches/unbekanntes Passwort wird abgelehnt, erfolgreicher
 Login setzt ein Cookie und schaltet die API frei, Logout invalidiert die
 Sitzung, eigenes Passwort ändern (inkl. Ablehnung bei falschem aktuellem
@@ -129,10 +168,10 @@ Aufbau (jsdom + Backend-Mock) steckt in `frontend/tests/harness.mjs`.
 - Aktuell wird nur eine feste Auswahl an Prozessdaten erfasst (Verbrauch,
   Netz, PV, Batterie). Weitere Werte (z.B. je String) lassen sich in
   `PROCESS_DATA_CANDIDATES` in `backend/app/plenticore_client.py` ergänzen.
-- Die SQLite-Datei wächst mit der Zeit (bei 15s-Intervall und 2 Geräten ca.
-  11.000 Zeilen/Tag). Für viele Jahre Historie wäre irgendwann ein Umzug auf
-  PostgreSQL oder eine Zeitreihen-DB sinnvoll – die Datenzugriffsschicht ist
-  bewusst einfach gehalten, damit das leicht austauschbar bleibt.
+- Die Tabelle `readings` wächst mit der Zeit (bei 15s-Intervall und 2
+  Geräten ca. 11.000 Zeilen/Tag). Für viele Jahre Historie wären irgendwann
+  eine Verdichtung älterer Messwerte oder eine Zeitreihen-Erweiterung
+  sinnvoll – die Datenzugriffsschicht ist bewusst einfach gehalten.
 - Die Benutzerverwaltung ist bewusst einfach gehalten (kein 2FA, kein
   Passwort-Reset per E-Mail, feste Rollen admin/betreiber). Details stehen
   unter [Benutzerverwaltung und Login](INSTALLATION.md#benutzerverwaltung--login).

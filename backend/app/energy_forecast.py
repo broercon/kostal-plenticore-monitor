@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import numpy as np
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, select, text
 
 from .config import settings
 from .database import SessionLocal
@@ -127,10 +127,35 @@ def _pure_pv_sql_expression():
     """
     return case(
         (Reading.pv_power_w.is_(None), None),
-        else_=func.max(
+        # greatest() und nicht max(): gesucht ist der groessere der beiden
+        # Werte INNERHALB einer Zeile. max() ist in PostgreSQL
+        # ausschliesslich eine Aggregatfunktion ueber Zeilen hinweg und
+        # existiert mit zwei Argumenten gar nicht.
+        else_=func.greatest(
             0.0,
             Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
         ),
+    )
+
+
+def _hour_bucket_expression():
+    """Messzeitpunkt auf die volle Stunde abgerundet und um eine Stunde nach
+    vorn geschoben, als Text "YYYY-MM-DDTHH:00:00" in UTC.
+
+    Open-Meteo kennzeichnet Strahlung als Mittel der vorangegangenen Stunde.
+    Daher bekommt z.B. die Messstunde 12:00-13:00 den Endzeitpunkt 13:00.
+
+    Der Zeitstempel wird ausdruecklich nach UTC gedreht ("AT TIME ZONE
+    'UTC'"), statt sich auf die Zeitzone der Sitzung zu verlassen:
+    date_trunc() wuerde sonst an der jeweiligen ORTS-Stundengrenze
+    abschneiden, was in Zonen mit halbstuendigem Versatz und rund um die
+    Sommerzeitumstellung andere Stundenfenster ergaebe als auf der
+    Wetterseite. Die Textform ist bewusst ISO-8601, damit der Aufrufer sie
+    unveraendert per datetime.fromisoformat() einlesen kann."""
+    return func.to_char(
+        func.date_trunc("hour", func.timezone("UTC", Reading.timestamp))
+        + text("interval '1 hour'"),
+        'YYYY-MM-DD"T"HH24:MI:SS',
     )
 
 
@@ -141,9 +166,7 @@ def _raw_hourly_pv_average(
     der eigentliche (fuer einen groesseren Zeitraum teure) Rechenschritt
     hinter load_hourly_pv_history(), das die abgeschlossenen Stunden davon
     ueber hourly_pv_cache zwischenspeichert (siehe dort)."""
-    # Open-Meteo kennzeichnet Strahlung als Mittel der vorangegangenen Stunde.
-    # Daher bekommt z.B. die Messstunde 12:00-13:00 den Endzeitpunkt 13:00.
-    bucket = func.strftime("%Y-%m-%dT%H:00:00", Reading.timestamp, "+1 hour")
+    bucket = _hour_bucket_expression()
     pure_pv = _pure_pv_sql_expression()
     session = SessionLocal()
     try:

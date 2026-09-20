@@ -14,7 +14,17 @@ import tempfile
 from pathlib import Path
 
 _TEST_DIR = Path(tempfile.mkdtemp(prefix="kpm-test-"))
-os.environ["DB_PATH"] = str(_TEST_DIR / "test.db")
+os.environ["DATA_DIR"] = str(_TEST_DIR)
+# Die Tests brauchen eine echte PostgreSQL-Instanz. Ohne gesetzte
+# TEST_DATABASE_URL wird die uebliche Entwicklungs-Adresse verwendet
+# (siehe docs/DEVELOPMENT.md, Abschnitt "Backend-Tests").
+#
+# UNBEDINGT eine eigene Test-Datenbank angeben, niemals die produktive:
+# die client()-Fixture leert vor JEDEM Testfall das gesamte Schema.
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test",
+)
 # Zeigt bewusst auf eine nicht existierende Datei, damit Settings() auf die
 # Env-Variablen-Fallback-Wechselrichter-Konfiguration unten zurueckfaellt,
 # statt eine echte config/inverters.json vom Entwicklerrechner zu lesen.

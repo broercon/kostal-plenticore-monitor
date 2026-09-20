@@ -13,12 +13,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 from app import daily_summary
 from app.daily_summary import _cached_daily_totals, invalidate_energy_cache
-from app.database import Base, SessionLocal, engine, init_db
-from app.models import DailyEnergyCache, Reading
+from app.database import SessionLocal, engine
+from app.models import DailyEnergyCache
 
 
 def test_cached_daily_totals_computes_gap_in_one_call_then_reuses_cache(client):
@@ -163,51 +163,14 @@ def test_build_pv_yield_summary_second_call_only_queries_today(client, monkeypat
 # --- DB-Absicherung: WAL-Modus, timestamp-Index ----------------------------
 
 
-def test_sqlite_uses_wal_journal_mode(client):
-    with engine.connect() as conn:
-        mode = conn.exec_driver_sql("PRAGMA journal_mode").scalar()
-    assert mode.lower() == "wal"
-
-
 def test_readings_timestamp_index_exists(client):
+    """Beide Indizes auf readings muessen nach init_db() vorhanden sein -
+    der zusammengesetzte (device_id, timestamp) und der reine
+    timestamp-Index fuer Abfragen ohne Geraete-Filter."""
     with engine.connect() as conn:
-        names = {
-            row[0]
-            for row in conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='readings'"
-            )
-        }
+        names = {index["name"] for index in inspect(conn).get_indexes("readings")}
     assert "ix_readings_timestamp" in names
     assert "ix_readings_device_timestamp" in names
-
-
-def test_init_db_adds_missing_timestamp_index_on_existing_database(client):
-    """Bestandsdatenbank von vor dieser Aenderung: nur der alte
-    zusammengesetzte Index existiert, der neue reine timestamp-Index fehlt
-    noch. init_db() muss ihn ergaenzen, ohne die Tabelle anzufassen."""
-    Base.metadata.drop_all(bind=engine)
-    Reading.__table__.create(bind=engine)  # erzeugt nur den in models.py deklarierten Index-Satz
-
-    with engine.connect() as conn:
-        conn.exec_driver_sql("DROP INDEX IF EXISTS ix_readings_timestamp")
-        names_before = {
-            row[0]
-            for row in conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='readings'"
-            )
-        }
-    assert "ix_readings_timestamp" not in names_before
-
-    init_db()
-
-    with engine.connect() as conn:
-        names_after = {
-            row[0]
-            for row in conn.exec_driver_sql(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='readings'"
-            )
-        }
-    assert "ix_readings_timestamp" in names_after
 
 
 def test_import_invalidates_cache_only_when_rows_actually_changed(client, monkeypatch):

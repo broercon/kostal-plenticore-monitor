@@ -323,7 +323,7 @@ def get_forecast_config_endpoint(
 def put_forecast_config_endpoint(
     payload: ForecastConfigIn, _admin: User = Depends(auth.require_admin)
 ) -> ForecastConfigOut:
-    """Speichert die Prognose-Konfiguration in SQLite.
+    """Speichert die Prognose-Konfiguration in der Datenbank.
 
     Die inverters.json wird nicht veraendert (sie ist im Container read-only);
     nach dem ersten Speichern hat die Datenbank Vorrang vor Datei-Startwerten.

@@ -98,7 +98,8 @@ Optional können dieselben Werte direkt beim jeweiligen Wechselrichter in
 ```
 
 Standortdaten müssen nur bei einem Wechselrichter hinterlegt werden. Nach dem
-ersten Speichern im Admin-Bereich liegt die Konfiguration in SQLite und hat
+ersten Speichern im Admin-Bereich liegt die Konfiguration in der Datenbank
+und hat
 Vorrang vor den Startwerten aus `inverters.json`. Die Datei selbst bleibt
 unverändert, da sie im Container absichtlich nur lesbar eingebunden ist.
 
@@ -129,6 +130,7 @@ an den Container weiter:
 | `MAIL_SERVICE_URL` | leer | Vollständiger `POST /send`-Endpunkt |
 | `MAIL_SERVICE_API_KEY` | leer | API-Key für den Mail-Service |
 | `MAIL_SERVICE_FROM_NAME` | `Kostal Plenticore Monitor` | Anzeigename des Absenders |
+| `DATABASE_URL` | – | **Pflicht.** Verbindung zur PostgreSQL-Datenbank (siehe [Datenbank einrichten](#datenbank-einrichten)) |
 
 Beim direkten Start des Backends oder in einer eigenen Container-
 Konfiguration unterstützt `app/config.py` zusätzlich:
@@ -136,8 +138,8 @@ Konfiguration unterstützt `app/config.py` zusätzlich:
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `CONFIG_PATH` | `/app/config/inverters.json` | Pfad zur Geräte-Konfiguration |
-| `DB_PATH` | `/app/data/kostal.db` | Pfad zur SQLite-Datenbank |
-| `LOG_FILE` | `<DB-Verzeichnis>/logs/app.log` | Persistente Logdatei |
+| `DATA_DIR` | `/app/data` | Verzeichnis für die persistenten Logdateien |
+| `LOG_FILE` | `<DATA_DIR>/logs/app.log` | Persistente Logdatei |
 | `FRONTEND_DIR` | `/app/frontend` | Verzeichnis des statischen Frontends |
 | `INVERTER_HOST`, `INVERTER_PASSWORD` | leer | Fallback für genau ein Gerät, wenn keine Konfigurationsdatei geladen wurde |
 | `INVERTER_ID`, `INVERTER_NAME`, `INVERTER_PORT` | `wr1`, `Wechselrichter`, `80` | Metadaten dieses Fallback-Geräts |
@@ -148,6 +150,58 @@ Diese zusätzlichen Variablen stehen zwar im Python-Code zur Verfügung, werden
 von der mitgelieferten Compose-Datei aber nicht automatisch aus `.env`
 durchgereicht.
 
+
+### Datenbank einrichten
+
+Die Anwendung speichert alles in einer PostgreSQL-Datenbank – Messwerte,
+Benutzerkonten, Caches und Konfiguration. Eine laufende PostgreSQL-Instanz
+ist deshalb Voraussetzung; ohne `DATABASE_URL` startet die Anwendung nicht.
+
+Leg dort zunächst eine eigene Datenbank samt eigenem Benutzer an:
+
+```sql
+CREATE USER kostal_app WITH PASSWORD 'GEHEIM';
+CREATE DATABASE kostal_app OWNER kostal_app;
+```
+
+Die Tabellen legt die Anwendung beim ersten Start selbst an, die Datenbank
+darf also leer bleiben.
+
+Dann in `.env` eintragen:
+
+```bash
+DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app
+```
+
+Die mitgelieferte `docker-compose.yml` bindet das externe Docker-Netzwerk
+`dbnet` ein, über das der Datenbank-Container unter dem Namen `postgres`
+erreichbar ist. Läuft die Datenbank anderswo, sind Netzwerkname in der
+Compose-Datei und Host in `DATABASE_URL` entsprechend anzupassen.
+
+Der Treiber (`psycopg`) ist im Image enthalten, ein zusätzlicher Build ist
+nicht nötig.
+
+Das Verzeichnis `./data` bleibt weiterhin eingebunden, enthält aber nur
+noch die Logdateien.
+
+#### Frühere Versionen mit SQLite
+
+Bis einschließlich September 2026 speicherte die Anwendung in einer
+SQLite-Datei unter `./data/kostal.db`. Wer von einer solchen Installation
+kommt, überträgt den Bestand mit dem mitgelieferten Skript
+`app/migrate_to_postgres.py`:
+
+```bash
+docker compose exec -e DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app \
+    kostal-monitor python -m app.migrate_to_postgres
+```
+
+Liegt die SQLite-Datei nicht unter dem alten Standardpfad `/app/data/kostal.db`
+(im Container), lässt sich der Pfad über `SQLITE_SOURCE_PATH` überschreiben.
+Das Skript liest die Datei ausschließlich lesend, lässt sie unverändert und
+darf beliebig oft laufen; sinnvoll ist, es einmal im laufenden Betrieb zum
+Prüfen auszuführen und ein zweites Mal bei gestoppter Anwendung, um die
+inzwischen dazugekommenen Messwerte nachzuziehen.
 
 ### 3. Starten
 
@@ -239,7 +293,8 @@ Oberfläche automatisch den Dialog zum Ändern dieses Passworts.
   `Secure`-Flag. Die Anwendung ist deshalb für das interne Netz gedacht.
   Vor einer Veröffentlichung im Internet sollte neben HTTPS auch das
   Cookie-Verhalten im Code gehärtet und unverschlüsseltes HTTP gesperrt werden.
-- Sitzungs-Token und der Mail-Service-API-Key werden in SQLite gespeichert.
+- Sitzungs-Token und der Mail-Service-API-Key werden in der Datenbank
+  gespeichert.
   Der API-Key wird zwar nie an das Frontend zurückgegeben, liegt in der
   Datenbank aber im Klartext vor. Backups der Datenbank sind daher geheim zu
   halten.

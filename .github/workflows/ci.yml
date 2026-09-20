@@ -21,6 +21,26 @@ jobs:
     defaults:
       run:
         working-directory: backend
+
+    # Die Anwendung speichert ausschliesslich in PostgreSQL, die Tests
+    # brauchen deshalb eine echte Instanz (siehe docs/DEVELOPMENT.md). Der
+    # Health-Check sorgt dafuer, dass der erste Test nicht gegen eine noch
+    # startende Datenbank laeuft.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: kostal_app
+          POSTGRES_PASSWORD: kostal_app
+          POSTGRES_DB: kostal_app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kostal_app -d kostal_app_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -38,6 +58,8 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
 
       - name: Run pytest
+        env:
+          TEST_DATABASE_URL: postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test
         run: python -m pytest tests/ -v
 
   frontend-tests:
