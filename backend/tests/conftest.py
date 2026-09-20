@@ -54,6 +54,16 @@ sqlite_only = pytest.mark.skipif(
     reason="Prueft SQLite-spezifisches Verhalten (WAL bzw. Bestandsdatenbank-Nachtraege).",
 )
 
+# Umgekehrt: Zusagen, die NUR PostgreSQL durchsetzt (VARCHAR-Laengen,
+# Fremdschluessel, zonenbehaftete Zeitstempel). Unter SQLite liessen sich
+# diese Tests nicht sinnvoll formulieren - dort wuerde die jeweils
+# erwartete Ablehnung schlicht nicht stattfinden. Siehe
+# docs/DEVELOPMENT.md, Abschnitt "Zwei Datenbanken".
+postgres_only = pytest.mark.skipif(
+    IS_SQLITE,
+    reason="Prueft Zusagen, die nur PostgreSQL durchsetzt.",
+)
+
 
 @pytest.fixture()
 def client():
