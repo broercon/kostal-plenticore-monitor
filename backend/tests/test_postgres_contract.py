@@ -1,18 +1,18 @@
-"""Tests rund um den Betrieb auf zwei Datenbanken (SQLite und PostgreSQL).
+"""Zusagen, die diese Anwendung an PostgreSQL stellt.
 
-Zwei Sorten, bewusst in einer Datei:
+Die Tests hier pruefen nicht Fachlogik, sondern die Schnittstelle zur
+Datenbank selbst: dass Zeitstempel als derselbe Zeitpunkt zurueckkommen,
+dass die Stunden-Einteilung in UTC rechnet, dass die Kappung der reinen
+PV-Leistung je ZEILE greift, und dass PostgreSQL seine Zusagen
+(VARCHAR-Laengen, Fremdschluessel) tatsaechlich durchsetzt.
 
-1. Zusagen, die unter BEIDEN Datenbanken identisch gelten muessen. Sie
-   laufen deshalb in jedem Testlauf mit - einmal gegen SQLite, einmal
-   gegen PostgreSQL (siehe docs/DEVELOPMENT.md). Genau hier wuerde
-   auffallen, wenn die dialektabhaengigen Ausdruecke in
-   energy_forecast.py auseinanderlaufen.
-
-2. Zusagen, die NUR PostgreSQL durchsetzt (Marker postgres_only).
-   Sie beschreiben die drei Fallstricke, die beim Umstieg von SQLite
-   tatsaechlich zugeschlagen haben - VARCHAR-Laengen, Fremdschluessel
-   und zonenbehaftete Zeitstempel - damit dieselbe Klasse Fehler nicht
-   ein zweites Mal unbemerkt bleibt.
+Der Anlass ist konkret: diese Anwendung lief frueher auf SQLite. Beim
+Umstieg kamen drei Fehler ans Licht, die SQLite jahrelang verziehen hatte
+- eine zu knapp deklarierte VARCHAR-Laenge, eine nicht gepruefte
+Loeschreihenfolge bei einem Fremdschluessel und ein Zeitstempel, der neu
+etikettiert statt umgerechnet wurde. Alle drei haetten die Tests hier
+sofort gefunden. Sie stehen deshalb bewusst zusammen in einer Datei, als
+Erinnerung an diese Fehlerklasse.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from app.energy_forecast import _raw_hourly_pv_average
 from app.models import DailyEnergyCache, Reading, Session as SessionModel, User
 from app.weather_cache import _utc
 
-from .conftest import make_user, postgres_only
+from .conftest import make_user
 
 
 def _add_readings(rows: list[tuple[datetime, float, float | None]]) -> None:
@@ -52,25 +52,23 @@ def _add_readings(rows: list[tuple[datetime, float, float | None]]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Gilt unter BEIDEN Datenbanken
+# Zeit, Zahlen, Rundung
 # ---------------------------------------------------------------------------
 
 
 def test_hour_bucket_labels_the_end_of_the_utc_hour(client):
-    """Die Stunden-Einteilung muss unter beiden Datenbanken exakt dieselben
-    Zeitfenster ergeben.
+    """Die Stunden-Einteilung muss in UTC rechnen, nicht in Ortszeit.
 
-    Hintergrund: SQLite bildet das ueber strftime(..., '+1 hour'),
-    PostgreSQL ueber date_trunc() + to_char() - zwei voellig verschiedene
-    Ausdruecke, die dieselbe Textdarstellung liefern muessen (siehe
-    energy_forecast._hour_bucket_expression). Geprueft wird die
-    Konvention, dass eine Messstunde den ENDE-Zeitpunkt als Schluessel
-    bekommt (12:00-13:00 -> 13:00), weil Open-Meteo Strahlung ebenso als
-    Mittel der vorangegangenen Stunde kennzeichnet.
+    Geprueft wird die Konvention, dass eine Messstunde den ENDE-Zeitpunkt
+    als Schluessel bekommt (12:00-13:00 -> 13:00), weil Open-Meteo
+    Strahlung ebenso als Mittel der vorangegangenen Stunde kennzeichnet
+    (siehe energy_forecast._hour_bucket_expression).
 
     Die Messwerte liegen bewusst auch ueber einer Tagesgrenze: ein
-    Messwert um 23:30 UTC gehoert in den Eimer 00:00 des FOLGETAGS - ein
-    Ausdruck, der in Ortszeit statt UTC rechnet, wuerde hier danebenliegen.
+    Messwert um 23:30 UTC gehoert in den Eimer 00:00 des FOLGETAGS. Wuerde
+    date_trunc() sich auf die Zeitzone der Sitzung verlassen statt
+    ausdruecklich nach UTC zu drehen, laege dieser Wert bei einem
+    Berliner Server im falschen Eimer.
     """
     day = datetime(2026, 6, 1, tzinfo=timezone.utc)
     _add_readings(
@@ -96,11 +94,10 @@ def test_hour_bucket_labels_the_end_of_the_utc_hour(client):
 def test_pure_pv_is_clamped_per_row_not_across_rows(client):
     """Die Untergrenze 0 der reinen PV-Leistung muss JE ZEILE greifen.
 
-    SQLite schreibt das als max(0.0, ...), PostgreSQL als greatest(0.0, ...)
-    - dort ist max() ausschliesslich eine Aggregatfunktion (siehe
-    energy_forecast._greatest). Wuerde der Ausdruck versehentlich als
-    Aggregat ueber die Zeilen hinweg ausgewertet, faenden beide Datenbanken
-    einen anderen Mittelwert.
+    Der SQL-Ausdruck verwendet dafuer greatest() und nicht max() - max()
+    ist in PostgreSQL ausschliesslich eine Aggregatfunktion ueber Zeilen
+    hinweg. Wuerde die Kappung versehentlich als Aggregat ausgewertet,
+    kaeme ein anderer Mittelwert heraus.
 
     Die zweite Zeile ist der eigentliche Pruefstein: dort ist die
     Batterieleistung groesser als die PV-Leistung, die Differenz also
@@ -129,10 +126,9 @@ def test_longest_real_cache_key_round_trips(client):
 
     Dieser Schluessel wird in daily_summary.build_battery_energy_summary()
     aus einem 16-stelligen Hash-Praefix zusammengesetzt und ist damit 37
-    Zeichen lang. Die Spalte war frueher als String(32) deklariert -
-    SQLite erzwingt VARCHAR-Laengen nicht und hat das klaglos gespeichert,
-    PostgreSQL weist es ab. Der Fehler fiel deshalb erst beim Umstieg auf,
-    Jahre nach seiner Entstehung.
+    Zeichen lang. Die Spalte war frueher als String(32) deklariert - unter
+    der alten SQLite-Datenbank fiel das nie auf, weil SQLite
+    VARCHAR-Laengen nicht erzwingt. PostgreSQL weist zu lange Werte ab.
     """
     config_key = hashlib.sha256(b"beliebige-konfiguration").hexdigest()[:16]
     field = f"battery:v2:{config_key}:discharge"
@@ -165,12 +161,11 @@ def test_longest_real_cache_key_round_trips(client):
 
 def test_reading_timestamp_round_trips_as_the_same_instant(client):
     """Ein gespeicherter Zeitstempel muss als DERSELBE Zeitpunkt
-    zurueckkommen - unabhaengig davon, ob die Datenbank ihn zonenbehaftet
-    (PostgreSQL) oder naiv (SQLite) zurueckgibt.
+    zurueckkommen.
 
     Das ist die Zusage, auf der saemtliche Auswertungen dieser App
-    aufbauen. Der Vergleich laeuft deshalb ueber dieselbe Normalisierung,
-    die auch der Anwendungscode verwendet."""
+    aufbauen. Der Vergleich laeuft ueber dieselbe Normalisierung, die auch
+    der Anwendungscode verwendet."""
     moment = datetime(2026, 6, 1, 14, 37, 21, 123456, tzinfo=timezone.utc)
     _add_readings([(moment, 1234.0, None)])
 
@@ -186,11 +181,11 @@ def test_utc_helper_converts_instead_of_relabelling(client):
     """weather_cache._utc() darf einen bereits zonenbehafteten Zeitstempel
     nur UMRECHNEN, nie neu etikettieren.
 
-    Genau hier lag ein Fehler: ein unbedingtes replace(tzinfo=utc) ist
-    unter SQLite richtig (dort kommen Werte naiv zurueck), haette unter
-    PostgreSQL aber den Zeitpunkt still um den Zonenversatz verschoben.
-    Da die betroffene Tabelle die Trainingsdaten der PV-Prognose enthaelt
-    (ein volles Jahr), waere das lange unbemerkt geblieben.
+    Genau hier lag ein Fehler: ein unbedingtes replace(tzinfo=utc)
+    verschiebt einen bereits zonenbehafteten Zeitpunkt still um den
+    Zonenversatz. Da die betroffene Tabelle die Trainingsdaten der
+    PV-Prognose enthaelt (ein volles Jahr), waere das lange unbemerkt
+    geblieben.
 
     Dieser Test braucht keine Datenbank - er sichert das Muster selbst ab.
     """
@@ -203,11 +198,10 @@ def test_utc_helper_converts_instead_of_relabelling(client):
 
 
 # ---------------------------------------------------------------------------
-# 2. Nur PostgreSQL setzt das durch
+# Zusagen, die PostgreSQL durchsetzt
 # ---------------------------------------------------------------------------
 
 
-@postgres_only
 def test_connection_timezone_is_utc(client):
     """Die Verbindung muss auf UTC stehen (siehe database.py).
 
@@ -219,13 +213,14 @@ def test_connection_timezone_is_utc(client):
         assert conn.exec_driver_sql("SHOW timezone").scalar() == "UTC"
 
 
-@postgres_only
 def test_timestamps_come_back_timezone_aware(client):
     """PostgreSQL gibt DateTime(timezone=True)-Spalten zonenbehaftet
-    zurueck - anders als SQLite.
+    zurueck.
 
-    Dieser Unterschied ist der Grund, warum der Anwendungscode ueberall
-    normalisiert, statt sich auf eine der beiden Formen zu verlassen."""
+    Darauf verlaesst sich der Anwendungscode nicht blind - er
+    normalisiert (siehe weather_cache._utc) -, aber die Zusage gehoert
+    festgehalten: sie ist der Grund, warum ein unbedingtes
+    replace(tzinfo=utc) hier falsch waere."""
     _add_readings([(datetime(2026, 6, 1, 12, tzinfo=timezone.utc), 500.0, None)])
 
     db = SessionLocal()
@@ -236,14 +231,13 @@ def test_timestamps_come_back_timezone_aware(client):
         db.close()
 
 
-@postgres_only
 def test_foreign_key_from_session_to_user_is_enforced(client):
     """Eine Sitzung ohne zugehoerigen Nutzer darf es nicht geben.
 
-    SQLite setzt Fremdschluessel ohne "PRAGMA foreign_keys=ON" gar nicht
-    durch, PostgreSQL immer. Praktisch relevant beim Loeschen: dort muss
-    die Reihenfolge stimmen (Sitzungen vor Nutzern) - genau daran ist die
-    erste Fassung des Migrationsskripts gescheitert."""
+    Praktisch relevant beim Loeschen: dort muss die Reihenfolge stimmen
+    (Sitzungen vor Nutzern). Unter der frueheren SQLite-Datenbank war das
+    folgenlos, weil SQLite Fremdschluessel ohne "PRAGMA foreign_keys=ON"
+    gar nicht prueft."""
     user = make_user("fk-pruefung", "passwort-fuer-den-test")
     now = datetime.now(timezone.utc)
 
@@ -272,15 +266,14 @@ def test_foreign_key_from_session_to_user_is_enforced(client):
         db.close()
 
 
-@postgres_only
 def test_varchar_length_is_actually_enforced(client):
     """PostgreSQL weist zu lange Werte ab, statt sie stillschweigend zu
     speichern.
 
     Das ist der Mechanismus hinter dem String(32)-Fehler (siehe
-    test_longest_real_cache_key_round_trips). Dieser Test haelt fest, dass
-    die Grenze real ist - wer die Spalte kuenftig verengt, bekommt hier
-    sofort eine Rueckmeldung statt erst im Betrieb."""
+    test_longest_real_cache_key_round_trips). Wer eine Spalte kuenftig zu
+    knapp deklariert, bekommt hier sofort eine Rueckmeldung statt erst im
+    Betrieb."""
     db = SessionLocal()
     try:
         db.add(

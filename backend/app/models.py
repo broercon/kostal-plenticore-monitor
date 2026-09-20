@@ -18,8 +18,7 @@ class Reading(Base):
         # Reine Zeitraum-Abfragen ueber ALLE Geraete (kein device_id-Filter -
         # z.B. die Energie-Zeitraum-Uebersichten bei mehreren Wechselrichtern,
         # siehe daily_summary.py) profitieren vom zusammengesetzten Index oben
-        # kaum, da er mit device_id beginnt. Migration fuer Bestandsdaten-
-        # banken siehe database._ensure_readings_timestamp_index.
+        # kaum, da er mit device_id beginnt.
         Index("ix_readings_timestamp", "timestamp"),
     )
 
@@ -35,10 +34,8 @@ class Reading(Base):
     grid_draw_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     pv_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     # AC-seitige Nettoleistung am Wechselrichter-Anschluss (devices:local:ac/P)
-    # - siehe plenticore_client.py fuer Herleitung/Vorzeichen-Konvention. Neu
-    # hinzugekommenes Feld; bei vor diesem Update erfassten Zeilen NULL
-    # (siehe database._ensure_ac_power_column fuer die Migration bestehender
-    # Datenbanken).
+    # - siehe plenticore_client.py fuer Herleitung/Vorzeichen-Konvention.
+    # NULL bei Zeilen, die vor Einfuehrung dieses Feldes erfasst wurden.
     ac_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     battery_soc_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -47,9 +44,8 @@ class Reading(Base):
     # bisherigen Berechnungen (die weiterhin ausschliesslich den bereits vom
     # Geraet aufsummierten pv_power_w nutzen). NULL, wenn der jeweilige
     # String am Geraet nicht existiert (z.B. nur 2 Stringeingaenge belegt)
-    # ODER bei vor diesem Update erfassten Zeilen (siehe
-    # database._ensure_pv_string_columns fuer die Migration bestehender
-    # Datenbanken). Bei manchen Installationen haengt an PV3 keine echte
+    # ODER bei Zeilen, die vor Einfuehrung dieser Felder erfasst wurden.
+    # Bei manchen Installationen haengt an PV3 keine echte
     # PV-Reihe, sondern die Batterie (siehe aggregation.pure_pv_power_w) -
     # pv3_power_w spiegelt in diesem Fall die Batterieleistung wider, nicht
     # echte PV-Erzeugung.
@@ -168,9 +164,10 @@ class DailyEnergyCache(Base):
     # Zeitraum-Übersichten im selben Cache, ohne dass sie sich gegenseitig
     # überschreiben. 64 statt 32 Zeichen: der längste tatsächlich erzeugte
     # Schlüssel ist "battery:v2:<16 Hex-Zeichen>:discharge" mit 37 Zeichen
-    # (siehe daily_summary.build_battery_energy_summary). SQLite erzwingt
-    # VARCHAR-Längen nicht und hat das klaglos gespeichert, PostgreSQL weist
-    # zu lange Werte dagegen ab.
+    # (siehe daily_summary.build_battery_energy_summary). PostgreSQL weist
+    # zu lange Werte ab - die frühere SQLite-Datenbank hatte sie klaglos
+    # gespeichert, weshalb die zu knappe Deklaration jahrelang unbemerkt
+    # blieb (siehe tests/test_postgres_contract.py).
     field: Mapped[str] = mapped_column(String(64), primary_key=True)
     date: Mapped[str] = mapped_column(String(10), primary_key=True)  # "YYYY-MM-DD"
     kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -256,12 +253,10 @@ class WeatherHourly(Base):
     diffuse_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
     temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
     # Nullable, obwohl forecast_weather.WeatherPoint diese Felder als
-    # Pflichtwerte fuehrt: bestehende Datenbanken bekommen diese Spalten erst
-    # nachtraeglich per ALTER TABLE (siehe database.init_db) und dabei werden
-    # alte Zeilen bewusst geloescht statt mit Platzhaltern aufgefuellt (siehe
-    # dortiger Kommentar) - "nullable" ist hier nur ein technisches
-    # Zugestaendnis an diesen Nachtrag, im laufenden Betrieb sind neu
-    # geschriebene Zeilen immer vollstaendig befuellt.
+    # Pflichtwerte fuehrt: es kann noch Zeilen aus der Zeit vor Einfuehrung
+    # dieser Werte geben. Im laufenden Betrieb sind neu geschriebene Zeilen
+    # immer vollstaendig befuellt; _load_cached_points() filtert
+    # unvollstaendige Zeilen heraus.
     cloud_cover_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     wind_speed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     humidity_percent: Mapped[float | None] = mapped_column(Float, nullable=True)

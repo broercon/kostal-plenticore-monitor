@@ -6,20 +6,15 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+# Das "INSERT ... ON CONFLICT DO UPDATE" in save_forecast_predictions() ist
+# kein Standard-SQL und kommt deshalb aus dem Dialekt-Modul statt aus
+# sqlalchemy selbst.
+from sqlalchemy.dialects.postgresql import insert
 
 from .config import settings
 from .daily_report_config import InvalidReportTime, parse_report_time
-from .database import IS_SQLITE, SessionLocal
+from .database import SessionLocal
 from .models import ForecastPrediction
-
-# Das "INSERT ... ON CONFLICT DO UPDATE" (siehe save_forecast_predictions)
-# ist kein Standard-SQL, sondern muss aus dem jeweiligen Dialekt-Modul
-# kommen. Die Aufrufform ist in beiden identisch (index_elements/set_/
-# excluded), deshalb genuegt hier der unterschiedliche Import.
-if IS_SQLITE:
-    from sqlalchemy.dialects.sqlite import insert
-else:
-    from sqlalchemy.dialects.postgresql import insert
 
 
 def _utc(value: datetime) -> datetime:

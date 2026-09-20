@@ -8,7 +8,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY backend/app /app/app
 COPY frontend /app/frontend
 
-ENV DB_PATH=/app/data/kostal.db \
+# DATABASE_URL hat bewusst KEINEN Standardwert - die Anwendung bricht ohne
+# die Variable mit einer klaren Meldung ab, statt scheinbar zu laufen.
+ENV DATA_DIR=/app/data \
     CONFIG_PATH=/app/config/inverters.json \
     FRONTEND_DIR=/app/frontend \
     POLL_INTERVAL_SECONDS=15 \

@@ -14,7 +14,17 @@ import tempfile
 from pathlib import Path
 
 _TEST_DIR = Path(tempfile.mkdtemp(prefix="kpm-test-"))
-os.environ["DB_PATH"] = str(_TEST_DIR / "test.db")
+os.environ["DATA_DIR"] = str(_TEST_DIR)
+# Die Tests brauchen eine echte PostgreSQL-Instanz. Ohne gesetzte
+# TEST_DATABASE_URL wird die uebliche Entwicklungs-Adresse verwendet
+# (siehe docs/DEVELOPMENT.md, Abschnitt "Backend-Tests").
+#
+# UNBEDINGT eine eigene Test-Datenbank angeben, niemals die produktive:
+# die client()-Fixture leert vor JEDEM Testfall das gesamte Schema.
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test",
+)
 # Zeigt bewusst auf eine nicht existierende Datei, damit Settings() auf die
 # Env-Variablen-Fallback-Wechselrichter-Konfiguration unten zurueckfaellt,
 # statt eine echte config/inverters.json vom Entwicklerrechner zu lesen.
@@ -36,33 +46,9 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app import auth  # noqa: E402
-from app.database import IS_SQLITE, Base, SessionLocal, engine, init_db  # noqa: E402
+from app.database import Base, SessionLocal, engine, init_db  # noqa: E402
 from app.main import app as fastapi_app  # noqa: E402
 from app.models import User  # noqa: E402
-
-# Die Testsuite laeuft standardmaessig gegen SQLite (DB_PATH oben), kann
-# aber ueber DATABASE_URL auch gegen PostgreSQL gefahren werden - siehe
-# docs/DEVELOPMENT.md. Ein paar wenige Tests pruefen ausdruecklich
-# SQLite-eigene Mechanik (WAL-Journal) oder stellen eine BESTEHENDE
-# SQLite-Installation nach, um die Schema-Nachtraege in database.py zu
-# pruefen (per Hand geschriebenes SQLite-DDL). Beides hat unter PostgreSQL
-# keine Entsprechung: eine PostgreSQL-Datenbank dieser App wird immer
-# frisch ueber create_all() mit dem vollstaendigen Schema angelegt, es kann
-# dort also gar keine Bestandsdatenbank mit fehlenden Spalten geben.
-sqlite_only = pytest.mark.skipif(
-    not IS_SQLITE,
-    reason="Prueft SQLite-spezifisches Verhalten (WAL bzw. Bestandsdatenbank-Nachtraege).",
-)
-
-# Umgekehrt: Zusagen, die NUR PostgreSQL durchsetzt (VARCHAR-Laengen,
-# Fremdschluessel, zonenbehaftete Zeitstempel). Unter SQLite liessen sich
-# diese Tests nicht sinnvoll formulieren - dort wuerde die jeweils
-# erwartete Ablehnung schlicht nicht stattfinden. Siehe
-# docs/DEVELOPMENT.md, Abschnitt "Zwei Datenbanken".
-postgres_only = pytest.mark.skipif(
-    IS_SQLITE,
-    reason="Prueft Zusagen, die nur PostgreSQL durchsetzt.",
-)
 
 
 @pytest.fixture()

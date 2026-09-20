@@ -406,12 +406,10 @@ def import_rows(device_id: str, device_name: str, rows: list[dict]) -> tuple[int
     init_db()
     session = SessionLocal()
     try:
-        # SQLite gibt DateTime-Werte beim Zurücklesen als "naive" datetime
-        # zurueck (ohne tzinfo), auch wenn wir sie tz-aware gespeichert
-        # haben; PostgreSQL liefert sie zonenbehaftet. Fuer den Abgleich
-        # unten muessen beide Seiten dieselbe Form haben, sonst wuerde der
-        # Vergleich existing_by_ts[ts] nie treffen und der Import saemtliche
-        # bereits vorhandenen Zeilen als neu einfuegen.
+        # Fuer den Abgleich unten muessen beide Seiten dieselbe Form haben
+        # (zonenbehaftet, UTC) - sonst wuerde der Vergleich
+        # existing_by_ts[ts] nie treffen und der Import saemtliche bereits
+        # vorhandenen Zeilen ein zweites Mal einfuegen.
         existing_by_ts: dict[datetime, Reading] = {}
         for reading in session.scalars(
             select(Reading).where(Reading.device_id == device_id)

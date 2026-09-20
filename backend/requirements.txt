@@ -1,9 +1,8 @@
 fastapi>=0.111,<1.0
 uvicorn[standard]>=0.29,<1.0
 SQLAlchemy>=2.0,<3.0
-# PostgreSQL-Treiber. Wird nur gebraucht, wenn DATABASE_URL auf eine
-# PostgreSQL-Instanz zeigt - ohne die Variable laeuft die App weiterhin
-# auf SQLite (in Pythons Standardbibliothek enthalten, kein Paket noetig).
+# PostgreSQL-Treiber (Version 3). Die Anwendung speichert ausschliesslich
+# in PostgreSQL, siehe docs/INSTALLATION.md.
 psycopg[binary]>=3.1,<4.0
 pykoplenti>=0.4
 aiohttp>=3.9

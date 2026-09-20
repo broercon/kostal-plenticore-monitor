@@ -12,7 +12,7 @@ import numpy as np
 from sqlalchemy import case, delete, func, select, text
 
 from .config import settings
-from .database import IS_SQLITE, SessionLocal
+from .database import SessionLocal
 from .forecast_config import get_config
 from .forecast_weather import WeatherPoint, WeatherServiceError, fetch_forecast_weather
 from .models import HourlyPvCache, Reading
@@ -127,20 +127,15 @@ def _pure_pv_sql_expression():
     """
     return case(
         (Reading.pv_power_w.is_(None), None),
-        else_=_greatest(
+        # greatest() und nicht max(): gesucht ist der groessere der beiden
+        # Werte INNERHALB einer Zeile. max() ist in PostgreSQL
+        # ausschliesslich eine Aggregatfunktion ueber Zeilen hinweg und
+        # existiert mit zwei Argumenten gar nicht.
+        else_=func.greatest(
             0.0,
             Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
         ),
     )
-
-
-def _greatest(*values):
-    """Groesster mehrerer Werte INNERHALB einer Zeile (kein Aggregat ueber
-    Zeilen hinweg). SQLite nennt diese skalare Funktion "max" (mit mehreren
-    Argumenten), PostgreSQL "greatest" - dort ist "max" ausschliesslich eine
-    Aggregatfunktion und wuerde mit zwei Argumenten schlicht nicht
-    existieren ("function max(numeric, double precision) does not exist")."""
-    return func.max(*values) if IS_SQLITE else func.greatest(*values)
 
 
 def _hour_bucket_expression():
@@ -150,16 +145,13 @@ def _hour_bucket_expression():
     Open-Meteo kennzeichnet Strahlung als Mittel der vorangegangenen Stunde.
     Daher bekommt z.B. die Messstunde 12:00-13:00 den Endzeitpunkt 13:00.
 
-    Beide Dialekte liefern bewusst dieselbe Textdarstellung, damit der
-    Aufrufer sie unveraendert per datetime.fromisoformat() einlesen kann.
-    Unter PostgreSQL wird der Zeitstempel dabei ausdruecklich nach UTC
-    gedreht ("AT TIME ZONE 'UTC'"), statt sich auf die Zeitzone der Sitzung
-    zu verlassen: date_trunc() wuerde sonst an der jeweiligen ORTS-Stunden-
-    grenze abschneiden, was in Zonen mit halbstuendigem Versatz und rund um
-    die Sommerzeitumstellung andere Stundenfenster ergaebe als auf der
-    Wetterseite."""
-    if IS_SQLITE:
-        return func.strftime("%Y-%m-%dT%H:00:00", Reading.timestamp, "+1 hour")
+    Der Zeitstempel wird ausdruecklich nach UTC gedreht ("AT TIME ZONE
+    'UTC'"), statt sich auf die Zeitzone der Sitzung zu verlassen:
+    date_trunc() wuerde sonst an der jeweiligen ORTS-Stundengrenze
+    abschneiden, was in Zonen mit halbstuendigem Versatz und rund um die
+    Sommerzeitumstellung andere Stundenfenster ergaebe als auf der
+    Wetterseite. Die Textform ist bewusst ISO-8601, damit der Aufrufer sie
+    unveraendert per datetime.fromisoformat() einlesen kann."""
     return func.to_char(
         func.date_trunc("hour", func.timezone("UTC", Reading.timestamp))
         + text("interval '1 hour'"),

@@ -58,35 +58,30 @@ können deshalb auch in diesen persistenten Logs stehen.
 
 ## Daten sichern
 
-Das Vorgehen hängt davon ab, welche Datenbank die Anwendung verwendet
-(siehe [PostgreSQL statt SQLite](INSTALLATION.md#postgresql-statt-sqlite)).
-
-**Bei SQLite (Standard).** Die Datei läuft im WAL-Modus, es gibt also neben
-`kostal.db` noch `-wal` und `-shm`. Für ein konsistentes Backup den
-Container stoppen und anschließend das gesamte Verzeichnis `data/` sichern:
-
-```bash
-docker compose down
-cp -a data/ /pfad/zum/backup/
-docker compose up -d
-```
-
-**Bei PostgreSQL.** Die Messwerte liegen dann nicht mehr in `data/`, sondern
-in der Datenbank – ein Kopieren des Verzeichnisses sichert sie *nicht*.
-Stattdessen im laufenden Betrieb (kein Stoppen nötig, `pg_dump` arbeitet auf
-einem konsistenten Snapshot):
+Die Messwerte liegen in der PostgreSQL-Datenbank, nicht im Verzeichnis
+`data/` – ein Kopieren des Verzeichnisses sichert sie also **nicht**. Der
+Dump läuft im laufenden Betrieb, ein Stoppen ist nicht nötig (`pg_dump`
+arbeitet auf einem konsistenten Snapshot):
 
 ```bash
 pg_dump -Fc -d "$DATABASE_URL" > kostal_app.dump
 ```
 
+Zurückspielen in eine leere Datenbank:
+
+```bash
+pg_restore -d "$DATABASE_URL" --no-owner --no-acl kostal_app.dump
+```
+
 Wer die Datenbank über einen eigenen Infrastruktur-Stack betreibt, hat dafür
 üblicherweise bereits ein Backup-Skript, das alle App-Datenbanken erfasst –
 dann genügt es, dort einmal zu prüfen, dass die Datenbank dieser App
-enthalten ist. Das Verzeichnis `data/` enthält weiterhin die Logdateien und
-sollte mitgesichert werden.
+enthalten ist.
 
-Die Datenbank enthält in beiden Fällen nicht nur Messwerte, sondern auch
+Das Verzeichnis `data/` enthält weiterhin die Logdateien und sollte
+mitgesichert werden.
+
+Die Datenbank enthält nicht nur Messwerte, sondern auch
 Benutzerkonten, Passwort-Hashes, aktive Sitzungstoken, den Energie-Cache und
 die Mail-Report-Konfiguration einschließlich eines eventuell gespeicherten
 API-Keys. Backup und Logdateien müssen daher wie Zugangsdaten behandelt

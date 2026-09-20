@@ -524,16 +524,11 @@ für vergangene Tage ergänzt, invalidiert automatisch die betroffenen
 Cache-Einträge (siehe `app/auto_import.py`), damit sich geänderte
 Altdaten auch tatsächlich in den Übersichten niederschlagen.
 
-Zusätzlich läuft die Datenbank unter SQLite im WAL-Modus (`PRAGMA
-journal_mode=WAL`), damit lesende Zugriffe (Dashboard/API) und der
-alle paar Sekunden schreibende Poller sich nicht gegenseitig blockieren –
-unter PostgreSQL entfällt das ersatzlos, dessen MVCC lässt Leser und
-Schreiber ohnehin nicht aufeinander warten. In beiden Fällen gibt es
-einen zusätzlichen Index rein auf `readings.timestamp` (der
-bestehende zusammengesetzte Index beginnt mit `device_id` und hilft
-Abfragen ohne Geräte-Filter kaum). Beide Änderungen wirken automatisch
-auch auf Bestandsdatenbanken (siehe `app/database.py`), ein manueller
-Migrationsschritt ist nicht nötig.
+Dass lesende Zugriffe (Dashboard/API) und der alle paar Sekunden
+schreibende Poller sich nicht gegenseitig blockieren, erledigt PostgreSQL
+von sich aus (MVCC) – dafür ist nichts zu konfigurieren. Hinzu kommt ein
+Index rein auf `readings.timestamp`: der zusammengesetzte Index beginnt mit
+`device_id` und hilft Abfragen ohne Geräte-Filter kaum.
 
 ### Performance: Stündlicher PV-Historie-Cache (Prognosekontrolle)
 

@@ -91,21 +91,30 @@ def _load_inverters_from_env() -> list[InverterConfig]:
 class Settings:
     def __init__(self) -> None:
         self.config_path = Path(os.environ.get("CONFIG_PATH", "/app/config/inverters.json"))
-        self.db_path = Path(os.environ.get("DB_PATH", "/app/data/kostal.db"))
-        # Vollstaendige SQLAlchemy-URL der Datenbank. Ist sie NICHT gesetzt,
-        # bleibt es bei der bisherigen SQLite-Datei unter DB_PATH - eine
-        # bestehende Installation verhaelt sich also unveraendert. Fuer
-        # PostgreSQL z.B.
-        #   DATABASE_URL=postgresql://kostal_app:...@postgres:5432/kostal_app
-        # (siehe docs/INSTALLATION.md, Abschnitt "PostgreSQL statt SQLite").
-        self.database_url = (
-            os.environ.get("DATABASE_URL", "").strip() or f"sqlite:///{self.db_path}"
-        )
-        # Persistente App-Logdatei (im selben data-Volume wie die DB), damit
-        # sich Logs nach einem Vorfall herauskopieren lassen.
+        # Verzeichnis fuer alles, was die App dauerhaft auf die Platte legt -
+        # inzwischen nur noch die Logdateien (die Messwerte liegen in der
+        # Datenbank, siehe database_url).
+        self.data_dir = Path(os.environ.get("DATA_DIR", "/app/data"))
+        # Persistente App-Logdatei, damit sich Logs nach einem Vorfall
+        # herauskopieren lassen.
         self.log_file = Path(
-            os.environ.get("LOG_FILE", str(self.db_path.parent / "logs" / "app.log"))
+            os.environ.get("LOG_FILE", str(self.data_dir / "logs" / "app.log"))
         )
+        # Vollstaendige SQLAlchemy-URL der PostgreSQL-Datenbank, z.B.
+        #   DATABASE_URL=postgresql://kostal_app:...@postgres:5432/kostal_app
+        # Pflichtangabe: ohne Datenbank kann die App nichts speichern, und
+        # ein stiller Rueckfall auf eine leere lokale Datei waere schlimmer
+        # als ein klarer Abbruch - die App liefe dann scheinbar normal, nur
+        # ohne jede Historie (siehe docs/INSTALLATION.md, Abschnitt
+        # "Datenbank einrichten").
+        self.database_url = os.environ.get("DATABASE_URL", "").strip()
+        if not self.database_url:
+            raise RuntimeError(
+                "DATABASE_URL ist nicht gesetzt. Die Anwendung benoetigt eine "
+                "PostgreSQL-Datenbank, z.B. "
+                "DATABASE_URL=postgresql://benutzer:passwort@postgres:5432/datenbank "
+                "- siehe docs/INSTALLATION.md, Abschnitt 'Datenbank einrichten'."
+            )
         self.poll_interval_seconds = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))
         self.frontend_dir = Path(os.environ.get("FRONTEND_DIR", "/app/frontend"))
         # Fuer die Berechnung von "heute" (Tagessummen) bei lokaler Mitternacht statt UTC.

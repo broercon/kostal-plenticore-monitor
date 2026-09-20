@@ -130,7 +130,7 @@ an den Container weiter:
 | `MAIL_SERVICE_URL` | leer | Vollständiger `POST /send`-Endpunkt |
 | `MAIL_SERVICE_API_KEY` | leer | API-Key für den Mail-Service |
 | `MAIL_SERVICE_FROM_NAME` | `Kostal Plenticore Monitor` | Anzeigename des Absenders |
-| `DATABASE_URL` | leer | Vollständige Datenbank-URL; leer = SQLite unter `DB_PATH` (siehe [PostgreSQL statt SQLite](#postgresql-statt-sqlite)) |
+| `DATABASE_URL` | – | **Pflicht.** Verbindung zur PostgreSQL-Datenbank (siehe [Datenbank einrichten](#datenbank-einrichten)) |
 
 Beim direkten Start des Backends oder in einer eigenen Container-
 Konfiguration unterstützt `app/config.py` zusätzlich:
@@ -138,8 +138,8 @@ Konfiguration unterstützt `app/config.py` zusätzlich:
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `CONFIG_PATH` | `/app/config/inverters.json` | Pfad zur Geräte-Konfiguration |
-| `DB_PATH` | `/app/data/kostal.db` | Pfad zur SQLite-Datenbank (wirkungslos, wenn `DATABASE_URL` gesetzt ist) |
-| `LOG_FILE` | `<DB-Verzeichnis>/logs/app.log` | Persistente Logdatei |
+| `DATA_DIR` | `/app/data` | Verzeichnis für die persistenten Logdateien |
+| `LOG_FILE` | `<DATA_DIR>/logs/app.log` | Persistente Logdatei |
 | `FRONTEND_DIR` | `/app/frontend` | Verzeichnis des statischen Frontends |
 | `INVERTER_HOST`, `INVERTER_PASSWORD` | leer | Fallback für genau ein Gerät, wenn keine Konfigurationsdatei geladen wurde |
 | `INVERTER_ID`, `INVERTER_NAME`, `INVERTER_PORT` | `wr1`, `Wechselrichter`, `80` | Metadaten dieses Fallback-Geräts |
@@ -151,57 +151,50 @@ von der mitgelieferten Compose-Datei aber nicht automatisch aus `.env`
 durchgereicht.
 
 
-### PostgreSQL statt SQLite
+### Datenbank einrichten
 
-Standardmäßig speichert die App alles in einer einzelnen SQLite-Datei unter
-`./data/kostal.db`. Das genügt für eine einzelne Anlage vollkommen und
-braucht keinerlei zusätzliche Infrastruktur. Wer die App neben anderen
-Anwendungen auf einen gemeinsamen PostgreSQL-Server legen möchte (zentrale
-Sicherung, ein Ort für alle Datenbanken), setzt stattdessen `DATABASE_URL`:
+Die Anwendung speichert alles in einer PostgreSQL-Datenbank – Messwerte,
+Benutzerkonten, Caches und Konfiguration. Eine laufende PostgreSQL-Instanz
+ist deshalb Voraussetzung; ohne `DATABASE_URL` startet die Anwendung nicht.
+
+Leg dort zunächst eine eigene Datenbank samt eigenem Benutzer an:
+
+```sql
+CREATE USER kostal_app WITH PASSWORD 'GEHEIM';
+CREATE DATABASE kostal_app OWNER kostal_app;
+```
+
+Die Tabellen legt die Anwendung beim ersten Start selbst an, die Datenbank
+darf also leer bleiben.
+
+Dann in `.env` eintragen:
 
 ```bash
-# in .env
 DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app
 ```
 
-Die mitgelieferte `docker-compose.yml` bindet dafür bereits das externe
-Docker-Netzwerk `dbnet` ein, über das der Datenbank-Container unter dem
-Namen `postgres` erreichbar ist. Ist `DATABASE_URL` leer, bleibt alles beim
-SQLite-Betrieb – die Variable ist der einzige Schalter.
+Die mitgelieferte `docker-compose.yml` bindet das externe Docker-Netzwerk
+`dbnet` ein, über das der Datenbank-Container unter dem Namen `postgres`
+erreichbar ist. Läuft die Datenbank anderswo, sind Netzwerkname in der
+Compose-Datei und Host in `DATABASE_URL` entsprechend anzupassen.
 
-Der PostgreSQL-Treiber (`psycopg`) ist im Image bereits enthalten, es ist
-also kein zusätzlicher Build nötig.
+Der Treiber (`psycopg`) ist im Image enthalten, ein zusätzlicher Build ist
+nicht nötig.
 
-#### Bestehende Daten übernehmen
+Das Verzeichnis `./data` bleibt weiterhin eingebunden, enthält aber nur
+noch die Logdateien.
 
-Eine leere PostgreSQL-Datenbank legt die App beim ersten Start selbst an.
-Ein vorhandener SQLite-Bestand wird mit einem eigenen Skript übertragen:
+#### Frühere Versionen mit SQLite
 
-```bash
-docker compose exec \
-  -e DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app \
-  kostal-monitor python -m app.migrate_to_postgres
-```
-
-Das Skript liest die SQLite-Datei ausschließlich lesend und lässt sie
-unverändert – sie bleibt damit als Rückfallebene erhalten. Es darf beliebig
-oft laufen und stellt jedes Mal denselben Endzustand her; Messwerte werden
-dabei nur ergänzt, alle übrigen Tabellen vollständig ersetzt (Einzelheiten
-im Kopf von `backend/app/migrate_to_postgres.py`). Am Ende vergleicht es
-die Zeilenzahlen beider Seiten und meldet Abweichungen.
-
-Für den eigentlichen Umstieg heißt das:
-
-1. Skript laufen lassen, solange die App noch auf SQLite läuft, und das
-   Ergebnis in Ruhe prüfen.
-2. App stoppen (`docker compose stop`).
-3. Skript ein zweites Mal laufen lassen – es zieht nur die inzwischen
-   dazugekommenen Messwerte nach und braucht dafür Sekunden.
-4. `DATABASE_URL` in `.env` eintragen und `docker compose up -d` starten.
-
-Zurück geht es genauso einfach: `DATABASE_URL` wieder auskommentieren und
-neu starten – dann ist die SQLite-Datei wieder die Wahrheit (allerdings
-ohne die zwischenzeitlich in PostgreSQL erfassten Messwerte).
+Bis einschließlich September 2026 speicherte die Anwendung in einer
+SQLite-Datei unter `./data/kostal.db`. Wer von einer solchen Installation
+kommt, überträgt den Bestand mit dem Skript `app/migrate_to_postgres.py`
+aus dem letzten Stand, der SQLite noch unterstützte – siehe die
+Commit-Historie zum Umstieg. Das Skript liest die Datei ausschließlich
+lesend, lässt sie unverändert und darf beliebig oft laufen; sinnvoll ist,
+es einmal im laufenden Betrieb zum Prüfen auszuführen und ein zweites Mal
+bei gestoppter Anwendung, um die inzwischen dazugekommenen Messwerte
+nachzuziehen.
 
 ### 3. Starten
 
