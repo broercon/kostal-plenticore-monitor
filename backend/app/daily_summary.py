@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Sequence
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import BigInteger, cast, delete, func, select
 
 from .aggregation import (
     BATTERY_CHARGE,
@@ -101,12 +101,20 @@ def _home_source_breakdown_with_grid(rows: list[Reading]) -> list[dict]:
     )
 
 
-def _combined_rows(rows: list[Reading]) -> list[Reading]:
-    """Fasst rows (mehrere Geräte) zur hausweit korrigierten Energiebilanz
-    zusammen (siehe aggregation.combine_devices) - gemeinsamer Baustein für
-    mehrere der Funktionen unten, die bei >1 Wechselrichter alle auf
-    derselben Logik beruhen wie main.py's Endpunkte."""
-    per_device = aggregate_per_device(rows, bucket_seconds=60)
+# Kantenlaenge der Zeit-Buckets, in denen die Geraete vor dem Kombinieren
+# gemittelt werden (siehe _combined_rows). Muss zwischen der Python- und der
+# SQL-Variante identisch sein, sonst entstehen unterschiedliche Buckets.
+_COMBINE_BUCKET_SECONDS = 60
+
+
+def _rows_from_per_device(
+    per_device: dict[str, dict[int, dict[str, float | None]]]
+) -> list[Reading]:
+    """Baut aus gemittelten Geraete-Buckets die hausweit korrigierte
+    Energiebilanz (siehe aggregation.combine_devices) als Reading-artige
+    Zeitreihe - gemeinsamer Baustein fuer die Funktionen unten, die bei
+    >1 Wechselrichter alle auf derselben Logik beruhen wie main.py's
+    Endpunkte."""
     combined = combine_devices(
         per_device, _has_grid_meter_map(), _battery_inverted_map(),
         raw_battery_output=True,
@@ -120,6 +128,93 @@ def _combined_rows(rows: list[Reading]) -> list[Reading]:
         )
         for bk, values in combined.items()
     ]
+
+
+def _combined_rows(rows: list[Reading]) -> list[Reading]:
+    """Wie _rows_from_per_device, aber ausgehend von bereits geladenen
+    Rohmesswerten - fuer Aufrufer, die die Zeilen ohnehin schon in der Hand
+    haben."""
+    return _rows_from_per_device(
+        aggregate_per_device(rows, bucket_seconds=_COMBINE_BUCKET_SECONDS)
+    )
+
+
+def _load_per_device_buckets(
+    start_date: date, end_date_exclusive: date, *, padding: timedelta = timedelta(0)
+) -> dict[str, dict[int, dict[str, float | None]]]:
+    """Dasselbe Ergebnis wie aggregate_per_device(_load_readings_range(...),
+    60), aber als GROUP BY in der Datenbank statt in Python.
+
+    Der Unterschied ist die Datenmenge, die ueberhaupt aus der Datenbank
+    herauskommt: gemessen an 35 Tagen Historie werden aus 395.000
+    Rohmesswerten 100.800 Minuten-Buckets - die Verdichtung um den Faktor 4
+    passiert so vor dem Netzwerkweg statt danach (gemessen 5.197 ms ->
+    1.683 ms). SQLs avg() ignoriert NULL-Werte genau wie die
+    Python-Variante, ein Bucket ganz ohne Messwert fuer ein Feld wird also
+    auch hier NULL.
+
+    Ein Kreuzvergleich beider Wege gegen dieselben Beispieldaten steht in
+    tests/test_combined_rows_sql.py, damit sie nicht unbemerkt
+    auseinanderlaufen."""
+    tz = ZoneInfo(settings.timezone_name)
+    since = datetime.combine(start_date, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+    until = datetime.combine(end_date_exclusive, datetime.min.time(), tzinfo=tz).astimezone(
+        timezone.utc
+    )
+    # Derselbe Bucket-Schluessel wie aggregation._bucket_key: auf ganze
+    # Vielfache der Bucket-Laenge seit der Epoche abgerundet, also
+    # unabhaengig von jeder Zeitzone.
+    # Der Cast nach BIGINT ist kein Schoenheitsfehler: extract(epoch ...)
+    # liefert in PostgreSQL numeric, und ohne Cast rechnet die Datenbank die
+    # ganze Bucket-Bildung in Festkomma-Arithmetik und gibt 100.000 Decimal-
+    # Objekte zurueck, die Python einzeln umwandeln muss. Gemessen an 35
+    # Tagen Historie: 2.364 ms ohne, 1.683 ms mit Cast.
+    bucket = cast(
+        func.floor(func.extract("epoch", Reading.timestamp) / _COMBINE_BUCKET_SECONDS)
+        * _COMBINE_BUCKET_SECONDS,
+        BigInteger,
+    ).label("bucket")
+
+    session = SessionLocal()
+    try:
+        rows = session.execute(
+            select(
+                Reading.device_id,
+                bucket,
+                *[func.avg(getattr(Reading, field)).label(field) for field in HISTORY_FIELDS],
+            )
+            .where(
+                Reading.timestamp >= since - padding,
+                Reading.timestamp < until + padding,
+            )
+            .group_by(Reading.device_id, bucket)
+        ).all()
+    finally:
+        session.close()
+
+    result: dict[str, dict[int, dict[str, float | None]]] = {}
+    for row in rows:
+        result.setdefault(row.device_id, {})[int(row.bucket)] = {
+            field: getattr(row, field) for field in HISTORY_FIELDS
+        }
+    return result
+
+
+def _load_rows_for_range(
+    start_date: date, end_date_exclusive: date, *, padding: timedelta = timedelta(0)
+) -> list[Reading]:
+    """Messwerte fuer den Zeitraum - bei mehreren Wechselrichtern bereits
+    hausweit kombiniert (siehe _rows_from_per_device), bei einem einzelnen
+    schlicht die Rohmesswerte.
+
+    Fasst das bisherige Paar aus _load_readings_range() und
+    _combined_rows() zusammen, damit bei mehreren Geraeten gar nicht erst
+    saemtliche Rohmesswerte nach Python wandern muessen."""
+    if len(settings.inverters) > 1:
+        return _rows_from_per_device(
+            _load_per_device_buckets(start_date, end_date_exclusive, padding=padding)
+        )
+    return _load_readings_range(start_date, end_date_exclusive, padding=padding)
 
 
 def build_daily_summaries() -> list[SummaryOut]:
@@ -450,9 +545,7 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
     def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
-        rows = _load_readings_range(start, end_exclusive)
-        if len(settings.inverters) > 1:
-            rows = _combined_rows(rows)
+        rows = _load_rows_for_range(start, end_exclusive)
         return {d["date"]: d["kwh"] for d in daily_kwh_totals(rows, field, settings.timezone_name)}
 
     per_day = _cached_daily_totals(f"field:{field}", earliest, today, compute)
@@ -811,9 +904,7 @@ def _cached_home_source_breakdown(
         gap_end_exclusive = datetime.strptime(
             missing_closed_dates[-1], "%Y-%m-%d"
         ).date() + timedelta(days=1)
-        rows = _load_readings_range(gap_start, gap_end_exclusive)
-        if len(settings.inverters) > 1:
-            rows = _combined_rows(rows)
+        rows = _load_rows_for_range(gap_start, gap_end_exclusive)
 
         fresh_by_variant = {
             variant.name: {day["date"]: day for day in variant.compute(rows)}
@@ -841,9 +932,7 @@ def _cached_home_source_breakdown(
         finally:
             session.close()
 
-    today_rows = _load_readings_range(today, today + timedelta(days=1))
-    if len(settings.inverters) > 1:
-        today_rows = _combined_rows(today_rows)
+    today_rows = _load_rows_for_range(today, today + timedelta(days=1))
     today_str = today.strftime("%Y-%m-%d")
     for variant in variants:
         computed = variant.compute(today_rows)

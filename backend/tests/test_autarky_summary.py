@@ -253,9 +253,11 @@ def test_autarky_yearly_comparison_loads_raw_readings_only_once_per_gap(client, 
     calls = []
     original = daily_summary_module._load_readings_range
 
-    def counting_load_readings_range(start, end_exclusive):
+    # Signatur exakt wie das Original (inkl. padding), sonst schlaegt der
+    # Doppelgaenger fehl, sobald ein Aufrufer das Argument nutzt.
+    def counting_load_readings_range(start, end_exclusive, **kwargs):
         calls.append((start, end_exclusive))
-        return original(start, end_exclusive)
+        return original(start, end_exclusive, **kwargs)
 
     monkeypatch.setattr(daily_summary_module, "_load_readings_range", counting_load_readings_range)
 
