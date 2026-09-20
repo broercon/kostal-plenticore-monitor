@@ -188,13 +188,20 @@ noch die Logdateien.
 
 Bis einschließlich September 2026 speicherte die Anwendung in einer
 SQLite-Datei unter `./data/kostal.db`. Wer von einer solchen Installation
-kommt, überträgt den Bestand mit dem Skript `app/migrate_to_postgres.py`
-aus dem letzten Stand, der SQLite noch unterstützte – siehe die
-Commit-Historie zum Umstieg. Das Skript liest die Datei ausschließlich
-lesend, lässt sie unverändert und darf beliebig oft laufen; sinnvoll ist,
-es einmal im laufenden Betrieb zum Prüfen auszuführen und ein zweites Mal
-bei gestoppter Anwendung, um die inzwischen dazugekommenen Messwerte
-nachzuziehen.
+kommt, überträgt den Bestand mit dem mitgelieferten Skript
+`app/migrate_to_postgres.py`:
+
+```bash
+docker compose exec -e DATABASE_URL=postgresql://kostal_app:GEHEIM@postgres:5432/kostal_app \
+    kostal-monitor python -m app.migrate_to_postgres
+```
+
+Liegt die SQLite-Datei nicht unter dem alten Standardpfad `/app/data/kostal.db`
+(im Container), lässt sich der Pfad über `SQLITE_SOURCE_PATH` überschreiben.
+Das Skript liest die Datei ausschließlich lesend, lässt sie unverändert und
+darf beliebig oft laufen; sinnvoll ist, es einmal im laufenden Betrieb zum
+Prüfen auszuführen und ein zweites Mal bei gestoppter Anwendung, um die
+inzwischen dazugekommenen Messwerte nachzuziehen.
 
 ### 3. Starten
 
