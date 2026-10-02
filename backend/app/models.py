@@ -13,12 +13,17 @@ class Reading(Base):
     """Ein Messwert-Datensatz von einem Wechselrichter zu einem Zeitpunkt."""
 
     __tablename__ = "readings"
+    # Bewusst NUR ein Index auf timestamp, nicht zusaetzlich einer auf
+    # (device_id, timestamp): jede Abfrage dieser Anwendung grenzt zuerst
+    # ueber den Zeitraum ein, und device_id ist bei einer Handvoll Geraeten
+    # kaum selektiv (bei zwei Wechselrichtern siebt es die Haelfte aus).
+    # PostgreSQL waehlte deshalb auch fuer "device_id = X AND timestamp >= Y"
+    # den reinen timestamp-Index und filterte device_id nach - der
+    # zusammengesetzte Index wurde nachweislich nie benutzt, kostete aber
+    # 23 MB und verlangsamte das Schreiben messbar (200.000 Zeilen
+    # einfuegen: 1.322 ms mit, 834 ms ohne). Bei deutlich mehr Geraeten
+    # koennte sich das umkehren - dann waere er neu zu bewerten.
     __table_args__ = (
-        Index("ix_readings_device_timestamp", "device_id", "timestamp"),
-        # Reine Zeitraum-Abfragen ueber ALLE Geraete (kein device_id-Filter -
-        # z.B. die Energie-Zeitraum-Uebersichten bei mehreren Wechselrichtern,
-        # siehe daily_summary.py) profitieren vom zusammengesetzten Index oben
-        # kaum, da er mit device_id beginnt.
         Index("ix_readings_timestamp", "timestamp"),
     )
 

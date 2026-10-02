@@ -164,13 +164,17 @@ def test_build_pv_yield_summary_second_call_only_queries_today(client, monkeypat
 
 
 def test_readings_timestamp_index_exists(client):
-    """Beide Indizes auf readings muessen nach init_db() vorhanden sein -
-    der zusammengesetzte (device_id, timestamp) und der reine
-    timestamp-Index fuer Abfragen ohne Geraete-Filter."""
+    """Der Index auf readings.timestamp muss nach init_db() vorhanden sein -
+    jede Zeitraum-Abfrage dieser Anwendung haengt daran.
+
+    Und es soll bei diesem EINEN bleiben: ein zusaetzlicher Index auf
+    (device_id, timestamp) wurde entfernt, weil PostgreSQL ihn nie
+    waehlte (siehe models.Reading). Ein wieder hinzugefuegter Index faellt
+    hier auf und will dann mit einer Messung begruendet werden."""
     with engine.connect() as conn:
         names = {index["name"] for index in inspect(conn).get_indexes("readings")}
     assert "ix_readings_timestamp" in names
-    assert "ix_readings_device_timestamp" in names
+    assert names == {"ix_readings_timestamp"}, f"unerwartete Indizes: {names}"
 
 
 def test_import_invalidates_cache_only_when_rows_actually_changed(client, monkeypatch):
