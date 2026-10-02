@@ -322,7 +322,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
   };
 }
 
-export async function bootApp({ fetchHandler, touch = false }) {
+export async function bootApp({ fetchHandler, touch = false, waitForDashboard = true }) {
   const html = readFileSync(join(FRONTEND_DIR, "index.html"), "utf8");
   const appjs = readFileSync(join(FRONTEND_DIR, "app.js"), "utf8");
 
@@ -382,8 +382,11 @@ export async function bootApp({ fetchHandler, touch = false }) {
   // den internen Zustand (selectedDeviceId, chart, ...).
   dom.window.eval(appjs + "\nwindow.__state = state;");
 
-  // Warten, bis init() die Geraete-Tabs aufgebaut hat.
-  await waitFor(() => document.querySelectorAll("#device-tabs button").length > 0);
+  // Warten, bis init() die Geraete-Tabs aufgebaut hat (nicht, wenn der Test
+  // gerade pruefen will, dass das Dashboard NICHT geladen wird).
+  if (waitForDashboard) {
+    await waitFor(() => document.querySelectorAll("#device-tabs button").length > 0);
+  }
 
   const state = window.__state;
 

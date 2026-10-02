@@ -2,8 +2,9 @@
 
 [Zurück zum README](../README.md)
 
-Das Backend stellt zusätzlich die automatisch erzeugte FastAPI-Oberfläche
-unter `/docs` und das OpenAPI-Schema unter `/openapi.json` bereit.
+Die automatisch erzeugte FastAPI-Oberfläche (`/docs`, `/redoc`) und das
+OpenAPI-Schema (`/openapi.json`) sind bewusst abgeschaltet, da sie ohne
+Anmeldung abrufbar wären. Diese Seite ist die maßgebliche API-Referenz.
 
 Alle `/api/...`-Endpunkte außer `POST /api/auth/login` benötigen das
 Session-Cookie `kpm_session`. Für Skripte kann `curl` das Cookie speichern
@@ -20,11 +21,15 @@ curl -b cookies.txt http://localhost:8000/api/devices
 ## Anmeldung
 
 - `POST /api/auth/login` – nimmt `username` und `password` entgegen,
-  setzt das Session-Cookie und liefert den aktuellen Nutzer.
+  setzt das Session-Cookie und liefert den aktuellen Nutzer. Nach 10
+  Fehlversuchen für denselben Benutzernamen innerhalb von 15 Minuten
+  antwortet der Server mit `429` und `Retry-After`, auch bei richtigem
+  Passwort (Zähler im Speicher, ein Neustart setzt ihn zurück).
 - `POST /api/auth/logout` – löscht die aktuelle serverseitige Sitzung und
   das Cookie.
 - `GET /api/auth/me` – liefert `id`, `username`, `role` und
-  `must_change_password`.
+  `must_change_password`. Solange dieses Flag gesetzt ist, antworten alle
+  anderen Endpunkte (außer `change-password` und `logout`) mit `403`.
 - `POST /api/auth/change-password` – erwartet `current_password` und ein
   `new_password` mit 12 bis 256 Zeichen. Bei Erfolg werden alle Sitzungen
   des Nutzers ungültig; anschließend ist eine neue Anmeldung erforderlich.

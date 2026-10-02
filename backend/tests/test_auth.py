@@ -73,6 +73,20 @@ def test_login_success_sets_cookie_and_grants_access(client):
     assert devices.status_code == 200
 
 
+def test_session_cookie_secure_flag_follows_setting(client, monkeypatch):
+    make_user("secure-test", "correct-horse-battery-staple", role="betreiber")
+    creds = {"username": "secure-test", "password": "correct-horse-battery-staple"}
+
+    monkeypatch.setattr(auth.settings, "cookie_secure", False)
+    res = client.post("/api/auth/login", json=creds)
+    assert "secure" not in res.headers["set-cookie"].lower()
+
+    monkeypatch.setattr(auth.settings, "cookie_secure", True)
+    res = client.post("/api/auth/login", json=creds)
+    cookie = res.headers["set-cookie"].lower()
+    assert "secure" in cookie and "httponly" in cookie
+
+
 def test_logout_invalidates_session(client):
     make_user("betreiber1-test", "geheim123")
     client.post("/api/auth/login", json={"username": "betreiber1-test", "password": "geheim123"})
@@ -192,3 +206,149 @@ def test_admin_reset_password_for_unknown_user_returns_404(client):
 
     res = client.post("/api/admin/users/999999/reset-password", json={})
     assert res.status_code == 404
+
+
+# --- Haertung vor der Veroeffentlichung ---------------------------------
+
+
+def _bad_login(client, username="throttle-test", password="falsch"):
+    return client.post("/api/auth/login", json={"username": username, "password": password})
+
+
+def test_login_is_throttled_after_too_many_failures(client):
+    make_user("throttle-test", "correct-horse-battery-staple")
+
+    for _ in range(auth.LOGIN_MAX_FAILURES):
+        assert _bad_login(client).status_code == 401
+
+    res = _bad_login(client)
+    assert res.status_code == 429
+    assert int(res.headers["retry-after"]) > 0
+
+    # Auch das RICHTIGE Passwort wird waehrend der Sperre abgelehnt, sonst
+    # liesse sich die Sperre durch Weiterprobieren umgehen.
+    ok = client.post(
+        "/api/auth/login",
+        json={"username": "throttle-test", "password": "correct-horse-battery-staple"},
+    )
+    assert ok.status_code == 429
+    assert "kpm_session" not in ok.cookies
+
+
+def test_login_throttle_is_per_username_and_case_insensitive(client):
+    make_user("throttle-test", "correct-horse-battery-staple")
+    make_user("other-user", "correct-horse-battery-staple")
+
+    for i in range(auth.LOGIN_MAX_FAILURES):
+        _bad_login(client, username="Throttle-Test" if i % 2 else "throttle-test")
+    assert _bad_login(client, username="THROTTLE-TEST").status_code == 429
+
+    # Andere Nutzer sind nicht betroffen.
+    ok = client.post(
+        "/api/auth/login",
+        json={"username": "other-user", "password": "correct-horse-battery-staple"},
+    )
+    assert ok.status_code == 200
+
+
+def test_login_throttle_expires_after_window(client, monkeypatch):
+    make_user("throttle-test", "correct-horse-battery-staple")
+    clock = [1000.0]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: clock[0])
+
+    for _ in range(auth.LOGIN_MAX_FAILURES):
+        _bad_login(client)
+    assert _bad_login(client).status_code == 429
+
+    clock[0] += auth.LOGIN_WINDOW_SECONDS + 1
+    ok = client.post(
+        "/api/auth/login",
+        json={"username": "throttle-test", "password": "correct-horse-battery-staple"},
+    )
+    assert ok.status_code == 200
+
+
+def test_successful_login_resets_failure_counter(client):
+    make_user("throttle-test", "correct-horse-battery-staple")
+    creds = {"username": "throttle-test", "password": "correct-horse-battery-staple"}
+
+    for _ in range(auth.LOGIN_MAX_FAILURES - 1):
+        _bad_login(client)
+    assert client.post("/api/auth/login", json=creds).status_code == 200
+
+    # Zaehler wurde zurueckgesetzt: erneut fast bis zur Grenze moeglich.
+    for _ in range(auth.LOGIN_MAX_FAILURES - 1):
+        assert _bad_login(client).status_code == 401
+
+
+def test_unknown_username_still_runs_password_hashing(client, monkeypatch):
+    """Gegen Timing-Unterschiede: auch bei unbekanntem Namen wird ein
+    PBKDF2-Lauf ausgefuehrt, nicht sofort abgebrochen."""
+    calls = []
+    real = auth._verify_password
+
+    def spy(password, salt_hex, hash_hex):
+        calls.append(salt_hex)
+        return real(password, salt_hex, hash_hex)
+
+    monkeypatch.setattr(auth, "_verify_password", spy)
+    res = client.post("/api/auth/login", json={"username": "gibt-es-nicht", "password": "x"})
+    assert res.status_code == 401
+    assert calls == [auth._DUMMY_SALT_HEX]
+
+
+def test_must_change_password_blocks_data_endpoints_but_not_password_change(client):
+    make_user("pending-user", "initial-passwort-1234", must_change_password=True)
+    make_user("pending-admin", "initial-passwort-1234", role="admin", must_change_password=True)
+
+    client.post("/api/auth/login", json={"username": "pending-user", "password": "initial-passwort-1234"})
+    assert client.get("/api/auth/me").status_code == 200
+    assert client.get("/api/devices").status_code == 403
+    assert client.get("/api/readings/latest").status_code == 403
+
+    client.cookies.clear()
+    client.post("/api/auth/login", json={"username": "pending-admin", "password": "initial-passwort-1234"})
+    assert client.get("/api/admin/users").status_code == 403
+
+    change = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "initial-passwort-1234", "new_password": "neues-passwort-5678"},
+    )
+    assert change.status_code == 200
+
+    client.post("/api/auth/login", json={"username": "pending-admin", "password": "neues-passwort-5678"})
+    assert client.get("/api/devices").status_code == 200
+    assert client.get("/api/admin/users").status_code == 200
+
+
+def test_api_docs_and_openapi_schema_are_disabled(client):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        res = client.get(path)
+        assert res.status_code == 404, path
+
+
+def test_every_api_route_requires_authentication():
+    """Sicherheitsnetz gegen neue Endpunkte ohne Login: Ausser dem Login/Logout
+    muss jede /api-Route get_current_user (oder die Passwort-Wechsel-Variante)
+    in ihrer Dependency-Kette haben."""
+    from app.main import app
+
+    public = {("/api/auth/login", "POST"), ("/api/auth/logout", "POST")}
+    guards = {auth.get_current_user, auth.get_current_user_allow_password_change}
+
+    def chain(dep):
+        yield dep.call
+        for sub in dep.dependencies:
+            yield from chain(sub)
+
+    unprotected = []
+    for route in app.routes:
+        dependant = getattr(route, "dependant", None)
+        if dependant is None or not route.path.startswith("/api/"):
+            continue
+        for method in route.methods:
+            if (route.path, method) in public:
+                continue
+            if not guards & set(chain(dependant)):
+                unprotected.append((route.path, method))
+    assert unprotected == []

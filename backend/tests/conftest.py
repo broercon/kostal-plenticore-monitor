@@ -61,6 +61,7 @@ def client():
     manuell nachgebaut, was main.py's lifespan() beim echten Start erledigt:
     Tabellen anlegen (init_db) und Default-Nutzer seeden.
     """
+    auth.login_throttle.reset()
     Base.metadata.drop_all(bind=engine)
     init_db()
     auth.seed_default_users()

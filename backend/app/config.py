@@ -149,6 +149,16 @@ class Settings:
             "GRID_POWER_INVERTED", "false"
         ).strip().lower() in ("true", "1", "yes")
 
+        # COOKIE_SECURE=true setzt am Session-Cookie das Secure-Flag: der
+        # Browser sendet es dann nur noch ueber HTTPS. PFLICHT, sobald die
+        # App ueber das Internet (hinter einem HTTPS-Reverse-Proxy) erreichbar
+        # ist. Standard false, weil Secure-Cookies ueber reines HTTP im
+        # LAN nicht gespeichert werden und der Login dort sonst scheinbar
+        # "nichts tut".
+        self.cookie_secure = os.environ.get(
+            "COOKIE_SECURE", "false"
+        ).strip().lower() in ("true", "1", "yes")
+
         # --- Täglicher Zusammenfassungs-Report per Mail ---
         # Verschickt einmal täglich zu einer festen Uhrzeit (lokale
         # TIMEZONE) einen Überblick über den Tag (aktive Wechselrichter,

@@ -211,7 +211,15 @@ async def _refresh_forecast_at_midnight() -> None:
             logger.exception("Mitternaechtliche PV-Prognose-Aktualisierung fehlgeschlagen")
 
 
-app = FastAPI(title="Kostal Plenticore Monitor", lifespan=lifespan)
+# Interaktive API-Doku und OpenAPI-Schema sind abgeschaltet: sie waeren ohne
+# Anmeldung abrufbar und wuerden die komplette API-Struktur preisgeben.
+app = FastAPI(
+    title="Kostal Plenticore Monitor",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 
 @app.middleware("http")
@@ -229,7 +237,14 @@ async def no_cache_headers(request, call_next):
 
 @app.post("/api/auth/login", response_model=MeOut)
 def post_login(payload: LoginIn, response: Response) -> MeOut:
-    user = auth.login(payload.username, payload.password, response)
+    try:
+        user = auth.login(payload.username, payload.password, response)
+    except auth.LoginThrottled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Fehlversuche. Bitte später erneut versuchen.",
+            headers={"Retry-After": str(exc.retry_after)},
+        )
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Benutzername oder Passwort falsch."
@@ -249,7 +264,7 @@ def post_logout(response: Response, kpm_session: str | None = Cookie(default=Non
 
 
 @app.get("/api/auth/me", response_model=MeOut)
-def get_me(user: User = Depends(auth.get_current_user)) -> MeOut:
+def get_me(user: User = Depends(auth.get_current_user_allow_password_change)) -> MeOut:
     return MeOut(
         id=user.id,
         username=user.username,
@@ -262,7 +277,7 @@ def get_me(user: User = Depends(auth.get_current_user)) -> MeOut:
 def post_change_password(
     payload: ChangePasswordIn,
     response: Response,
-    user: User = Depends(auth.get_current_user),
+    user: User = Depends(auth.get_current_user_allow_password_change),
 ) -> ChangePasswordOut:
     ok = auth.change_own_password(user.id, payload.current_password, payload.new_password)
     if not ok:

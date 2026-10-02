@@ -289,10 +289,12 @@ Oberfläche automatisch den Dialog zum Ändern dieses Passworts.
   ein Passwort-Wechsel oder Admin-Reset invalidiert alle Sitzungen des
   betroffenen Nutzers sofort. Ein Container-Neustart meldet bereits angemeldete
   Nutzer nicht ab (Sitzungen sind 30 Tage gültig).
-- Das Cookie verwendet `HttpOnly` und `SameSite=Lax`, aber derzeit kein
-  `Secure`-Flag. Die Anwendung ist deshalb für das interne Netz gedacht.
-  Vor einer Veröffentlichung im Internet sollte neben HTTPS auch das
-  Cookie-Verhalten im Code gehärtet und unverschlüsseltes HTTP gesperrt werden.
+- Das Cookie verwendet `HttpOnly` und `SameSite=Lax`. Mit `COOKIE_SECURE=true`
+  in der `.env` setzt die Anwendung zusätzlich das `Secure`-Flag, sodass der
+  Browser es nur über HTTPS sendet. Das ist vor einer Veröffentlichung im
+  Internet Pflicht (zusammen mit einem HTTPS-Reverse-Proxy). Im reinen
+  HTTP-LAN muss es `false` bleiben, sonst speichert der Browser das Cookie
+  nicht und der Login scheitert.
 - Sitzungs-Token und der Mail-Service-API-Key werden in der Datenbank
   gespeichert.
   Der API-Key wird zwar nie an das Frontend zurückgegeben, liegt in der
