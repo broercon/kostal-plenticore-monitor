@@ -15,8 +15,9 @@ ohne die Logik doppelt zu pflegen.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Callable
+from typing import Callable, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
@@ -618,29 +619,34 @@ def build_yearly_comparison(
 def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     """Hausverbrauch je Tag, aufgeschlüsselt nach PV-/Batterie-/Netz-Anteil
     (siehe main.get_daily_home_breakdown). Für den Mail-Report wird davon
-    nur der letzte (heutige) Eintrag verwendet."""
-    since = local_midnight_utc() - timedelta(days=days - 1)
+    nur der letzte (heutige) Eintrag verwendet.
 
-    session = SessionLocal()
-    try:
-        # select(nur benoetigte Spalten) statt select(Reading), siehe oben -
-        # hier bis zu 400 Tage moeglich.
-        rows = session.execute(
-            select(*_BULK_READING_COLUMNS).where(Reading.timestamp >= since).order_by(Reading.timestamp)
-        ).all()
-    finally:
-        session.close()
+    Läuft über denselben Tages-Cache wie die übrigen Zeitraum-Übersichten
+    (siehe _cached_home_source_breakdown). Vorher wurden bei JEDEM Aufruf
+    sämtliche Rohmesswerte des angefragten Zeitraums geladen und in Python
+    durchgerechnet - bei der Voreinstellung von 30 Tagen rund 330.000
+    Zeilen und damit mehrere Sekunden, bei den in der Oberfläche
+    wählbaren 365 Tagen entsprechend mehr. Da ein abgeschlossener Tag sich
+    nicht mehr ändert (außer durch einen nachträglichen Logdaten-Import,
+    der den Cache gezielt verwirft), ist das reine Wiederholungsarbeit.
 
-    if len(settings.inverters) > 1:
-        rows = _combined_rows(rows)
+    Beide Lesarten der Aufteilung werden gebraucht und deshalb gemeinsam
+    geholt: die milde für die angezeigten Werte, die strenge für den
+    Autarkiegrad (siehe _BREAKDOWN_VARIANT/_AUTARKY_VARIANT).
+    """
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    earliest_stored = _earliest_reading_date()
+    if earliest_stored is None:
+        return []
+    # Nicht weiter zurück als bis zum ersten Messwert: sonst landeten für
+    # jeden Tag davor leere Cache-Zeilen in der Datenbank.
+    earliest = max(today - timedelta(days=days - 1), earliest_stored)
+    if earliest > today:
+        return []
 
-    breakdown = daily_home_source_breakdown_kwh(rows, settings.timezone_name)
-    autarky_by_date = {
-        day["date"]: _autarky_percent(
-            day.get("pv_kwh"), day.get("battery_kwh"), day.get("grid_kwh")
-        )
-        for day in _home_source_breakdown_with_grid(rows)
-    }
+    per_day = _cached_home_source_breakdown(
+        earliest, today, (_BREAKDOWN_VARIANT, _AUTARKY_VARIANT)
+    )
 
     # In DailyHomeBreakdownDay-Objekte wandeln (statt roher Dicts), damit
     # sowohl der API-Endpunkt als auch der Mail-Report per Attribut darauf
@@ -648,13 +654,30 @@ def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
     # um den Autarkiegrad des jeweiligen Tages (siehe _autarky_percent) -
     # fuer die "Autarkiegrad heute"-Kachel in der Uebersicht sowie als
     # Zusatzinfo im Tagesverbrauch-Diagramm.
-    return [
-        DailyHomeBreakdownDay(
-            **day,
-            autarky_percent=autarky_by_date.get(day["date"]),
+    #
+    # Tage ganz ohne verwertbare Messwerte werden ausgelassen (alle drei
+    # Anteile unbekannt) - so wie vorher, als solche Tage in
+    # daily_home_source_breakdown_kwh() gar nicht erst entstanden sind.
+    result: list[DailyHomeBreakdownDay] = []
+    for date_str, by_variant in sorted(per_day.items()):
+        werte = by_variant[_BREAKDOWN_VARIANT.name]
+        if all(werte.get(key) is None for key in _BREAKDOWN_OUT_KEYS):
+            continue
+        autarkie = by_variant[_AUTARKY_VARIANT.name]
+        result.append(
+            DailyHomeBreakdownDay(
+                date=date_str,
+                pv_kwh=werte.get("pv_kwh"),
+                battery_kwh=werte.get("battery_kwh"),
+                grid_kwh=werte.get("grid_kwh"),
+                autarky_percent=_autarky_percent(
+                    autarkie.get("pv_kwh"),
+                    autarkie.get("battery_kwh"),
+                    autarkie.get("grid_kwh"),
+                ),
+            )
         )
-        for day in breakdown
-    ]
+    return result
 
 
 def _earliest_reading_date() -> date | None:
@@ -676,41 +699,85 @@ def _earliest_reading_date() -> date | None:
     return earliest_ts.astimezone(ZoneInfo(settings.timezone_name)).date()
 
 
-# Mapping von daily_home_source_breakdown_kwh()-Schluessel auf den
-# daily_energy_cache-Feldnamen, unter dem der jeweilige Anteil
-# zwischengespeichert wird (siehe _cached_home_source_breakdown).
-_HOME_SOURCE_CACHE_FIELDS = {
-    "pv_kwh": "home_source_pv",
-    "battery_kwh": "home_source_battery",
-    "grid_kwh": "home_source_grid",
-}
+@dataclass(frozen=True)
+class _BreakdownVariant:
+    """Eine der beiden Lesarten der Hausverbrauchs-Aufteilung.
+
+    Sie unterscheiden sich nur darin, WELCHE Messpunkte eingehen (siehe
+    _home_source_breakdown_with_grid), liefern aber dieselben drei Werte.
+    Weil beide denselben teuren Rohdaten-Scan brauchen, werden sie
+    gemeinsam berechnet und gemeinsam gecacht - unter je eigenen
+    Feldnamen in daily_energy_cache, damit sie sich nicht vermischen.
+    """
+
+    name: str
+    # out_key (pv_kwh/battery_kwh/grid_kwh) -> Feldname in daily_energy_cache
+    fields: dict[str, str]
+    compute: Callable[[list[Reading]], list[dict]]
+
+
+def _home_source_breakdown_all_rows(rows: list[Reading]) -> list[dict]:
+    """Milde Lesart: ein fehlender Netzwert zaehlt als 0, der Messpunkt
+    bleibt erhalten (siehe daily_home_source_breakdown_kwh). So zeigt das
+    Tagesverbrauchs-Diagramm auch bei einzelnen Zaehler-Luecken noch eine
+    vollstaendige Aufteilung."""
+    return daily_home_source_breakdown_kwh(rows, settings.timezone_name)
+
+
+# Fuer das Tagesverbrauchs-Diagramm (build_daily_home_breakdown).
+_BREAKDOWN_VARIANT = _BreakdownVariant(
+    name="breakdown",
+    fields={
+        "pv_kwh": "home_breakdown_pv",
+        "battery_kwh": "home_breakdown_battery",
+        "grid_kwh": "home_breakdown_grid",
+    },
+    compute=_home_source_breakdown_all_rows,
+)
+
+# Fuer den Autarkiegrad (build_autarky_yearly_comparison sowie die
+# Autarkie-Spalte im Tagesverbrauch). Strenge Lesart - siehe
+# _home_source_breakdown_with_grid, warum hier nicht 0 angenommen werden
+# darf.
+_AUTARKY_VARIANT = _BreakdownVariant(
+    name="autarky",
+    fields={
+        "pv_kwh": "home_source_pv",
+        "battery_kwh": "home_source_battery",
+        "grid_kwh": "home_source_grid",
+    },
+    compute=_home_source_breakdown_with_grid,
+)
+
+_BREAKDOWN_OUT_KEYS = ("pv_kwh", "battery_kwh", "grid_kwh")
 
 
 def _cached_home_source_breakdown(
-    earliest: date, today: date
-) -> dict[str, dict[str, float | None]]:
-    """Liefert {date_str: {"pv_kwh": .., "battery_kwh": .., "grid_kwh": ..}}
-    fuer [earliest, today] (inklusive), unter Nutzung von daily_energy_cache
-    - abgeschlossene Tage werden dauerhaft zwischengespeichert (unter den
-    drei Feldnamen in _HOME_SOURCE_CACHE_FIELDS), "heute" wird wie bei
-    _cached_daily_totals nie gecacht, sondern bei jedem Aufruf frisch
-    berechnet.
+    earliest: date, today: date, variants: Sequence[_BreakdownVariant]
+) -> dict[str, dict[str, dict[str, float | None]]]:
+    """Liefert {date_str: {variante: {"pv_kwh": .., "battery_kwh": ..,
+    "grid_kwh": ..}}} fuer [earliest, today] (inklusive), unter Nutzung von
+    daily_energy_cache - abgeschlossene Tage werden dauerhaft
+    zwischengespeichert, "heute" wird wie bei _cached_daily_totals nie
+    gecacht, sondern bei jedem Aufruf frisch berechnet.
 
-    WICHTIG: berechnet alle drei Hausverbrauchs-Anteile (PV/Speicher/Netz,
-    siehe _home_source_breakdown_with_grid) in EINEM Durchlauf ueber die
-    Rohmesswerte einer Cache-Luecke, statt _cached_daily_totals dreimal
-    (einmal je Anteil) mit je eigenem compute() aufzurufen. Eine fruehere
-    Version tat genau das und nahm den dreifachen Rohdaten-Scan bei einer
-    Luecke bewusst in Kauf ("faellt in der Praxis nicht ins Gewicht, da nur
-    einmalig") - bei groesseren Bestandsinstallationen (viele Monate/Jahre
-    an 15s-Messwerten) macht der dreifache Scan das erste Laden der
-    Autarkiegrad-Uebersicht aber spuerbar langsam, daher hier konsolidiert."""
+    WICHTIG: berechnet ALLE angeforderten Varianten und alle drei Anteile
+    je Variante in EINEM Durchlauf ueber die Rohmesswerte einer
+    Cache-Luecke, statt _cached_daily_totals mehrfach (einmal je Anteil)
+    mit je eigenem compute() aufzurufen. Eine fruehere Version tat genau
+    das und nahm den mehrfachen Rohdaten-Scan bei einer Luecke bewusst in
+    Kauf ("faellt in der Praxis nicht ins Gewicht, da nur einmalig") - bei
+    groesseren Bestaenden (viele Monate an 15s-Messwerten) macht das das
+    erste Laden aber spuerbar langsam.
+    """
+    field_names = [name for variant in variants for name in variant.fields.values()]
+
     session = SessionLocal()
     try:
         cached_rows = list(
             session.scalars(
                 select(DailyEnergyCache).where(
-                    DailyEnergyCache.field.in_(_HOME_SOURCE_CACHE_FIELDS.values()),
+                    DailyEnergyCache.field.in_(field_names),
                     DailyEnergyCache.date >= earliest.strftime("%Y-%m-%d"),
                     DailyEnergyCache.date < today.strftime("%Y-%m-%d"),
                 )
@@ -719,28 +786,27 @@ def _cached_home_source_breakdown(
     finally:
         session.close()
 
-    field_to_out_key = {field: out_key for out_key, field in _HOME_SOURCE_CACHE_FIELDS.items()}
+    # date_str -> Cache-Feldname -> kWh
     cached: dict[str, dict[str, float | None]] = {}
     for row in cached_rows:
-        cached.setdefault(row.date, {})[field_to_out_key[row.field]] = row.kwh
+        cached.setdefault(row.date, {})[row.field] = row.kwh
 
     num_closed_days = (today - earliest).days
     all_closed_dates = {
         (earliest + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(num_closed_days)
     }
-    # Ein Tag gilt nur als vollstaendig gecacht, wenn alle drei Anteile
-    # vorliegen - fehlt auch nur einer, wird der Tag sicherheitshalber
-    # komplett neu berechnet statt mit einer Luecke weiterverwendet zu
-    # werden (analog zu _cached_daily_totals/_cached_dates).
-    fully_cached_dates = {
-        d for d in all_closed_dates if len(cached.get(d, {})) == len(_HOME_SOURCE_CACHE_FIELDS)
-    }
-    missing_closed_dates = sorted(all_closed_dates - fully_cached_dates)
+    # Ein Tag gilt nur als vollstaendig gecacht, wenn ALLE angeforderten
+    # Felder vorliegen - fehlt auch nur eines, wird der Tag
+    # sicherheitshalber komplett neu berechnet statt mit einer Luecke
+    # weiterverwendet zu werden (analog zu _cached_daily_totals).
+    missing_closed_dates = sorted(
+        d for d in all_closed_dates if not all(name in cached.get(d, {}) for name in field_names)
+    )
 
     if missing_closed_dates:
         # Wie bei _cached_daily_totals: die gesamte Luecke in EINEM Rutsch
-        # nachberechnen (ein einziger Rohdaten-Scan fuer alle drei Anteile
-        # zusammen), statt Tag fuer Tag oder Anteil fuer Anteil einzeln.
+        # nachberechnen (ein einziger Rohdaten-Scan fuer alle Varianten
+        # zusammen), statt Tag fuer Tag oder Variante fuer Variante.
         gap_start = datetime.strptime(missing_closed_dates[0], "%Y-%m-%d").date()
         gap_end_exclusive = datetime.strptime(
             missing_closed_dates[-1], "%Y-%m-%d"
@@ -748,39 +814,53 @@ def _cached_home_source_breakdown(
         rows = _load_readings_range(gap_start, gap_end_exclusive)
         if len(settings.inverters) > 1:
             rows = _combined_rows(rows)
-        fresh_by_date = {d["date"]: d for d in _home_source_breakdown_with_grid(rows)}
+
+        fresh_by_variant = {
+            variant.name: {day["date"]: day for day in variant.compute(rows)}
+            for variant in variants
+        }
 
         session = SessionLocal()
         try:
             now = datetime.now(timezone.utc)
             for date_str in missing_closed_dates:
-                fresh = fresh_by_date.get(date_str, {})
-                for out_key, field_key in _HOME_SOURCE_CACHE_FIELDS.items():
-                    session.merge(
-                        DailyEnergyCache(
-                            field=field_key, date=date_str, kwh=fresh.get(out_key), computed_at=now
+                for variant in variants:
+                    fresh = fresh_by_variant[variant.name].get(date_str, {})
+                    for out_key, field_name in variant.fields.items():
+                        value = fresh.get(out_key)
+                        cached.setdefault(date_str, {})[field_name] = value
+                        session.merge(
+                            DailyEnergyCache(
+                                field=field_name,
+                                date=date_str,
+                                kwh=value,
+                                computed_at=now,
+                            )
                         )
-                    )
             session.commit()
         finally:
             session.close()
 
-        for date_str in missing_closed_dates:
-            fresh = fresh_by_date.get(date_str, {})
-            cached[date_str] = {out_key: fresh.get(out_key) for out_key in _HOME_SOURCE_CACHE_FIELDS}
-
     today_rows = _load_readings_range(today, today + timedelta(days=1))
     if len(settings.inverters) > 1:
         today_rows = _combined_rows(today_rows)
-    today_fresh = _home_source_breakdown_with_grid(today_rows)
     today_str = today.strftime("%Y-%m-%d")
-    cached[today_str] = (
-        {out_key: today_fresh[0].get(out_key) for out_key in _HOME_SOURCE_CACHE_FIELDS}
-        if today_fresh
-        else {out_key: None for out_key in _HOME_SOURCE_CACHE_FIELDS}
-    )
+    for variant in variants:
+        computed = variant.compute(today_rows)
+        fresh = computed[0] if computed else {}
+        for out_key, field_name in variant.fields.items():
+            cached.setdefault(today_str, {})[field_name] = fresh.get(out_key)
 
-    return cached
+    return {
+        date_str: {
+            variant.name: {
+                out_key: by_field.get(field_name)
+                for out_key, field_name in variant.fields.items()
+            }
+            for variant in variants
+        }
+        for date_str, by_field in cached.items()
+    }
 
 
 def build_autarky_yearly_comparison(granularity: str = "month", years: int | None = None) -> dict:
@@ -812,7 +892,11 @@ def build_autarky_yearly_comparison(granularity: str = "month", years: int | Non
         return {"granularity": granularity, "labels": [], "years": []}
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
-    per_day = _cached_home_source_breakdown(earliest, today)
+    per_day_variants = _cached_home_source_breakdown(earliest, today, (_AUTARKY_VARIANT,))
+    per_day = {
+        date_str: by_variant[_AUTARKY_VARIANT.name]
+        for date_str, by_variant in per_day_variants.items()
+    }
 
     if granularity == "week":
         num_positions = _YEARLY_COMPARISON_WEEK_COUNT
@@ -836,7 +920,7 @@ def build_autarky_yearly_comparison(granularity: str = "month", years: int | Non
         key = position_key(day)
         entry = sums.setdefault(key, {"pv_kwh": 0.0, "battery_kwh": 0.0, "grid_kwh": 0.0})
         day_values = per_day.get(date_str, {})
-        for out_key in _HOME_SOURCE_CACHE_FIELDS:
+        for out_key in _BREAKDOWN_OUT_KEYS:
             value = day_values.get(out_key)
             if value is not None:
                 entry[out_key] += value
