@@ -11,7 +11,8 @@ Docker-Image ziehen zu muessen:
   der Datenbank gespeichert (Tabelle `sessions`) mit Ablaufzeit - dadurch
   ueberleben Logins einen Container-Neustart, und ein Logout/Passwort-
   Wechsel kann das Token gezielt loeschen/invalidieren.
-- Das Session-Token wird als httponly-Cookie gesetzt (SameSite=Lax).
+- Das Session-Token wird als httponly-Cookie gesetzt (SameSite=Lax; mit
+  COOKIE_SECURE=true zusaetzlich Secure, Pflicht bei Betrieb ueber HTTPS).
 
 Beim allerersten Start (leere `users`-Tabelle) werden automatisch drei
 Nutzer angelegt: "admin" (Rolle admin), "betreiber1" und "betreiber2" (Rolle
@@ -25,12 +26,16 @@ import hashlib
 import logging
 import os
 import secrets
+import threading
+import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
+from .config import settings
 from .database import SessionLocal
 from .models import Session as SessionModel
 from .models import User
@@ -40,6 +45,13 @@ logger = logging.getLogger(__name__)
 PBKDF2_ITERATIONS = 200_000
 SESSION_COOKIE_NAME = "kpm_session"
 SESSION_MAX_AGE_DAYS = 30
+
+# Login-Drosselung: nach so vielen Fehlversuchen je Benutzername innerhalb des
+# Zeitfensters wird dieser Name voruebergehend gesperrt (auch fuer das richtige
+# Passwort - sonst koennte man die Sperre per Durchprobieren umgehen).
+LOGIN_MAX_FAILURES = 10
+LOGIN_WINDOW_SECONDS = 15 * 60
+_LOGIN_MAX_TRACKED_NAMES = 1000
 
 ROLE_ADMIN = "admin"
 ROLE_BETREIBER = "betreiber"
@@ -55,6 +67,82 @@ def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
     salt = bytes.fromhex(salt_hex)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
     return secrets.compare_digest(dk.hex(), hash_hex)
+
+
+# Feste Attrappe, gegen die bei unbekanntem Benutzernamen trotzdem ein
+# PBKDF2-Lauf stattfindet - damit die Antwortzeit nicht verraet, ob der Name
+# existiert.
+_DUMMY_SALT_HEX, _DUMMY_HASH_HEX = _hash_password("kein-echtes-passwort")
+
+
+class LoginThrottled(Exception):
+    """Zu viele Fehlversuche fuer diesen Benutzernamen."""
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(f"Zu viele Fehlversuche, erneut in {retry_after}s")
+        self.retry_after = retry_after
+
+
+class _LoginThrottle:
+    """Zaehlt Fehlversuche je Benutzername (Gross-/Kleinschreibung egal) in
+    einem gleitenden Zeitfenster, im Speicher des Prozesses.
+
+    Bewusst NICHT je IP-Adresse: hinter einem Reverse Proxy bzw. Tailscale
+    Serve kommen alle Anfragen von derselben Adresse, eine IP-Sperre wuerde
+    dann alle Nutzer treffen. Ein Neustart des Containers setzt die Zaehler
+    zurueck."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failures: dict[str, deque[float]] = {}
+
+    @staticmethod
+    def _key(username: str) -> str:
+        return username.strip().lower()[:64]
+
+    def _prune(self, key: str, now: float) -> deque[float]:
+        q = self._failures.get(key)
+        if q is None:
+            return deque()
+        while q and now - q[0] >= LOGIN_WINDOW_SECONDS:
+            q.popleft()
+        if not q:
+            del self._failures[key]
+        return q
+
+    def check(self, username: str) -> None:
+        """Wirft LoginThrottled, wenn der Name gerade gesperrt ist."""
+        key = self._key(username)
+        now = time.monotonic()
+        with self._lock:
+            q = self._prune(key, now)
+            if len(q) >= LOGIN_MAX_FAILURES:
+                raise LoginThrottled(max(1, int(LOGIN_WINDOW_SECONDS - (now - q[0])) + 1))
+
+    def record_failure(self, username: str) -> None:
+        key = self._key(username)
+        now = time.monotonic()
+        with self._lock:
+            if key not in self._failures and len(self._failures) >= _LOGIN_MAX_TRACKED_NAMES:
+                # Speicher begrenzen (Angreifer koennte beliebig viele Namen
+                # durchprobieren): abgelaufene Eintraege entfernen, notfalls
+                # den aeltesten verwerfen.
+                for k in list(self._failures):
+                    self._prune(k, now)
+                if len(self._failures) >= _LOGIN_MAX_TRACKED_NAMES:
+                    del self._failures[next(iter(self._failures))]
+            self._failures.setdefault(key, deque()).append(now)
+
+    def record_success(self, username: str) -> None:
+        with self._lock:
+            self._failures.pop(self._key(username), None)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._failures.clear()
+
+
+login_throttle = _LoginThrottle()
 
 
 def _generate_temp_password() -> str:
@@ -125,17 +213,28 @@ def _create_session(db: OrmSession, user: User) -> str:
 
 def login(username: str, password: str, response: Response) -> User | None:
     """Prueft Zugangsdaten, legt bei Erfolg eine Session an und setzt das
-    Cookie. Gibt den User zurueck, oder None bei falschen Zugangsdaten."""
+    Cookie. Gibt den User zurueck, oder None bei falschen Zugangsdaten.
+    Wirft LoginThrottled, wenn der Name nach zu vielen Fehlversuchen
+    voruebergehend gesperrt ist."""
+    login_throttle.check(username)
     db = SessionLocal()
     try:
         user = db.scalar(select(User).where(User.username == username))
-        if user is None or not _verify_password(password, user.password_salt, user.password_hash):
+        if user is None:
+            # Gleicher Rechenaufwand wie bei einem echten Nutzer (Timing).
+            _verify_password(password, _DUMMY_SALT_HEX, _DUMMY_HASH_HEX)
+            login_throttle.record_failure(username)
             return None
+        if not _verify_password(password, user.password_salt, user.password_hash):
+            login_throttle.record_failure(username)
+            return None
+        login_throttle.record_success(username)
         token = _create_session(db, user)
         response.set_cookie(
             key=SESSION_COOKIE_NAME,
             value=token,
             httponly=True,
+            secure=settings.cookie_secure,
             samesite="lax",
             max_age=SESSION_MAX_AGE_DAYS * 24 * 3600,
             path="/",
@@ -165,10 +264,13 @@ def logout(token: str | None, response: Response) -> None:
         db.close()
 
 
-def get_current_user(
+def get_current_user_allow_password_change(
     kpm_session: str | None = Cookie(default=None),
 ) -> User:
-    """FastAPI-Dependency: liefert den eingeloggten User oder wirft 401."""
+    """FastAPI-Dependency: liefert den eingeloggten User oder wirft 401 - auch
+    wenn er sein Passwort noch aendern muss. Nur fuer /api/auth/me und
+    /api/auth/change-password gedacht; alle anderen Endpunkte nutzen
+    get_current_user."""
     if not kpm_session:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Nicht angemeldet.")
 
@@ -195,6 +297,20 @@ def get_current_user(
         return user
     finally:
         db.close()
+
+
+def get_current_user(
+    user: User = Depends(get_current_user_allow_password_change),
+) -> User:
+    """Wie oben, sperrt aber (403) Nutzer, die noch ihr Initial- bzw.
+    zurueckgesetztes Passwort haben - das darf nicht nur das Frontend
+    erzwingen, sonst waere die API direkt weiter nutzbar."""
+    if user.must_change_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Passwort muss zuerst geaendert werden.",
+        )
+    return user
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:

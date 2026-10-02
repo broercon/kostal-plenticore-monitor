@@ -1,5 +1,6 @@
 **/__pycache__
 **/*.pyc
 data/
+frontend/tests/
 config/inverters.json
 .git

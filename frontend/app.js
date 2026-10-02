@@ -177,10 +177,20 @@ async function checkAuth() {
   }
 
   if (state.currentUser.must_change_password) {
+    // Der Server sperrt alle Daten-Endpunkte (403), solange das Passwort nicht
+    // geaendert ist - das Dashboard gar nicht erst laden, sondern nur den
+    // (nicht schliessbaren) Passwort-Dialog zeigen. "Abbrechen" wird zu
+    // "Abmelden".
+    state.passwordChangeForced = true;
+    setupChangePassword();
+    setupLogout();
+    el("cp-cancel").textContent = "Abmelden";
+    el("cp-cancel").addEventListener("click", () => el("logout-btn").click());
     openChangePasswordModal(
       "Bitte vergeben Sie jetzt ein eigenes Passwort (aktuell ist noch das " +
         "initiale/zurückgesetzte Passwort aktiv)."
     );
+    return new Promise(() => {}); // init() haelt hier an, s.o.
   }
 }
 
@@ -193,6 +203,7 @@ function openChangePasswordModal(hintText) {
 }
 
 function closeChangePasswordModal() {
+  if (state.passwordChangeForced) return;
   el("change-password-overlay").classList.add("hidden");
 }
 
