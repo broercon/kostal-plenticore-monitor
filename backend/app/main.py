@@ -90,6 +90,7 @@ from .schemas import (
     MeOut,
     ReadingOut,
     SummaryOut,
+    AutarkyYearlyComparisonOut,
     YearlyComparisonOut,
 )
 from .timeutil import local_midnight_utc
@@ -857,7 +858,7 @@ def get_daily_home_breakdown(
     return DailyHomeBreakdownOut(days=build_daily_home_breakdown(days=days))
 
 
-@app.get("/api/readings/autarky-yearly-comparison", response_model=YearlyComparisonOut)
+@app.get("/api/readings/autarky-yearly-comparison", response_model=AutarkyYearlyComparisonOut)
 def get_autarky_yearly_comparison(
     granularity: str = Query(
         default="month", pattern="^(month|week)$", description="'month' oder 'week'"
@@ -866,7 +867,7 @@ def get_autarky_yearly_comparison(
         default=None, ge=1, le=5, description="Nur die letzten N Kalenderjahre (Standard: alle)"
     ),
     _user: User = Depends(auth.get_current_user),
-) -> YearlyComparisonOut:
+) -> AutarkyYearlyComparisonOut:
     """Autarkiegrad (%) je Kalendermonat oder ISO-Kalenderwoche, gruppiert
     nach Jahr - fuer die "Autarkie"-Ansicht im Dashboard: wie
     /api/readings/yearly-comparison fuer den PV-Ertrag zeigt jedes Jahr
@@ -877,7 +878,7 @@ def get_autarky_yearly_comparison(
     hier kein device_id-Parameter. `years` begrenzt auf maximal 5 (siehe
     get_yearly_comparison). Die eigentliche Berechnung steckt in
     daily_summary.build_autarky_yearly_comparison()."""
-    return YearlyComparisonOut(
+    return AutarkyYearlyComparisonOut(
         **build_autarky_yearly_comparison(granularity=granularity, years=years)
     )
 
