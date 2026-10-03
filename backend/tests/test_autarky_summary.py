@@ -128,9 +128,11 @@ def test_autarky_yearly_comparison_month_groups_by_calendar_month_and_year(clien
     last_year_day = today_local.replace(year=today_local.year - 1)  # 2025-06-15
 
     # Dieses Jahr: 60 % Autarkiegrad (siehe test oben).
-    _seed_day("wr1", today_local, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)
-    # Letztes Jahr: home=1000W, grid_draw=800W, pv=200W -> 20 % Autarkiegrad.
-    _seed_day("wr1", last_year_day, home_w=1000.0, pv_w=200.0, grid_draw_w=800.0)
+    # Leistung in "kW-Groessenordnung" (x1000), damit die Positionssummen
+    # nach dem Runden auf ganze kWh nicht auf 0 fallen (150/100 kWh).
+    _seed_day("wr1", today_local, home_w=1_000_000.0, pv_w=600_000.0, grid_draw_w=400_000.0)
+    # Letztes Jahr: home=1000kW, grid_draw=800kW, pv=200kW -> 20 % Autarkiegrad.
+    _seed_day("wr1", last_year_day, home_w=1_000_000.0, pv_w=200_000.0, grid_draw_w=800_000.0)
 
     res = client.get("/api/readings/autarky-yearly-comparison")
     assert res.status_code == 200
@@ -144,6 +146,12 @@ def test_autarky_yearly_comparison_month_groups_by_calendar_month_and_year(clien
     # Alle anderen 11 Positionen ohne Daten -> None, nicht 0 oder fehlend.
     assert [v for i, v in enumerate(last_year_entry["values"]) if i != 5] == [None] * 11
     assert len(this_year_entry["values"]) == 12
+    # Verbrauch und Netzbezug je Position liegen parallel zu `values` vor.
+    for entry in (last_year_entry, this_year_entry):
+        assert len(entry["consumption_kwh"]) == len(entry["grid_kwh"]) == 12
+    assert this_year_entry["consumption_kwh"][5] > this_year_entry["grid_kwh"][5] > 0
+    assert this_year_entry["consumption_kwh"][0] is None
+    assert this_year_entry["grid_kwh"][0] is None
 
 
 def test_autarky_yearly_comparison_week_uses_iso_calendar_not_calendar_year(client):
@@ -153,7 +161,7 @@ def test_autarky_yearly_comparison_week_uses_iso_calendar_not_calendar_year(clie
     _login(client)
     boundary_day = date(2024, 12, 30)
     assert boundary_day.isocalendar()[:2] == (2025, 1)
-    _seed_day("wr1", boundary_day, home_w=1000.0, pv_w=600.0, grid_draw_w=400.0)  # 60 %
+    _seed_day("wr1", boundary_day, home_w=1_000_000.0, pv_w=600_000.0, grid_draw_w=400_000.0)  # 60 %
 
     res = client.get("/api/readings/autarky-yearly-comparison?granularity=week")
     assert res.status_code == 200
@@ -268,3 +276,20 @@ def test_autarky_yearly_comparison_loads_raw_readings_only_once_per_gap(client, 
     # fuer den laufenden Tag ("heute" wird nie gecacht) - nicht sechs (drei
     # Anteile x zwei Bereiche), wie vor der Konsolidierung.
     assert len(calls) == 2
+
+
+def test_autarky_yearly_comparison_rounds_kwh_before_computing_percent(client, frozen_now):
+    """Verbrauch und Netzbezug werden vor der Berechnung auf ganze kWh
+    gerundet (ab 0,5 auf), der Prozentwert hat 1 Nachkommastelle."""
+    _login(client)
+    today_local = frozen_now.astimezone(TZ).date()
+    # 0,25 h: Verbrauch 200,45 kWh, Netz 0,43 kWh -> 200/0 -> 100,0 %
+    _seed_day("wr1", today_local, home_w=801_800.0, pv_w=800_080.0, grid_draw_w=1_720.0)
+    # Verbrauch 200,45 kWh, Netz 20,43 kWh -> 200/20 -> 90,0 %
+    last_year = today_local.replace(year=today_local.year - 1)
+    _seed_day("wr1", last_year, home_w=801_800.0, pv_w=720_080.0, grid_draw_w=81_720.0)
+
+    body = client.get("/api/readings/autarky-yearly-comparison").json()
+    last_entry, this_entry = body["years"]
+    assert this_entry["values"][today_local.month - 1] == 100.0
+    assert last_entry["values"][today_local.month - 1] == 90.0

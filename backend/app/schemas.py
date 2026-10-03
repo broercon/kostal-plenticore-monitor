@@ -102,6 +102,20 @@ class YearlyComparisonYearOut(BaseModel):
     values: list[float | None]
 
 
+class AutarkyYearOut(YearlyComparisonYearOut):
+    # Gleich lang wie `values`: Hausverbrauch (PV + Speicher + Netz) und
+    # Netzbezug je Position in kWh (ungerundet) - None ohne Daten. Das
+    # Frontend rundet fuer die Anzeige und zeigt die exakten Werte im Hover.
+    consumption_kwh: list[float | None] = []
+    grid_kwh: list[float | None] = []
+
+
+class AutarkyYearlyComparisonOut(BaseModel):
+    granularity: str  # "month" | "week"
+    labels: list[str]
+    years: list[AutarkyYearOut]
+
+
 class YearlyComparisonOut(BaseModel):
     granularity: str  # "month" | "week"
     labels: list[str]

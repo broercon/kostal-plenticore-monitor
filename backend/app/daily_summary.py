@@ -15,6 +15,7 @@ ohne die Logik doppelt zu pflegen.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Sequence
@@ -81,6 +82,18 @@ def _autarky_percent(
     if home_kwh <= 0:
         return None
     return round(100 * (pv_kwh + battery_kwh) / home_kwh, 1)
+
+
+def _autarky_percent_rounded_kwh(consumption_kwh: float, grid_kwh: float) -> float | None:
+    """Autarkiegrad (%, 1 Nachkommastelle) der Autarkie-Ansicht: Verbrauch und
+    Netzbezug werden VOR der Berechnung auf ganze kWh gerundet (ab 0,5 auf,
+    z.B. 200,45 -> 200 und 0,43 -> 0, also 100 % statt 99,8 %). Ist der
+    gerundete Verbrauch 0, ist der Wert nicht definiert (None)."""
+    home = math.floor(consumption_kwh + 0.5)
+    grid = math.floor(grid_kwh + 0.5)
+    if home <= 0:
+        return None
+    return round(100 * (home - grid) / home, 1)
 
 
 def _home_source_breakdown_with_grid(rows: list[Reading]) -> list[dict]:
@@ -1023,15 +1036,22 @@ def build_autarky_yearly_comparison(granularity: str = "month", years: int | Non
     result_years = []
     for year in all_years:
         values: list[float | None] = []
+        consumption: list[float | None] = []
+        grid: list[float | None] = []
         for position in range(1, num_positions + 1):
             key = (year, position)
             if key in has_data:
                 entry = sums[key]
-                values.append(
-                    _autarky_percent(entry["pv_kwh"], entry["battery_kwh"], entry["grid_kwh"])
-                )
+                total = entry["pv_kwh"] + entry["battery_kwh"] + entry["grid_kwh"]
+                values.append(_autarky_percent_rounded_kwh(total, entry["grid_kwh"]))
+                consumption.append(total)
+                grid.append(entry["grid_kwh"])
             else:
                 values.append(None)
-        result_years.append({"year": year, "values": values})
+                consumption.append(None)
+                grid.append(None)
+        result_years.append(
+            {"year": year, "values": values, "consumption_kwh": consumption, "grid_kwh": grid}
+        )
 
     return {"granularity": granularity, "labels": labels, "years": result_years}

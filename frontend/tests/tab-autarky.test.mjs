@@ -26,7 +26,7 @@ function backendWithAutarky() {
         };
       }
       const allYears = [
-        { year: 2025, values: [50.0, null, null, null, null, null, null, null, null, null, null, null] },
+        { year: 2025, values: [50.0, null, null, null, null, null, null, null, null, null, null, null], consumption_kwh: [200.4, ...Array(11).fill(null)], grid_kwh: [100.5, ...Array(11).fill(null)] },
         { year: 2026, values: [null, null, null, null, null, 75.0, null, null, null, null, null, null] },
       ];
       return {
@@ -201,4 +201,20 @@ test("Fehler beim Autarkiegrad blockiert die bestehenden Tageskacheln nicht", as
 
   assert.notEqual(app.document.getElementById("summary-consumption").textContent, "–");
   assert.equal(app.document.getElementById("summary-autarky").textContent, "–");
+});
+
+test("Autarkie-Tooltip zeigt gerundete Werte und exakte Werte in Klammern", async () => {
+  const app = await bootApp({ fetchHandler: backendWithAutarky() });
+  await waitFor(() => app.loadingCount() === 0);
+  const ds = app.state.autarky.chart.data.datasets.find((d) => d.label === "2025");
+  const lines = app.state.autarky.chart.options.plugins.tooltip.callbacks.label({
+    dataset: ds,
+    dataIndex: 0,
+    parsed: { y: 50 },
+  });
+  assert.deepEqual(Array.from(lines), [
+    "2025: 50.0 %",
+    "  Verbrauch: 200 kWh (exakt 200.40 kWh)",
+    "  Netzbezug: 101 kWh (exakt 100.50 kWh)",
+  ]);
 });

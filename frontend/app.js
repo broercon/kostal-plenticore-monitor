@@ -2560,6 +2560,27 @@ function dynamicYRange(values, { lowerBound = null, upperBound = null } = {}) {
   return { min, max };
 }
 
+// Tooltip der Autarkie-Ansicht: Der Prozentwert kommt mit 1 Nachkommastelle
+// vom Backend, das dafuer Verbrauch und Netzbezug auf ganze kWh rundet (ab
+// 0,5 auf, siehe daily_summary._autarky_percent_rounded_kwh). Verbrauch und
+// Netzbezug werden hier genauso gerundet gezeigt, die exakten Werte stehen
+// in Klammern dahinter.
+function autarkyTooltipLines(context) {
+  const label = context.dataset.label;
+  const value = context.parsed.y;
+  if (value === null || value === undefined) return `${label}: –`;
+  const lines = [`${label}: ${value.toFixed(1)} %`];
+  const consumption = context.dataset.consumptionKwh?.[context.dataIndex];
+  const grid = context.dataset.gridKwh?.[context.dataIndex];
+  if (consumption != null) {
+    lines.push(`  Verbrauch: ${Math.round(consumption)} kWh (exakt ${consumption.toFixed(2)} kWh)`);
+  }
+  if (grid != null) {
+    lines.push(`  Netzbezug: ${Math.round(grid)} kWh (exakt ${grid.toFixed(2)} kWh)`);
+  }
+  return lines;
+}
+
 function autarkyYearsYRange(years) {
   return dynamicYRange(
     years.flatMap((y) => y.values),
@@ -2577,6 +2598,10 @@ async function refreshAutarkyChart() {
     // Datasets sind strukturell identisch zum Jahresvergleich (ein Jahr
     // eine Kurve, Farbe nach Aktualitaet) - dieselbe Funktion wiederverwenden.
     const datasets = buildYearCompareDatasets(result.years);
+    datasets.forEach((ds, i) => {
+      ds.consumptionKwh = result.years[i].consumption_kwh;
+      ds.gridKwh = result.years[i].grid_kwh;
+    });
     const xTitle = granularity === "week" ? "Kalenderwoche" : "Monat";
     const yRange = autarkyYearsYRange(result.years);
     // Wie beim Jahresvergleich: Werte-Anzeige nur an, wenn genau EIN Jahr
@@ -2625,12 +2650,7 @@ async function refreshAutarkyChart() {
           legend: { labels: { color: "#e2e8f0", boxWidth: 20 } },
           tooltip: {
             callbacks: {
-              label(context) {
-                const value = context.parsed.y;
-                return value === null || value === undefined
-                  ? `${context.dataset.label}: –`
-                  : `${context.dataset.label}: ${value.toFixed(1)} %`;
-              },
+              label: autarkyTooltipLines,
             },
           },
         },
