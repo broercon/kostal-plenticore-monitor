@@ -90,7 +90,7 @@ curl -b cookies.txt http://localhost:8000/api/devices
     und je Jahr `device_values` (PV-Ertrag je Wechselrichter, gleiche
     Positionen wie `values`).
 - `GET /api/readings/daily-pv-per-device`
-  - `days`: Standard `7`, Bereich `1` bis `31`
+  - `days`: Standard `7`, Bereich `1` bis `62`
   - PV-Ertrag (kWh) je Kalendertag und Wechselrichter (reine PV-Erzeugung,
     gleiche Formel wie die PV-Ertrag-Leiste). Jeder Tag des Zeitraums ist
     enthalten, Geräte ohne Messwerte stehen als `null` darin.

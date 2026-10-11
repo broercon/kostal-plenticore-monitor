@@ -917,7 +917,7 @@ def get_yearly_comparison(
 
 @app.get("/api/readings/daily-pv-per-device", response_model=DailyPvPerDeviceOut)
 def get_daily_pv_per_device(
-    days: int = Query(default=7, ge=1, le=31, description="Anzahl Tage rueckwirkend inkl. heute"),
+    days: int = Query(default=7, ge=1, le=62, description="Anzahl Tage rueckwirkend inkl. heute"),
     _user: User = Depends(auth.get_current_user),
 ) -> DailyPvPerDeviceOut:
     """PV-Ertrag (kWh) je Kalendertag UND Wechselrichter - fuer das

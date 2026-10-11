@@ -92,7 +92,11 @@ def test_daily_pv_per_device_second_call_uses_cache(client, frozen_now, monkeypa
 def test_daily_pv_per_device_validates_days(client):
     _login(client)
     assert client.get("/api/readings/daily-pv-per-device?days=0").status_code == 422
-    assert client.get("/api/readings/daily-pv-per-device?days=32").status_code == 422
+    assert client.get("/api/readings/daily-pv-per-device?days=63").status_code == 422
+    # 2 Monate (60 Tage) sind erlaubt und liefern jeden Tag lueckenlos.
+    response = client.get("/api/readings/daily-pv-per-device?days=60")
+    assert response.status_code == 200
+    assert len(response.json()["days"]) == 60
 
 
 def test_yearly_comparison_per_device(client, frozen_now, monkeypatch):

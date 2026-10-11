@@ -40,12 +40,12 @@ test("Erzeugung je Tag: Standard 1 Tag, ein gestapeltes Dataset je Wechselrichte
   assert.equal(chart.options.scales.y.stacked, true);
 });
 
-test("Erzeugung je Tag: Zeitraum-Buttons 7/14/Monat fragen 7/14/30 Tage ab", async () => {
+test("Erzeugung je Tag: Zeitraum-Buttons 7/14/Monat/2 Monate fragen 7/14/30/60 Tage ab", async () => {
   const backend = backendSeen();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => !!app.state.pvDaily.chart);
 
-  for (const [btnDays, expected] of [["7", 7], ["14", 14], ["30", 30]]) {
+  for (const [btnDays, expected] of [["7", 7], ["14", 14], ["30", 30], ["60", 60]]) {
     const btn = app.document.querySelector(`#pvdaily-day-buttons button[data-days="${btnDays}"]`);
     btn.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
     await waitFor(() => app.state.pvDaily.days === expected);
@@ -55,6 +55,10 @@ test("Erzeugung je Tag: Zeitraum-Buttons 7/14/Monat fragen 7/14/30 Tage ab", asy
   assert.equal(
     app.document.querySelector('#pvdaily-day-buttons button[data-days="30"]').textContent.trim(),
     "Monat"
+  );
+  assert.equal(
+    app.document.querySelector('#pvdaily-day-buttons button[data-days="60"]').textContent.trim(),
+    "2 Monate"
   );
 });
 

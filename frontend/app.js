@@ -20,7 +20,7 @@ const state = {
     chart: null,
   },
   pvDaily: {
-    // Erzeugung je Tag (Auswertungen-Tab): 1 Tag (heute), 7, 14 oder 30 Tage.
+    // Erzeugung je Tag (Auswertungen-Tab): 1 Tag (heute), 7, 14, 30 oder 60 Tage.
     days: 1,
     chart: null,
   },
