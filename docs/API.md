@@ -83,6 +83,17 @@ curl -b cookies.txt http://localhost:8000/api/devices
     [Dashboard und Berechnungen](CALCULATIONS.md#autarkiegrad).
   - Positionen (Monat/Woche) ohne verwertbare Netzmessung werden nicht als
     100 % autark ausgegeben, sondern bleiben `null`.
+- `GET /api/readings/yearly-comparison`
+  - `granularity`: `month` (Standard) oder `week`
+  - `years`: optional, Bereich `1` bis `5`
+  - `per_device`: Standard `false`; mit `true` kommen zusätzlich `devices`
+    und je Jahr `device_values` (PV-Ertrag je Wechselrichter, gleiche
+    Positionen wie `values`).
+- `GET /api/readings/daily-pv-per-device`
+  - `days`: Standard `7`, Bereich `1` bis `31`
+  - PV-Ertrag (kWh) je Kalendertag und Wechselrichter (reine PV-Erzeugung,
+    gleiche Formel wie die PV-Ertrag-Leiste). Jeder Tag des Zeitraums ist
+    enthalten, Geräte ohne Messwerte stehen als `null` darin.
 - `GET /api/readings/hourly-per-device`
   - `metric`: `feed_in`, `pv`, `home` oder `grid_draw`
   - `days`: Standard `1`, Bereich `1` bis `30`

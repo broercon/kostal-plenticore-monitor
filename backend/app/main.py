@@ -53,6 +53,7 @@ from .daily_summary import (
     build_battery_energy_summary,
     build_feed_in_summary,
     build_pv_yield_summary,
+    build_daily_pv_per_device,
     build_yearly_comparison,
 )
 from .database import SessionLocal, init_db
@@ -91,6 +92,7 @@ from .schemas import (
     ReadingOut,
     SummaryOut,
     AutarkyYearlyComparisonOut,
+    DailyPvPerDeviceOut,
     YearlyComparisonOut,
 )
 from .timeutil import local_midnight_utc
@@ -891,6 +893,9 @@ def get_yearly_comparison(
     years: int | None = Query(
         default=None, ge=1, le=5, description="Nur die letzten N Kalenderjahre (Standard: alle)"
     ),
+    per_device: bool = Query(
+        default=False, description="Zusaetzlich die Werte je Wechselrichter liefern"
+    ),
     _user: User = Depends(auth.get_current_user),
 ) -> YearlyComparisonOut:
     """PV-Ertrag (kWh) je Kalendermonat oder ISO-Kalenderwoche, gruppiert
@@ -903,8 +908,25 @@ def get_yearly_comparison(
     Dashboard nicht mehr Jahre gleichzeitig dargestellt werden, als es
     unterscheidbare Farben in der Palette gibt (siehe frontend DAY_COLORS).
     Die eigentliche Berechnung steckt in
-    daily_summary.build_yearly_comparison()."""
-    return YearlyComparisonOut(**build_yearly_comparison(granularity=granularity, years=years))
+    daily_summary.build_yearly_comparison(). Mit `per_device=true` kommen
+    zusaetzlich die Werte je Wechselrichter (Summe bleibt in `values`)."""
+    return YearlyComparisonOut(
+        **build_yearly_comparison(granularity=granularity, years=years, per_device=per_device)
+    )
+
+
+@app.get("/api/readings/daily-pv-per-device", response_model=DailyPvPerDeviceOut)
+def get_daily_pv_per_device(
+    days: int = Query(default=7, ge=1, le=31, description="Anzahl Tage rueckwirkend inkl. heute"),
+    _user: User = Depends(auth.get_current_user),
+) -> DailyPvPerDeviceOut:
+    """PV-Ertrag (kWh) je Kalendertag UND Wechselrichter - fuer das
+    Saeulendiagramm "Erzeugung je Tag" (Auswertungen-Tab), in dem sich die
+    Wechselrichter farblich unterscheiden. Gleiche Formel wie der
+    PV-Ertrag der Zeitraum-Uebersicht (reine PV-Erzeugung, aus der Leistung
+    integriert), abgeschlossene Tage kommen aus dem Tages-Cache. Die
+    eigentliche Berechnung steckt in daily_summary.build_daily_pv_per_device()."""
+    return DailyPvPerDeviceOut(**build_daily_pv_per_device(days=days))
 
 
 @app.get("/api/readings/hourly-per-device", response_model=HourlyPerDeviceOut)

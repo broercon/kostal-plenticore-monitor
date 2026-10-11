@@ -15,16 +15,58 @@ from pathlib import Path
 
 _TEST_DIR = Path(tempfile.mkdtemp(prefix="kpm-test-"))
 os.environ["DATA_DIR"] = str(_TEST_DIR)
-# Die Tests brauchen eine echte PostgreSQL-Instanz. Ohne gesetzte
-# TEST_DATABASE_URL wird die uebliche Entwicklungs-Adresse verwendet
-# (siehe docs/DEVELOPMENT.md, Abschnitt "Backend-Tests").
+# Die Tests brauchen eine echte PostgreSQL-Instanz (die SQL-Aggregation ist
+# Gegenstand der Tests). Zwei Wege, siehe docs/DEVELOPMENT.md:
+#   1. TEST_DATABASE_URL gesetzt (z.B. CI-Service-Container): diese
+#      Datenbank wird verwendet.
+#   2. Sonst startet conftest.py selbst einen Wegwerf-Container
+#      (testcontainers, braucht nur Docker) und raeumt ihn am Ende wieder ab.
 #
 # UNBEDINGT eine eigene Test-Datenbank angeben, niemals die produktive:
 # die client()-Fixture leert vor JEDEM Testfall das gesamte Schema.
-os.environ["DATABASE_URL"] = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test",
-)
+_POSTGRES_IMAGE = "postgres:17"  # wie in .github/workflows/ci.yml
+_test_container = None
+
+
+def _start_throwaway_postgres() -> str:
+    global _test_container
+    try:
+        try:
+            from testcontainers.community.postgres import PostgresContainer
+        except ImportError:  # aeltere testcontainers-Versionen
+            from testcontainers.postgres import PostgresContainer
+
+        container = PostgresContainer(
+            _POSTGRES_IMAGE,
+            username="kostal_app",
+            password="kostal_app",
+            dbname="kostal_app_test",
+        )
+        container.start()
+    except Exception as exc:  # Docker fehlt, Daemon aus, Image nicht ladbar ...
+        import pytest
+
+        pytest.exit(
+            "Kein Test-PostgreSQL verfuegbar: TEST_DATABASE_URL ist nicht "
+            "gesetzt und der Test-Container liess sich nicht starten "
+            f"({type(exc).__name__}: {exc}). Docker starten oder "
+            "TEST_DATABASE_URL setzen.",
+            returncode=2,
+        )
+    _test_container = container
+    return (
+        f"postgresql://kostal_app:kostal_app@"
+        f"{container.get_container_host_ip()}:"
+        f"{container.get_exposed_port(5432)}/kostal_app_test"
+    )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _test_container is not None:
+        _test_container.stop()
+
+
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or _start_throwaway_postgres()
 # Zeigt bewusst auf eine nicht existierende Datei, damit Settings() auf die
 # Env-Variablen-Fallback-Wechselrichter-Konfiguration unten zurueckfaellt,
 # statt eine echte config/inverters.json vom Entwicklerrechner zu lesen.

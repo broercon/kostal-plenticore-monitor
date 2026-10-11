@@ -95,11 +95,19 @@ class DailyHomeBreakdownOut(BaseModel):
     days: list[DailyHomeBreakdownDay]
 
 
+class HourlyDeviceInfo(BaseModel):
+    device_id: str
+    device_name: str
+
+
 class YearlyComparisonYearOut(BaseModel):
     year: int
     # Feste Laenge (12 bei "month", 53 bei "week") mit None fuer Positionen
     # ohne Daten - siehe daily_summary.build_yearly_comparison().
     values: list[float | None]
+    # Nur bei per_device=true: dieselben Positionen je Wechselrichter
+    # (device_id -> Werte), siehe daily_summary.build_yearly_comparison().
+    device_values: dict[str, list[float | None]] = {}
 
 
 class AutarkyYearOut(YearlyComparisonYearOut):
@@ -120,6 +128,18 @@ class YearlyComparisonOut(BaseModel):
     granularity: str  # "month" | "week"
     labels: list[str]
     years: list[YearlyComparisonYearOut]
+    # Nur bei per_device=true gefuellt (Reihenfolge wie in der Konfiguration).
+    devices: list[HourlyDeviceInfo] = []
+
+
+class DailyPvPerDeviceDay(BaseModel):
+    date: str  # "YYYY-MM-DD" (lokaler Kalendertag)
+    values: dict[str, float | None]  # device_id -> PV-Ertrag in kWh
+
+
+class DailyPvPerDeviceOut(BaseModel):
+    devices: list[HourlyDeviceInfo]
+    days: list[DailyPvPerDeviceDay]
 
 
 class BatterySocDeviceInfo(BaseModel):
@@ -164,11 +184,6 @@ class ImportStatusOut(BaseModel):
 class ImportTriggerOut(BaseModel):
     started: bool
     message: str
-
-
-class HourlyDeviceInfo(BaseModel):
-    device_id: str
-    device_name: str
 
 
 class HourlyBucket(BaseModel):

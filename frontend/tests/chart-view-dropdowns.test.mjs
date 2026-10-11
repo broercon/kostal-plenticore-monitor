@@ -22,7 +22,7 @@ test("Verlauf-Tab zeigt per Default den Leistungsverlauf, nicht Tagesvergleich/T
 
   assert.equal(isHidden(app.document, "trend-view-power"), false);
   assert.equal(isHidden(app.document, "trend-view-daycompare"), true);
-  assert.equal(isHidden(app.document, "consumption-view-dailytotals"), true);
+  assert.equal(isHidden(app.document, "trend-view-autarky"), true);
 });
 
 test("Verlauf-Tab: Flyout wechselt zwischen Leistungsverlauf und Tagesvergleich, nie beide gleichzeitig", async () => {
@@ -47,36 +47,57 @@ test("Verlauf-Tab: Flyout wechselt zwischen Leistungsverlauf und Tagesvergleich,
   assert.equal(isHidden(app.document, "trend-view-daycompare"), true);
 });
 
-test("Verlauf-Tab: Flyout zeigt Tagesverbrauch, ohne Leistungsverlauf/Tagesvergleich", async () => {
+test("Verlauf-Tab: Flyout zeigt Autarkie, ohne Leistungsverlauf/Tagesvergleich", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   app.clickViewTab("trend");
   await waitFor(() => app.state.tabsLoaded.has("trend"));
 
-  app.clickSubview("trend", "dailytotals");
-  await waitFor(() => isHidden(app.document, "consumption-view-dailytotals") === false);
+  app.clickSubview("trend", "autarky");
+  await waitFor(() => isHidden(app.document, "trend-view-autarky") === false);
 
   assert.equal(isHidden(app.document, "trend-view-power"), true);
   assert.equal(isHidden(app.document, "trend-view-daycompare"), true);
-  assert.equal(isHidden(app.document, "consumption-view-dailytotals"), false);
+  assert.equal(isHidden(app.document, "trend-view-autarky"), false);
 
   app.clickSubview("trend", "power");
   await waitFor(() => isHidden(app.document, "trend-view-power") === false);
+  assert.equal(isHidden(app.document, "trend-view-autarky"), true);
+});
+
+test("Auswertungen-Tab zeigt per Default 'Erzeugung je Tag', nicht Tagesverbrauch/Wechselrichter-Vergleich", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  app.clickViewTab("evaluation");
+  await waitFor(() => app.state.tabsLoaded.has("evaluation"));
+
+  assert.equal(isHidden(app.document, "evaluation-view-pvdaily"), false);
   assert.equal(isHidden(app.document, "consumption-view-dailytotals"), true);
+  assert.equal(isHidden(app.document, "hourly-section"), true);
 });
 
-test("Verbrauch-Tab zeigt direkt den Wechselrichter-Vergleich (einzig verbleibende Ansicht)", async () => {
+test("Auswertungen-Tab: Flyout wechselt zwischen den drei Ansichten, nie mehrere gleichzeitig", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
-  app.clickViewTab("consumption");
-  await waitFor(() => app.state.tabsLoaded.has("consumption"));
+  app.clickViewTab("evaluation");
+  await waitFor(() => app.state.tabsLoaded.has("evaluation"));
 
-  assert.equal(isHidden(app.document, "hourly-section"), false);
-  assert.equal(isHidden(app.document, "hourly-chart-content"), false);
+  app.clickSubview("evaluation", "dailytotals");
+  await waitFor(() => isHidden(app.document, "consumption-view-dailytotals") === false);
+  assert.equal(isHidden(app.document, "evaluation-view-pvdaily"), true);
+  assert.equal(isHidden(app.document, "hourly-section"), true);
+
+  app.clickSubview("evaluation", "hourly");
+  await waitFor(() => isHidden(app.document, "hourly-section") === false);
+  assert.equal(isHidden(app.document, "consumption-view-dailytotals"), true);
+  assert.equal(isHidden(app.document, "evaluation-view-pvdaily"), true);
+
+  app.clickSubview("evaluation", "pvdaily");
+  await waitFor(() => isHidden(app.document, "evaluation-view-pvdaily") === false);
+  assert.equal(isHidden(app.document, "hourly-section"), true);
 });
 
-test("Verbrauch-Tab: Wechselrichter-Vergleich nur in 'Alle (Summe)' verfuegbar", async () => {
+test("Auswertungen-Tab: Wechselrichter-Vergleich nur in 'Alle (Summe)' verfuegbar", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
-  app.clickViewTab("consumption");
-  await waitFor(() => app.state.tabsLoaded.has("consumption"));
+  app.clickSubview("evaluation", "hourly");
+  await waitFor(() => app.state.tabsLoaded.has("evaluation"));
 
   assert.equal(isHidden(app.document, "hourly-section"), false);
   assert.equal(isHidden(app.document, "hourly-chart-content"), false);

@@ -1,12 +1,7 @@
-// Werte-Anzeige (Tooltip/Hover) der Diagramme: seit dem fruehreren globalen
-// An/Aus-Knopf (der verwirrenderweise an fuenf Stellen im Dashboard auftauchte,
-// aber ALLE Diagramme auf einmal umgeschaltet hat) jetzt automatisch je
-// Diagramm bestimmt (siehe chartEventsFor() in app.js): am Desktop an, wenn
-// genau EIN Tag (bzw. bei Jahresvergleich/Autarkiegrad: EIN Jahr) dargestellt
-// wird, sonst aus; auf einem Touch-Geraet immer aus (damit die Seite frei
-// scrollt). Ausnahme auf Nutzerwunsch: bei Prognose sind die Werte am
-// Desktop immer an, unabhaengig von der Tagesanzahl (chartEventsFor(true)
-// statt chartEventsFor(isSingleDayView)).
+// Werte-Anzeige (Tooltip/Hover) der Diagramme: am Desktop bei ALLEN
+// Diagrammen immer an (siehe chartEvents() in app.js), unabhaengig von
+// Tages-/Jahresanzahl; auf einem Touch-Geraet immer aus (damit die Seite
+// frei scrollt).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -28,7 +23,7 @@ test("Leistungsverlauf (Tagesansicht, Desktop): Werte automatisch an", async () 
   assert.equal(isInteractive(app.state.chart), true);
 });
 
-test("Leistungsverlauf: Wechsel auf 7 Tage schaltet die Werte-Anzeige automatisch aus", async () => {
+test("Leistungsverlauf: Wechsel auf 7 Tage laesst die Werte-Anzeige an", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => !!app.state.chart);
@@ -36,11 +31,11 @@ test("Leistungsverlauf: Wechsel auf 7 Tage schaltet die Werte-Anzeige automatisc
   const btn7 = app.document.querySelector('#range-buttons button[data-hours="168"]');
   btn7.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
   await waitFor(() => app.state.hours === 168);
-  await waitFor(() => isInteractive(app.state.chart) === false);
-  assert.equal(isInteractive(app.state.chart), false);
+  await waitFor(() => app.state.hours === 168);
+  assert.equal(isInteractive(app.state.chart), true);
 });
 
-test("Tagesvergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne Diagramm-Neuaufbau", async () => {
+test("Tagesvergleich: Werte-Anzeige bleibt bei mehreren Tagen an - auch ohne Diagramm-Neuaufbau", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => !!app.state.dayCompare.chart);
@@ -50,7 +45,7 @@ test("Tagesvergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne Diagramm-
   const btn7 = app.document.querySelector('#daycompare-day-buttons button[data-days="7"]');
   btn7.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
   await waitFor(() => app.state.dayCompare.days === 7);
-  await waitFor(() => isInteractive(app.state.dayCompare.chart) === false);
+  assert.equal(isInteractive(app.state.dayCompare.chart), true);
   // Dasselbe Chart.js-Objekt wird bei einer reinen Datenaktualisierung
   // weiterverwendet (kein destroy()/new Chart) - genau der Fall, der
   // options.events explizit nachziehen muss, siehe Kommentar in
@@ -58,9 +53,9 @@ test("Tagesvergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne Diagramm-
   assert.equal(app.state.dayCompare.chart, chartBefore);
 });
 
-test("Wechselrichter-Vergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne Diagramm-Neuaufbau", async () => {
+test("Wechselrichter-Vergleich: Werte-Anzeige bleibt bei mehreren Tagen an - auch ohne Diagramm-Neuaufbau", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
-  await waitFor(() => app.state.tabsLoaded.has("consumption"));
+  await waitFor(() => app.state.tabsLoaded.has("evaluation"));
   await waitFor(() => !!app.state.hourlyCompare.chart);
   assert.equal(isInteractive(app.state.hourlyCompare.chart), true);
 
@@ -68,27 +63,24 @@ test("Wechselrichter-Vergleich: 1 Tag (Default) an, mehrere Tage aus - auch ohne
   const btn7 = app.document.querySelector('#hourly-day-buttons button[data-days="7"]');
   btn7.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
   await waitFor(() => app.state.hourlyCompare.days === 7);
-  await waitFor(() => isInteractive(app.state.hourlyCompare.chart) === false);
+  assert.equal(isInteractive(app.state.hourlyCompare.chart), true);
   assert.equal(app.state.hourlyCompare.chart, chartBefore);
 });
 
-test("Tagesverbrauch zeigt strukturell nie einen Einzeltag - Werte-Anzeige bleibt aus", async () => {
+test("Tagesverbrauch: Werte-Anzeige an", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
   await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => !!app.state.dailyTotals.chart);
 
-  assert.equal(isInteractive(app.state.dailyTotals.chart), false);
+  assert.equal(isInteractive(app.state.dailyTotals.chart), true);
 });
 
-// Autarkiegrad: wie der Jahresvergleich (siehe tab-autarky.test.mjs) nur
-// an, wenn genau EIN Jahr dargestellt wird - Standard sind 3 Jahre, also
-// aus.
-test("Autarkiegrad (Standard 3 Jahre): Werte-Anzeige aus, wie beim Jahresvergleich", async () => {
+test("Autarkiegrad (Standard 3 Jahre): Werte-Anzeige an", async () => {
   const app = await bootApp({ fetchHandler: makeBackend() });
-  await waitFor(() => app.state.tabsLoaded.has("autarky"));
+  await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => !!app.state.autarky.chart);
 
-  assert.equal(isInteractive(app.state.autarky.chart), false);
+  assert.equal(isInteractive(app.state.autarky.chart), true);
 });
 
 test("Alle Prognose-Diagramme (heute/morgen/gestern, Tagesuebersicht, Prognosekontrolle) zeigen die Werte immer an", async () => {
@@ -104,10 +96,6 @@ test("Alle Prognose-Diagramme (heute/morgen/gestern, Tagesuebersicht, Prognoseko
   if (app.state.forecastTomorrowChart) {
     assert.equal(isInteractive(app.state.forecastTomorrowChart), true);
   }
-  // Abweichung vom sonstigen Ein-Tag/Mehr-Tage-Automatismus: bei der
-  // Prognose sollen die Werte unabhaengig von der Tagesanzahl immer
-  // sichtbar sein (auf Wunsch des Nutzers), auch in der mehrtaegigen
-  // Tagesuebersicht und der Prognosekontrolle.
   assert.equal(isInteractive(app.state.forecastChart), true);
   assert.equal(isInteractive(app.state.forecastAccuracyChart), true);
 });
@@ -117,4 +105,12 @@ test("Auf einem Touch-Geraet bleiben die Werte auch in der Tagesansicht immer au
   await waitFor(() => app.state.tabsLoaded.has("trend"));
   await waitFor(() => !!app.state.chart);
   assert.equal(isInteractive(app.state.chart), false);
+});
+
+test("Neue Auswertungs-Diagramme und Jahresvergleich/Speicherstand zeigen die Werte am Desktop an", async () => {
+  const app = await bootApp({ fetchHandler: makeBackend() });
+  await waitFor(() => app.state.tabsLoaded.has("evaluation"));
+  await waitFor(() => !!app.state.pvDaily.chart && !!app.state.yearCompare.chart);
+  assert.equal(isInteractive(app.state.pvDaily.chart), true);
+  assert.equal(isInteractive(app.state.yearCompare.chart), true);
 });

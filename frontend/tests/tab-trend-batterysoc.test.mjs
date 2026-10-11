@@ -4,9 +4,7 @@
 // uebereinandergelegt wie beim Tagesvergleich (siehe
 // aggregation.build_battery_soc_day_series und app.js
 // refreshBatterySocChart). Standardmaessig 1 Tag, zusaetzlich 2/3/7/14
-// Tage waehlbar - wie Tagesvergleich/Jahresvergleich KEIN Sonderfall bei
-// der Werte-Anzeige (nur bei genau einem dargestellten Tag automatisch
-// an).
+// Tage waehlbar.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { bootApp, makeBackend, waitFor } from "./harness.mjs";
@@ -142,7 +140,7 @@ test("Speicherstand: Klick auf '7 Tage' fragt mit passendem Tagesparameter neu a
   assert.equal(yesterday.borderColor, dayColor(1));
 });
 
-test("Speicherstand: Werte-Anzeige an bei 1 Tag, aus bei mehreren Tagen - dasselbe Chart-Objekt bleibt bestehen", async () => {
+test("Speicherstand: Werte-Anzeige bleibt auch bei mehreren Tagen an - dasselbe Chart-Objekt bleibt bestehen", async () => {
   const backend = backendWithBatterySoc();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => app.loadingCount() === 0);
@@ -155,7 +153,7 @@ test("Speicherstand: Werte-Anzeige an bei 1 Tag, aus bei mehreren Tagen - dassel
   const btn7 = app.document.querySelector('#batterysoc-day-buttons button[data-days="7"]');
   btn7.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
   await waitFor(() => app.state.batterySoc.days === 7);
-  await waitFor(() => isInteractive(app.state.batterySoc.chart) === false);
+  assert.equal(isInteractive(app.state.batterySoc.chart), true);
 
   // Anders als frueher (Tages-/Range-Modus mit unterschiedlicher Achse)
   // aendert sich die Achse jetzt nie mehr - das Chart.js-Objekt wird daher

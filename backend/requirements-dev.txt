@@ -3,3 +3,5 @@
 -r requirements.txt
 pytest>=8.0,<9.0
 httpx>=0.27,<1.0
+# Startet lokal automatisch einen Wegwerf-PostgreSQL (nur ohne TEST_DATABASE_URL).
+testcontainers[postgres]>=4.8,<5.0

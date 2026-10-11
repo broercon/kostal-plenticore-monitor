@@ -87,21 +87,24 @@ Funktionsaufrufe). Lokal ausführen:
 ```bash
 cd backend
 pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+Die Tests brauchen eine echte PostgreSQL-Instanz, weil die SQL-Aggregation
+selbst getestet wird. Ohne weitere Angaben startet `conftest.py` dafür
+automatisch einen Wegwerf-Container (`postgres:17`, über `testcontainers`)
+und entfernt ihn am Ende wieder – nötig ist nur ein laufendes Docker.
+
+Alternativ lässt sich eine vorhandene Instanz verwenden (so macht es die CI
+mit ihrem Service-Container); dann wird kein Container gestartet:
+
+```bash
 TEST_DATABASE_URL=postgresql://kostal_app:kostal_app@localhost:5432/kostal_app_test \
   python -m pytest tests/ -v
 ```
 
-Die Tests brauchen eine laufende PostgreSQL-Instanz. **Unbedingt eine
-eigene Test-Datenbank angeben, niemals die produktive** – vor jedem
-einzelnen Testfall wird das gesamte Schema geleert. Ohne
-`TEST_DATABASE_URL` wird genau die oben gezeigte Adresse versucht (siehe
-`conftest.py`). Schnell aufgesetzt mit:
-
-```bash
-docker run --rm -d --name kpm-testdb -p 5432:5432 \
-  -e POSTGRES_USER=kostal_app -e POSTGRES_PASSWORD=kostal_app \
-  -e POSTGRES_DB=kostal_app_test postgres:17
-```
+**Unbedingt eine eigene Test-Datenbank angeben, niemals die produktive** –
+vor jedem einzelnen Testfall wird das gesamte Schema geleert.
 
 Die Tests starten bewusst keinen echten Poller/Import gegen einen
 Wechselrichter. Abgedeckt sind u.a.: Standard-Nutzer werden nur
@@ -148,7 +151,7 @@ npm test
 ## Continuous Integration
 
 Der Workflow `.github/workflows/ci.yml` führt bei Pull Requests sowie bei
-Pushes auf `main` und `codex/**` drei unabhängige Checks aus:
+Pushes auf `master` drei unabhängige Checks aus:
 
 - Backend-Tests mit Python 3.12
 - Frontend-Tests mit Node.js 20

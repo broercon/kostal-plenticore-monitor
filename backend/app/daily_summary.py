@@ -580,6 +580,74 @@ def _compute_pv_yield_days(start: date, end_exclusive: date) -> dict[str, float 
     return {d["date"]: d["kwh"] for d in daily_pv_yield_totals(rows, settings.timezone_name)}
 
 
+def _cached_pv_yield_per_device(earliest: date, today: date) -> dict[str, dict[str, float | None]]:
+    """PV-Ertrag (kWh) je Tag UND je konfiguriertem Wechselrichter:
+    {device_id: {date_str: kwh}}. Gleiche Formel wie _compute_pv_yield_days
+    (reine PV-Erzeugung), nur nicht ueber die Geraete summiert. Jedes Geraet
+    hat einen eigenen Cache-Schluessel (abgeschlossene Tage werden also auch
+    hier nur einmal integriert); die Rohmesswerte einer Luecke werden fuer
+    alle Geraete gemeinsam nur einmal geladen.
+
+    Der Schluessel enthaelt nur einen Hash der Geraete-ID, weil die ID frei
+    waehlbar ist und die Spalte daily_energy_cache.field auf 64 Zeichen
+    begrenzt ist."""
+    computed: dict[tuple[date, date], dict[str, dict[str, float | None]]] = {}
+
+    def compute(start: date, end: date) -> dict[str, dict[str, float | None]]:
+        key = (start, end)
+        if key not in computed:
+            by_device: dict[str, list] = {}
+            for row in _load_readings_range(start, end):
+                by_device.setdefault(row.device_id, []).append(row)
+            computed[key] = {
+                device_id: {
+                    d["date"]: d["kwh"]
+                    for d in daily_pv_yield_totals(device_rows, settings.timezone_name)
+                }
+                for device_id, device_rows in by_device.items()
+            }
+        return computed[key]
+
+    result: dict[str, dict[str, float | None]] = {}
+    for cfg in settings.inverters:
+        digest = hashlib.sha256(cfg.id.encode()).hexdigest()[:16]
+        result[cfg.id] = _cached_daily_totals(
+            f"pv_yield:dev:{digest}",
+            earliest,
+            today,
+            lambda start, end, device_id=cfg.id: compute(start, end).get(device_id, {}),
+        )
+    return result
+
+
+def _device_infos() -> list[dict[str, str]]:
+    return [{"device_id": cfg.id, "device_name": cfg.name} for cfg in settings.inverters]
+
+
+def build_daily_pv_per_device(days: int = 7) -> dict:
+    """PV-Ertrag (kWh) je Kalendertag und Wechselrichter fuer die letzten
+    `days` Tage inkl. heute - fuer das Saeulendiagramm "Erzeugung je Tag" im
+    Auswertungen-Tab. Jeder Tag des Zeitraums ist enthalten (Tage ohne
+    Messwerte mit None je Geraet), damit die Achse lueckenlos bleibt.
+
+    Rueckgabe: {"devices": [{"device_id","device_name"}, ...], "days":
+    [{"date": "YYYY-MM-DD", "values": {device_id: kwh|None}}, ...]},
+    aufsteigend nach Datum."""
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    start = today - timedelta(days=days - 1)
+    per_device = _cached_pv_yield_per_device(start, today)
+    result_days = []
+    for offset in range(days):
+        date_str = (start + timedelta(days=offset)).strftime("%Y-%m-%d")
+        result_days.append(
+            {
+                "date": date_str,
+                "values": {device_id: per_day.get(date_str) for device_id, per_day in per_device.items()},
+            }
+        )
+    return {"devices": _device_infos(), "days": result_days}
+
+
 def build_pv_yield_summary() -> list[FeedInPeriod]:
     """PV-Ertrag (kWh) je Zeitraum - fuer Dashboard-Leiste und Mail-Report.
 
@@ -645,7 +713,7 @@ _YEARLY_COMPARISON_WEEK_COUNT = 53
 
 
 def build_yearly_comparison(
-    granularity: str = "month", years: int | None = None
+    granularity: str = "month", years: int | None = None, per_device: bool = False
 ) -> dict:
     """PV-Ertrag (kWh) je Kalendermonat ODER ISO-Kalenderwoche, gruppiert
     nach Jahr - fuer den Jahresvergleich im "Verlauf"-Tab: jedes Jahr eine
@@ -666,6 +734,10 @@ def build_yearly_comparison(
     build_autarky_yearly_comparison(). None (Standard) liefert die
     komplette Historie.
 
+    `per_device`: liefert zusaetzlich je Jahr die Werte je Wechselrichter
+    (`device_values`) und die Geraeteliste (`devices`). Welche Jahre
+    erscheinen, richtet sich weiterhin nach der Summe ueber alle Geraete.
+
     Anders als build_autarky_monthly_summary() (deren Nachfolger
     build_autarky_yearly_comparison() dasselbe Verhalten uebernimmt, siehe
     dort) behaelt jedes zurueckgegebene Jahr IMMER alle
@@ -677,7 +749,7 @@ def build_yearly_comparison(
 
     earliest = _earliest_reading_date()
     if earliest is None:
-        return {"granularity": granularity, "labels": [], "years": []}
+        return {"granularity": granularity, "labels": [], "years": [], "devices": []}
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
 
     per_day = _cached_daily_totals("pv_yield", earliest, today, _compute_pv_yield_days)
@@ -696,30 +768,51 @@ def build_yearly_comparison(
         def position_key(day: date) -> tuple[int, int]:
             return day.year, day.month
 
-    totals: dict[tuple[int, int], float] = {}
-    has_data: set[tuple[int, int]] = set()
-    day = earliest
-    while day <= today:
-        value = per_day.get(day.strftime("%Y-%m-%d"))
-        if value is not None:
-            key = position_key(day)
-            totals[key] = totals.get(key, 0.0) + value
-            has_data.add(key)
-        day += timedelta(days=1)
+    def group(values_per_day: dict[str, float | None]):
+        totals: dict[tuple[int, int], float] = {}
+        has_data: set[tuple[int, int]] = set()
+        day = earliest
+        while day <= today:
+            value = values_per_day.get(day.strftime("%Y-%m-%d"))
+            if value is not None:
+                key = position_key(day)
+                totals[key] = totals.get(key, 0.0) + value
+                has_data.add(key)
+            day += timedelta(days=1)
+        return totals, has_data
 
-    all_years = sorted({year for year, _position in has_data})
+    def year_values(grouped, year: int) -> list[float | None]:
+        totals, has_data = grouped
+        return [
+            round(totals[(year, position)], 3) if (year, position) in has_data else None
+            for position in range(1, num_positions + 1)
+        ]
+
+    grouped_total = group(per_day)
+    all_years = sorted({year for year, _position in grouped_total[1]})
     if years is not None and years > 0:
         all_years = all_years[-years:]
 
+    grouped_devices = {}
+    if per_device:
+        per_device_days = _cached_pv_yield_per_device(earliest, today)
+        grouped_devices = {device_id: group(days) for device_id, days in per_device_days.items()}
+
     result_years = []
     for year in all_years:
-        values: list[float | None] = []
-        for position in range(1, num_positions + 1):
-            key = (year, position)
-            values.append(round(totals[key], 3) if key in has_data else None)
-        result_years.append({"year": year, "values": values})
+        entry: dict = {"year": year, "values": year_values(grouped_total, year)}
+        if per_device:
+            entry["device_values"] = {
+                device_id: year_values(grouped, year) for device_id, grouped in grouped_devices.items()
+            }
+        result_years.append(entry)
 
-    return {"granularity": granularity, "labels": labels, "years": result_years}
+    return {
+        "granularity": granularity,
+        "labels": labels,
+        "years": result_years,
+        "devices": _device_infos() if per_device else [],
+    }
 
 
 def build_daily_home_breakdown(days: int = 30) -> list[DailyHomeBreakdownDay]:
