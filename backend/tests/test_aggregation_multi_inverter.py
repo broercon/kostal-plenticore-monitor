@@ -444,6 +444,7 @@ def test_daily_home_source_breakdown_detects_battery_with_pv3_quirk():
             feed_in_power_w=0.0,
             pv_power_w=3000.0,
             battery_power_w=2000.0,
+            pv3_power_w=2000.0,  # Batterie am PV3-String
         )
         for m in (0, 15)
     ]

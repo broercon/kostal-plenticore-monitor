@@ -112,6 +112,7 @@ def test_get_today_summary_appends_corrected_combined_entry(client, monkeypatch,
                     feed_in_power_w=0.0,
                     pv_power_w=1332.9,
                     battery_power_w=-2597.5,
+                    pv3_power_w=-2597.5,  # Batterie am PV3-String
                 ),
                 Reading(
                     device_id="wr1",
@@ -122,6 +123,7 @@ def test_get_today_summary_appends_corrected_combined_entry(client, monkeypatch,
                     feed_in_power_w=0.0,
                     pv_power_w=1332.9,
                     battery_power_w=-2597.5,
+                    pv3_power_w=-2597.5,  # Batterie am PV3-String
                 ),
                 Reading(
                     device_id="wr2",
@@ -184,6 +186,7 @@ def _insert_two_device_readings(now):
                     feed_in_power_w=0.0,
                     pv_power_w=1332.9,
                     battery_power_w=-2597.5,
+                    pv3_power_w=-2597.5,  # Batterie am PV3-String
                 ),
                 Reading(
                     device_id="wr1",
@@ -194,6 +197,7 @@ def _insert_two_device_readings(now):
                     feed_in_power_w=0.0,
                     pv_power_w=1332.9,
                     battery_power_w=-2597.5,
+                    pv3_power_w=-2597.5,  # Batterie am PV3-String
                 ),
                 Reading(
                     device_id="wr2",
@@ -323,7 +327,8 @@ def test_daily_summaries_combined_yield_equals_sum_of_devices(client, monkeypatc
             rows.append(Reading(device_id="wr1", device_name=WR1.name, timestamp=ts,
                                 pv_power_w=1200.0, battery_power_w=0.0))
             rows.append(Reading(device_id="wr2", device_name=WR2.name, timestamp=ts,
-                                pv_power_w=800.0, battery_power_w=300.0))
+                                pv_power_w=800.0, battery_power_w=300.0,
+                                pv3_power_w=300.0))
         db.add_all(rows)
         db.commit()
     finally:

@@ -15,7 +15,7 @@ def _rows(minutes):
     return [
         SimpleNamespace(
             timestamp=base + timedelta(minutes=minute),
-            device_id="wr1", pv_power_w=2000.0, battery_power_w=1000.0,
+            device_id="wr1", pv_power_w=2000.0, battery_power_w=1000.0, pv3_power_w=1000.0,
             home_power_w=2000.0, grid_draw_power_w=0.0, feed_in_power_w=0.0,
         )
         for minute in minutes

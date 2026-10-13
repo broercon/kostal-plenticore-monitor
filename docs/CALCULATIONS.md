@@ -44,9 +44,28 @@ Drei Kennzahlen stehen zur Auswahl:
 Auch hier lässt sich per Klick auf die Legende ein einzelner Tag ein-/
 ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 
+## Auswertungen
+
+Der Reiter "Auswertungen" bündelt die Säulendiagramme. Über das Menü am
+Reiter wählt man die Ansicht: "Erzeugung je Tag", "Tagesverbrauch" oder
+"Wechselrichter-Vergleich".
+
+## Erzeugung je Tag: PV-Ertrag je Wechselrichter
+
+Gestapeltes Säulendiagramm mit der gesamten PV-Erzeugung je Kalendertag
+(kWh), je Wechselrichter in einer eigenen Farbe (dieselbe Zuordnung wie im
+Wechselrichter-Vergleich). Wählbar sind 1 Tag (heute, Standard), 7, 14 und
+"Monat" (die letzten 30 Tage). Gerechnet wird wie beim PV-Ertrag der
+Übersicht die reine PV-Erzeugung (`pv_power_w` abzüglich der am PV3-String
+hängenden Batterie), je Gerät und Tag aus der Leistung integriert –
+unabhängig davon, ob die Energie eingespeist oder direkt verbraucht wurde.
+Abgeschlossene Tage kommen aus dem Tages-Cache (je Gerät ein eigener
+Eintrag), nur der heutige Tag wird bei jedem Aufruf neu integriert. Ist oben
+ein einzelner Wechselrichter gewählt, zeigt das Diagramm nur dessen Reihe.
+
 ## Tagesverbrauch: Säulendiagramm
 
-Ganz unten zeigt ein gestapeltes Säulendiagramm den Hausverbrauch je Tag als
+Ein gestapeltes Säulendiagramm den Hausverbrauch je Tag als
 Summe (kWh) – wählbar über 14/30/90/365 Tage zurück. Jede Säule ist danach
 eingefärbt, zu welchem Anteil der Verbrauch aus PV (direkt), Speicher
 (Batterieentladung) bzw. Netzbezug gedeckt wurde (gleiche Farbgebung wie
@@ -71,7 +90,7 @@ die Gesamtsumme, unabhängig vom oben ausgewählten Tab.
 
 ## Autarkiegrad
 
-Der Reiter "Autarkie" zeigt den **Autarkiegrad** – welcher Anteil des
+Die Ansicht "Autarkie" (Reiter "Verlauf") zeigt den **Autarkiegrad** – welcher Anteil des
 Hausverbrauchs aus eigener Erzeugung (PV, direkt oder über die Batterie
 zwischengespeichert) statt aus dem Netz gedeckt wurde – je Kalendermonat
 (oder -woche), gruppiert nach Jahr: wie der Jahresvergleich beim PV-Ertrag
@@ -88,9 +107,8 @@ skaliert die Y-Achse hier dynamisch auf die tatsächlich vorkommenden Werte
 0 muss dabei nicht auf der Achse auftauchen) – bei den in der Praxis meist
 recht nah beieinander liegenden Autarkiegraden (z.B. 40–60 %) würde eine
 feste 0–100 %-Skala Unterschiede kaum sichtbar machen. Wie beim
-Tagesvergleich/Jahresvergleich ist die Werte-Anzeige (Tooltip/Hover) nur
-bei genau einem dargestellten Jahr automatisch an, bei mehreren Jahren aus,
-damit sich überlagerte Tooltips nicht gegenseitig verdecken.
+Alle Diagramme zeigen am Desktop die Werte (Tooltip/Hover) an; auf
+Touch-Geräten bleibt die Anzeige aus, damit die Seite frei scrollt.
 
 Berechnung: `Autarkiegrad = (PV-Anteil + Speicher-Anteil) / Hausverbrauch
 gesamt`, in Prozent – dieselbe PV-/Speicher-/Netz-Aufteilung, die auch das
@@ -623,6 +641,15 @@ Wechselrichter-Filter), wie Tagesverbrauch/Autarkiegrad. Die
 Autarkiegrad-Ansicht (siehe oben) folgt demselben Muster, nur für den
 Autarkiegrad statt den PV-Ertrag.
 
+Bei mehreren Wechselrichtern gibt es zusätzlich die Darstellung "Je
+Wechselrichter" (Parameter `per_device=true`): pro Monat bzw. Woche steht
+eine Säule je Jahr nebeneinander, in der die Wechselrichter gestapelt sind.
+Jedes Jahr behält seine Jahresfarbe, die Wechselrichter erscheinen als
+hellere bzw. dunklere Variante davon – so bleibt sowohl das Jahr als auch das
+Gerät an der Farbe erkennbar. Die Werte je Gerät stammen aus denselben
+Tages-Cache-Einträgen wie "Erzeugung je Tag" (je Gerät ein Schlüssel
+`pv_yield:dev:<Hash der Geräte-ID>`).
+
 `build_yearly_comparison()` (`daily_summary.py`) nutzt denselben
 Tages-Cache (`_cached_daily_totals`, Feld `"pv_yield"`) wie die
 PV-Ertrag-Zeitraumübersicht - beide teilen sich dieselben zwischen-
@@ -657,11 +684,8 @@ Kalenderjahr gruppiert, würde dieser Tag fälschlich der letzten Woche von
 Der Endpoint `/api/readings/yearly-comparison` begrenzt den Parameter
 `years` auf 1-5 (mehr Jahre gleichzeitig wären mit der festen Farbpalette
 kaum noch unterscheidbar). Im Frontend sind über die Buttons 1/2/3
-(Standard)/5 Jahre wählbar; wie beim Tagesvergleich/Wechselrichter-
-Vergleich ist die Werte-Anzeige (Tooltip/Hover) nur bei genau einem
-dargestellten Jahr automatisch an (siehe `chartEventsFor()`), bei
-mehreren Jahren aus, damit sich überlagerte Tooltips nicht gegenseitig
-verdecken.
+(Standard)/5 Jahre wählbar. Die Werte-Anzeige (Tooltip/Hover) ist am
+Desktop immer an (siehe `chartEvents()`), auf Touch-Geräten aus.
 
 ## Speicherstand: Ladezustand (SoC) über die Zeit, je Gerät eine eigene Kurve
 
@@ -679,9 +703,8 @@ hinweg), damit sich einzelne Tage direkt vergleichen lassen. Die Farbe
 richtet sich wie beim Tagesvergleich nach der Aktualität des Tages (heute
 = erster Palettenton, gestern = zweiter, ...), nicht nach dem Gerät; bei
 mehreren Geräten mit Batterie unterscheidet stattdessen der Strichstil
-(durchgezogen/gestrichelt) die Geräte innerhalb derselben Tagesfarbe. Wie
-beim Tagesvergleich/Jahresvergleich ist die Werte-Anzeige (Tooltip/Hover)
-nur bei genau einem dargestellten Tag automatisch an.
+(durchgezogen/gestrichelt) die Geräte innerhalb derselben Tagesfarbe. Die
+Werte-Anzeige (Tooltip/Hover) ist am Desktop immer an.
 
 ### Warum hier NICHT wie sonst kombiniert/summiert wird
 

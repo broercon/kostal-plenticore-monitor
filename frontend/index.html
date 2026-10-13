@@ -174,19 +174,22 @@
         <button type="button" data-subview="pv">PV-Ertrag</button>
         <button type="button" data-subview="solar_battery">Verbrauch aus Batterie und Solar</button>
         <button type="button" data-subview="grid">Verbrauch aus Netz</button>
-        <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
         <button type="button" data-subview="yearcompare">Jahresvergleich</button>
         <button type="button" data-subview="batterysoc">Speicherstand</button>
+        <button type="button" data-subview="autarky">Autarkie</button>
       </div>
     </div>
 
-    <button type="button" data-tab="consumption">
-      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Wechselrichter
-    </button>
-
-    <button type="button" data-tab="autarky">
-      <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Autarkie
-    </button>
+    <div class="view-tab-with-menu" data-tab-group="evaluation">
+      <button type="button" data-tab="evaluation" class="view-tab-trigger">
+        <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Auswertungen
+      </button>
+      <div class="view-tab-menu">
+        <button type="button" data-subview="pvdaily">Erzeugung je Tag</button>
+        <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
+        <button type="button" data-subview="hourly">Wechselrichter-Vergleich</button>
+      </div>
+    </div>
 
     <div class="view-tab-with-menu" data-tab-group="forecast">
       <button type="button" data-tab="forecast" class="view-tab-trigger">
@@ -399,33 +402,6 @@
       </p>
     </section>
 
-    <section class="chart-section hidden" id="consumption-view-dailytotals">
-      <div class="daycompare-header">
-        <h2>Tagesverbrauch</h2>
-        <p class="muted">
-          Hausverbrauch je Tag als Summe (kWh), aufgeteilt danach, woher die
-          Energie kam: PV, Speicher (Batterie) oder Netzbezug – funktioniert
-          auch für vergangene Tage, die nur über den Logdaten-Import erfasst
-          wurden.
-        </p>
-      </div>
-      <div class="chart-toolbar daycompare-toolbar">
-        <div class="range-buttons" id="dailytotals-day-buttons">
-          <button data-days="14">14 Tage</button>
-          <button data-days="30" class="active">30 Tage</button>
-          <button data-days="90">90 Tage</button>
-          <button data-days="365">365 Tage</button>
-        </div>
-      </div>
-      <div class="chart-canvas-wrapper" id="dailytotals-chart-wrapper">
-        <canvas id="dailytotals-chart"></canvas>
-      </div>
-      <p class="chart-hint muted">
-        Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
-        Tageswerts zu sehen.
-      </p>
-    </section>
-
     <section class="chart-section hidden" id="trend-view-yearcompare">
       <div class="daycompare-header">
         <h2>Jahresvergleich</h2>
@@ -447,6 +423,10 @@
           <button data-years="3" class="active">3 Jahre</button>
           <button data-years="5">5 Jahre</button>
         </div>
+        <div class="range-buttons hidden" id="yearcompare-mode-buttons">
+          <button data-mode="total" class="active">Summe</button>
+          <button data-mode="device">Je Wechselrichter</button>
+        </div>
       </div>
       <div class="chart-canvas-wrapper" id="yearcompare-chart-wrapper">
         <canvas id="yearcompare-chart"></canvas>
@@ -454,7 +434,10 @@
       <p class="chart-hint muted">
         Tipp: Auf ein Jahr in der Legende klicken, um es ein- oder
         auszublenden. Jedes Jahr hat eine eigene, feste Farbe (das aktuellste
-        Jahr etwas dicker gezeichnet).
+        Jahr etwas dicker gezeichnet). Bei mehreren Wechselrichtern zeigt
+        „Je Wechselrichter“ pro Monat (bzw. Woche) eine Säule je Jahr, in der
+        die Wechselrichter als hellere und dunklere Variante der Jahresfarbe
+        gestapelt sind.
       </p>
     </section>
 
@@ -488,47 +471,8 @@
         zeigt, wann und wie lange der Speicher geladen hat.
       </p>
     </section>
-  </div>
 
-  <div class="tab-panel hidden" id="tab-panel-consumption" data-tab-panel="consumption">
-    <section class="chart-section" id="hourly-section">
-      <div class="daycompare-header">
-        <h2>Wechselrichter-Vergleich</h2>
-        <p class="muted">
-          PV-Ertrag pro Stunde, je Wechselrichter farblich getrennt gestapelt –
-          die gesamte erzeugte Energie, unabhängig davon, ob sie eingespeist
-          oder direkt im Haus verbraucht wurde. So lässt sich der Beitrag der
-          einzelnen Wechselrichter direkt vergleichen. Nur verfügbar in der
-          Ansicht "Alle (Summe)" oben, da ein einzelner Wechselrichter nichts
-          zum Vergleichen hat.
-        </p>
-      </div>
-      <div id="hourly-chart-content">
-        <div class="chart-toolbar daycompare-toolbar">
-          <div class="range-buttons" id="hourly-day-buttons">
-            <button data-days="1" class="active">1 Tag</button>
-            <button data-days="7">7 Tage</button>
-            <button data-days="30">30 Tage</button>
-          </div>
-        </div>
-        <div class="chart-canvas-wrapper" id="hourly-chart-wrapper">
-          <canvas id="hourly-chart"></canvas>
-        </div>
-        <p class="chart-hint muted">
-          Tipp: Bei 7 oder 30 Tagen werden die Balken entsprechend schmal – Maus
-          über eine Säule halten zeigt trotzdem die genaue Stunde und den
-          genauen Wert je Wechselrichter.
-        </p>
-      </div>
-      <p class="muted hidden" id="hourly-chart-unavailable">
-        Der Wechselrichter-Vergleich ist nur in der Ansicht "Alle (Summe)" mit
-        mehreren Wechselrichtern verfügbar.
-      </p>
-    </section>
-  </div>
-
-  <div class="tab-panel hidden" id="tab-panel-autarky" data-tab-panel="autarky">
-    <section class="chart-section" id="autarky-section">
+    <section class="chart-section hidden" id="trend-view-autarky">
       <div class="daycompare-header">
         <h2>Autarkiegrad</h2>
         <p class="muted">
@@ -562,6 +506,101 @@
         Jahr etwas dicker gezeichnet). Die Y-Achse skaliert sich auf die
         tatsächlich vorkommenden Werte (nicht fest 0–100 %), damit
         Unterschiede zwischen den Jahren sichtbar bleiben.
+      </p>
+    </section>
+  </div>
+
+  <div class="tab-panel hidden" id="tab-panel-evaluation" data-tab-panel="evaluation">
+    <section class="chart-section" id="evaluation-view-pvdaily">
+      <div class="daycompare-header">
+        <h2>Erzeugung je Tag</h2>
+        <p class="muted">
+          Gesamte PV-Erzeugung je Tag (kWh) als Säulen – bei mehreren
+          Wechselrichtern je Wechselrichter farblich getrennt gestapelt, sodass
+          sich der Beitrag jedes Geräts ablesen lässt. Gezählt wird die reine
+          PV-Erzeugung, unabhängig davon, ob sie eingespeist oder direkt im
+          Haus verbraucht wurde.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="pvdaily-day-buttons">
+          <button data-days="1" class="active">1 Tag</button>
+          <button data-days="7">7 Tage</button>
+          <button data-days="14">14 Tage</button>
+          <button data-days="30">Monat</button>
+          <button data-days="60">2 Monate</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrapper" id="pvdaily-chart-wrapper">
+        <canvas id="pvdaily-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Maus über eine Säule halten, um den Wert je Wechselrichter und
+        die Tagessumme zu sehen. „Monat“ zeigt die letzten 30 Tage. Ist oben
+        ein einzelner Wechselrichter gewählt, zeigt das Diagramm nur dessen
+        Erzeugung.
+      </p>
+    </section>
+
+    <section class="chart-section hidden" id="consumption-view-dailytotals">
+      <div class="daycompare-header">
+        <h2>Tagesverbrauch</h2>
+        <p class="muted">
+          Hausverbrauch je Tag als Summe (kWh), aufgeteilt danach, woher die
+          Energie kam: PV, Speicher (Batterie) oder Netzbezug – funktioniert
+          auch für vergangene Tage, die nur über den Logdaten-Import erfasst
+          wurden.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar">
+        <div class="range-buttons" id="dailytotals-day-buttons">
+          <button data-days="14">14 Tage</button>
+          <button data-days="30" class="active">30 Tage</button>
+          <button data-days="90">90 Tage</button>
+          <button data-days="365">365 Tage</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrapper" id="dailytotals-chart-wrapper">
+        <canvas id="dailytotals-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Tipp: Maus über eine Säule halten, um die genaue Aufteilung des
+        Tageswerts zu sehen.
+      </p>
+    </section>
+
+    <section class="chart-section hidden" id="hourly-section">
+      <div class="daycompare-header">
+        <h2>Wechselrichter-Vergleich</h2>
+        <p class="muted">
+          PV-Ertrag pro Stunde, je Wechselrichter farblich getrennt gestapelt –
+          die gesamte erzeugte Energie, unabhängig davon, ob sie eingespeist
+          oder direkt im Haus verbraucht wurde. So lässt sich der Beitrag der
+          einzelnen Wechselrichter direkt vergleichen. Nur verfügbar in der
+          Ansicht "Alle (Summe)" oben, da ein einzelner Wechselrichter nichts
+          zum Vergleichen hat.
+        </p>
+      </div>
+      <div id="hourly-chart-content">
+        <div class="chart-toolbar daycompare-toolbar">
+          <div class="range-buttons" id="hourly-day-buttons">
+            <button data-days="1" class="active">1 Tag</button>
+            <button data-days="7">7 Tage</button>
+            <button data-days="30">30 Tage</button>
+          </div>
+        </div>
+        <div class="chart-canvas-wrapper" id="hourly-chart-wrapper">
+          <canvas id="hourly-chart"></canvas>
+        </div>
+        <p class="chart-hint muted">
+          Tipp: Bei 7 oder 30 Tagen werden die Balken entsprechend schmal – Maus
+          über eine Säule halten zeigt trotzdem die genaue Stunde und den
+          genauen Wert je Wechselrichter.
+        </p>
+      </div>
+      <p class="muted hidden" id="hourly-chart-unavailable">
+        Der Wechselrichter-Vergleich ist nur in der Ansicht "Alle (Summe)" mit
+        mehreren Wechselrichtern verfügbar.
       </p>
     </section>
   </div>

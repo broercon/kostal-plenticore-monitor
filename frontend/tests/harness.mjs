@@ -51,6 +51,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           {
             timestamp: "2026-07-13T12:00:00",
             pv_power_w: pv,
+            pv_pure_power_w: pv,
             home_power_w: 0,
             feed_in_power_w: 0,
             grid_draw_power_w: 0,
@@ -75,6 +76,17 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           buckets: [
             { bucket: "2026-07-13T01:00:00", values: { wr1: 0, wr2: 0 } },
             { bucket: "2026-07-13T14:00:00", values: { wr1: 2.5, wr2: 1.2 } },
+          ],
+        };
+      case "/api/readings/daily-pv-per-device":
+        return {
+          devices: [
+            { device_id: "wr1", device_name: "WR1" },
+            { device_id: "wr2", device_name: "WR2" },
+          ],
+          days: [
+            { date: "2026-07-12", values: { wr1: 10.0, wr2: 4.0 } },
+            { date: "2026-07-13", values: { wr1: 12.5, wr2: null } },
           ],
         };
       case "/api/readings/feed-in-summary":

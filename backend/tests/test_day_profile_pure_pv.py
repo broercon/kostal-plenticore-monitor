@@ -8,18 +8,18 @@ from app.aggregation import day_profile
 from app.models import Reading
 
 
-def _r(minute, pv, battery, home=0.0, grid=0.0, feed=0.0):
+def _r(minute, pv, battery, home=0.0, grid=0.0, feed=0.0, pv3=None):
     return Reading(
         device_id="wr1", device_name="wr1",
         timestamp=datetime(2026, 7, 14, 2, minute, tzinfo=timezone.utc),
-        pv_power_w=pv, battery_power_w=battery,
+        pv_power_w=pv, battery_power_w=battery, pv3_power_w=pv3,
         home_power_w=home, grid_draw_power_w=grid, feed_in_power_w=feed,
     )
 
 
 def test_day_profile_pv_is_pure_pv():
     # Nachts: pv_power_w = 4000 spiegelt nur die Batterie (4000) ueber PV3.
-    rows = [_r(0, 4000.0, 4000.0), _r(5, 4000.0, 4000.0)]
+    rows = [_r(0, 4000.0, 4000.0, pv3=4000.0), _r(5, 4000.0, 4000.0, pv3=4000.0)]
     days = day_profile(rows, bucket_minutes=15, timezone_name="Europe/Berlin")
     assert len(days) == 1
     point = days[0]["points"][0]
@@ -35,7 +35,7 @@ def test_day_profile_pv_without_battery_unchanged():
 def test_day_profile_battery_power_negative_when_charging():
     # Batterie an PV3: Panels 3000 W (pv1+pv2), davon 1000 W in die Batterie
     # (Laden) -> pv_power_w (pv1+pv2+pv3) = 2000, battery_power_w = -1000.
-    rows = [_r(0, 2000.0, -1000.0), _r(5, 2000.0, -1000.0)]
+    rows = [_r(0, 2000.0, -1000.0, pv3=-1000.0), _r(5, 2000.0, -1000.0, pv3=-1000.0)]
     days = day_profile(rows, bucket_minutes=15, timezone_name="Europe/Berlin")
     pt = days[0]["points"][0]
     assert pt["battery_power_w"] == -1000.0  # Laden -> negativ (wie Leistungsverlauf)
@@ -62,8 +62,8 @@ def test_day_profile_battery_share_detected_with_pv3_battery():
     nur 1000 W decken - die restlichen 2000 W MUESSEN aus der Batterie
     stammen."""
     rows = [
-        _r(0, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0),
-        _r(5, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0),
+        _r(0, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0, pv3=2000.0),
+        _r(5, pv=3000.0, battery=2000.0, home=3000.0, grid=0.0, feed=0.0, pv3=2000.0),
     ]
     days = day_profile(rows, bucket_minutes=15, timezone_name="Europe/Berlin")
     point = days[0]["points"][0]
@@ -71,3 +71,23 @@ def test_day_profile_battery_share_detected_with_pv3_battery():
     assert point["pv_power_w"] == 1000.0  # reine PV (Anzeige unveraendert)
     assert point["home_from_battery_w"] == 2000.0  # vor dem Fix: 0.0
     assert point["home_from_solar_w"] == 1000.0
+
+
+def test_day_profile_battery_not_subtracted_without_pv3():
+    """Hybrid ohne PV3-Wert (Batterie separat angeschlossen): pv_power_w =
+    pv1+pv2 ist bereits die reine PV. Die Batterie darf weder beim Entladen
+    (sonst 0 W) noch beim Laden (sonst zu viel) herausgerechnet werden - und
+    die Aufteilung des Hausverbrauchs muss die Entladung trotzdem erkennen."""
+    entladen = day_profile(
+        [_r(0, 600.0, 1600.0, home=2200.0), _r(5, 600.0, 1600.0, home=2200.0)],
+        bucket_minutes=15, timezone_name="Europe/Berlin",
+    )[0]["points"][0]
+    assert entladen["pv_power_w"] == 600.0
+    assert entladen["home_from_battery_w"] == 1600.0
+    assert entladen["home_from_solar_w"] == 600.0
+
+    laden = day_profile(
+        [_r(0, 2800.0, -1800.0), _r(5, 2800.0, -1800.0)],
+        bucket_minutes=15, timezone_name="Europe/Berlin",
+    )[0]["points"][0]
+    assert laden["pv_power_w"] == 2800.0

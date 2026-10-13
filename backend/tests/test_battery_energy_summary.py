@@ -19,6 +19,7 @@ from app.aggregation import (
     daily_battery_energy_flows,
     aggregate_per_device,
     combine_devices,
+    combined_row_values,
     daily_home_source_breakdown_kwh,
     day_profile,
 )
@@ -147,7 +148,7 @@ def test_combined_inverted_battery_preserves_solar_share():
     rows = [
         Reading(
             device_id="wr1", device_name="WR1", timestamp=start + timedelta(minutes=m),
-            pv_power_w=1000.0, battery_power_w=-1000.0, ac_power_w=3000.0,
+            pv_power_w=1000.0, battery_power_w=-1000.0, pv3_power_w=-1000.0, ac_power_w=3000.0,
             home_power_w=3000.0, feed_in_power_w=0.0, grid_draw_power_w=0.0,
         ) for m in (0, 15)
     ]
@@ -156,7 +157,7 @@ def test_combined_inverted_battery_preserves_solar_share():
         raw_battery_output=True,
     )
     synthetic = [
-        Reading(device_id="all", device_name="all", timestamp=datetime.fromtimestamp(ts, timezone.utc), **values)
+        Reading(device_id="all", device_name="all", timestamp=datetime.fromtimestamp(ts, timezone.utc), **combined_row_values(values))
         for ts, values in combined.items()
     ]
     assert daily_home_source_breakdown_kwh(synthetic, "Europe/Berlin") == [

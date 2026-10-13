@@ -42,6 +42,8 @@ def _add_readings(rows: list[tuple[datetime, float, float | None]]) -> None:
                     timestamp=ts,
                     pv_power_w=pv,
                     battery_power_w=battery,
+                    # Batterie am PV3-String (siehe pure_pv_power_w).
+                    pv3_power_w=battery,
                 )
                 for ts, pv, battery in rows
             ]

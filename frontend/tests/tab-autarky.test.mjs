@@ -48,11 +48,11 @@ function backendWithAutarky() {
   return handler;
 }
 
-test("Autarkie-Tab laedt schon beim Start im Hintergrund und zeigt den Jahresvergleich als Liniendiagramm", async () => {
+test("Autarkie-Ansicht laedt schon beim Start im Hintergrund und zeigt den Jahresvergleich als Liniendiagramm", async () => {
   const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
 
-  assert.equal(app.state.tabsLoaded.has("autarky"), true);
+  assert.equal(app.state.tabsLoaded.has("trend"), true);
   assert.ok(app.state.autarky.chart, "Autarkiegrad-Chart ist schon vor dem ersten Oeffnen aufgebaut");
   assert.equal(app.state.autarky.chart.type, "line");
   assert.deepEqual(
@@ -79,7 +79,7 @@ test("Autarkie: Standardansicht ist Monate/3 Jahre, entsprechende Buttons aktiv"
 test("Autarkie: ein Dataset je Jahr, aktuellstes Jahr = Farbindex 0, Y-Achse skaliert dynamisch statt fest 0-100", async () => {
   const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
-  app.clickViewTab("autarky");
+  app.clickSubview("trend", "autarky");
 
   const { datasets } = app.state.autarky.chart.data;
   assert.equal(datasets.length, 2);
@@ -105,7 +105,7 @@ test("Autarkie: Klick auf 'Wochen' fragt neu ab und aktualisiert Achsentitel/Lab
   const backend = backendWithAutarky();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => app.loadingCount() === 0);
-  app.clickViewTab("autarky");
+  app.clickSubview("trend", "autarky");
 
   const btnWeek = app.document.querySelector('#autarky-granularity-buttons button[data-granularity="week"]');
   btnWeek.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
@@ -121,7 +121,7 @@ test("Autarkie: Klick auf Jahres-Button aendert state.autarky.years und fragt mi
   const backend = backendWithAutarky();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => app.loadingCount() === 0);
-  app.clickViewTab("autarky");
+  app.clickSubview("trend", "autarky");
 
   const btn1 = app.document.querySelector('#autarky-years-buttons button[data-years="1"]');
   btn1.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
@@ -133,40 +133,39 @@ test("Autarkie: Klick auf Jahres-Button aendert state.autarky.years und fragt mi
   assert.equal(app.state.autarky.chart.data.datasets[0].label, "2026");
 });
 
-test("Autarkie: Werte-Anzeige nur an, wenn genau ein Jahr dargestellt wird", async () => {
+test("Autarkie: Werte-Anzeige bleibt bei Jahreswechsel an (dasselbe Chart-Objekt)", async () => {
   const backend = backendWithAutarky();
   const app = await bootApp({ fetchHandler: backend });
   await waitFor(() => app.loadingCount() === 0);
-  app.clickViewTab("autarky");
+  app.clickSubview("trend", "autarky");
 
-  // Standard sind 3 Jahre -> Werte-Anzeige aus.
   const isInteractive = (chart) => Array.isArray(chart.options.events) && chart.options.events.length > 0;
-  assert.equal(isInteractive(app.state.autarky.chart), false);
+  assert.equal(isInteractive(app.state.autarky.chart), true);
 
   const chartBefore = app.state.autarky.chart;
   const btn1 = app.document.querySelector('#autarky-years-buttons button[data-years="1"]');
   btn1.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
   await waitFor(() => app.state.autarky.years === 1);
-  await waitFor(() => isInteractive(app.state.autarky.chart) === true);
+  await waitFor(() => app.state.autarky.chart.data.datasets.length === 1);
+  assert.equal(isInteractive(app.state.autarky.chart), true);
 
   // Dasselbe Chart.js-Objekt wird bei einer reinen Datenaktualisierung
-  // weiterverwendet - options.events muss deshalb explizit nachgezogen
-  // werden.
+  // weiterverwendet.
   assert.equal(app.state.autarky.chart, chartBefore);
 });
 
-test("Autarkie-Tab wird per Klick sichtbar (kein erneuter Request noetig)", async () => {
+test("Autarkie-Ansicht wird per Klick sichtbar (Daten schon vorgeladen)", async () => {
   const app = await bootApp({ fetchHandler: backendWithAutarky() });
   await waitFor(() => app.loadingCount() === 0);
 
-  app.clickViewTab("autarky");
-  const panel = app.document.querySelector('[data-tab-panel="autarky"]');
-  assert.equal(panel.classList.contains("hidden"), false, "Autarkie-Panel ist sichtbar");
-  assert.equal(
-    app.isLoading("#autarky-chart-wrapper"),
-    false,
-    "Umschalten auf den schon vorgeladenen Tab loest keinen neuen Ladeindikator aus"
-  );
+  // Wie bei den anderen Verlauf-Unteransichten laedt setTrendSubView() beim
+  // Umschalten erneut - hier zaehlt, dass die Sektion sichtbar wird und der
+  // Chart mit den Standardparametern fehlerfrei bestehen bleibt.
+  app.clickSubview("trend", "autarky");
+  const section = app.document.getElementById("trend-view-autarky");
+  assert.equal(section.classList.contains("hidden"), false, "Autarkie-Ansicht ist sichtbar");
+  await waitFor(() => app.loadingCount() === 0);
+  assert.ok(app.state.autarky.chart);
 });
 
 test("Autarkiegrad heute erscheint in der Uebersicht", async () => {

@@ -24,7 +24,7 @@ test("alle Ansichts-Tabs laden schon beim Start im Hintergrund, nicht erst beim 
   // Sichtbarkeit.
   assert.equal(app.state.tabsLoaded.has("overview"), true);
   assert.equal(app.state.tabsLoaded.has("trend"), true);
-  assert.equal(app.state.tabsLoaded.has("consumption"), true);
+  assert.equal(app.state.tabsLoaded.has("evaluation"), true);
   assert.equal(app.state.tabsLoaded.has("forecast"), true);
   assert.ok(app.state.chart, "Leistungsverlauf-Chart ist schon vor dem ersten Oeffnen aufgebaut");
 

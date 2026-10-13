@@ -19,8 +19,18 @@ const state = {
     days: 30,
     chart: null,
   },
+  pvDaily: {
+    // Erzeugung je Tag (Auswertungen-Tab): 1 Tag (heute), 7, 14, 30 oder 60 Tage.
+    days: 1,
+    chart: null,
+  },
   yearCompare: {
     granularity: "month", // "month" | "week"
+    // "total": eine Kurve je Jahr (Summe aller Wechselrichter);
+    // "device": je Jahr eine gestapelte Saeule mit den Wechselrichtern als
+    // Farbvarianten - nur bei mehreren Wechselrichtern waehlbar.
+    mode: "total",
+    chartType: null, // Typ des aktuellen Charts ("line" | "bar"), siehe refreshYearCompareChart
     // Standard 3 Jahre - genug fuer einen aussagekraeftigen Vergleich, ohne
     // dass die Legende bei kurzer Historie leer bleibt. Ueber die Buttons
     // weiterhin auf 1/2/5 Jahre umstellbar (Maximum 5, siehe Backend-Limit
@@ -66,6 +76,7 @@ const state = {
   // Vorgabewerte entsprechen den ehemals zuerst ausgewaehlten Optionen.
   subView: {
     trend: "power",
+    evaluation: "pvdaily",
     forecast: "days",
   },
 };
@@ -93,12 +104,12 @@ function fmtPercent(value) {
 }
 
 // Reine PV-Erzeugung in Watt (ohne die ggf. am PV3-String haengende
-// Batterie): pv_power_w - battery_power_w, auf >= 0 begrenzt. Passt zur
-// serverseitigen PV-Ertrag-Berechnung (integrate_pure_pv_kwh). Geraete ohne
-// Batterie (battery_power_w null) liefern schlicht pv_power_w.
+// Batterie). Wird vom Backend je Geraet berechnet (pv_pure_power_w, siehe
+// aggregation.pure_pv_power_w) - dort ist bekannt, ob ein PV3-Wert existiert,
+// der in Summen und Zeitreihen nicht mehr vorliegt. Passt zur
+// serverseitigen PV-Ertrag-Berechnung (integrate_pure_pv_kwh).
 function purePvWatt(r) {
-  if (r.pv_power_w === null || r.pv_power_w === undefined) return null;
-  return Math.max(0, r.pv_power_w - (r.battery_power_w || 0));
+  return r.pv_pure_power_w === undefined ? null : r.pv_pure_power_w;
 }
 
 // Deckungsgleich mit aggregation.MAX_INTEGRATION_GAP_HOURS im Backend: ein
@@ -810,7 +821,7 @@ async function refreshForecast() {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            events: chartEventsFor(true), // "Prognose heute" ist immer genau ein Tag
+            events: chartEvents(),
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -909,7 +920,7 @@ async function refreshForecast() {
             options: {
               responsive: true,
               maintainAspectRatio: false,
-              events: chartEventsFor(true), // "Prognose morgen" ist immer genau ein Tag
+              events: chartEvents(),
               interaction: { mode: "index", intersect: false },
               scales: {
                 x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -974,7 +985,7 @@ async function refreshForecast() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: { ticks: { maxTicksLimit: 14 } },
@@ -1084,7 +1095,7 @@ async function refreshForecastYesterday() {
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            events: chartEventsFor(true), // "Prognose gestern" ist immer genau ein Tag
+            events: chartEvents(),
             interaction: { mode: "index", intersect: false },
             scales: {
               x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 24 } },
@@ -1328,7 +1339,7 @@ async function refreshForecastAccuracy() {
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          events: chartEventsFor(true), // Prognose: Werte-Anzeige immer an (unabhaengig von der Tagesanzahl), siehe Nutzerwunsch
+          events: chartEvents(),
           scales: {
             y: {
               min: yRange.min,
@@ -1803,7 +1814,7 @@ async function refreshChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(isDayMode),
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: xScale,
@@ -2007,12 +2018,6 @@ async function refreshDayCompareChart() {
 
     if (state.dayCompare.chart) {
       state.dayCompare.chart.data.datasets = datasets;
-      // Die Werte-Anzeige haengt von der Tagesanzahl ab (siehe
-      // chartEventsFor) - anders als bei den Daten selbst wird "options"
-      // beim reinen Aktualisieren oben nicht automatisch neu ausgewertet,
-      // deshalb hier explizit nachziehen, wenn sich die Tagesanzahl
-      // (1 Tag <-> mehrere Tage) seit dem letzten Aufruf geaendert hat.
-      state.dayCompare.chart.options.events = chartEventsFor(days === 1);
       state.dayCompare.chart.update();
       return;
     }
@@ -2024,7 +2029,7 @@ async function refreshDayCompareChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(days === 1),
+        events: chartEvents(),
         // Wie beim Leistungsverlauf: beim Hovern alle Tage an dieser Uhrzeit
         // anzeigen (nicht nur den naechsten Punkt), damit sich die Werte
         // vergleichen lassen.
@@ -2105,22 +2110,17 @@ function setupDayCompareControls() {
 
 function applyTrendSubView(view) {
   const isPower = view === "power";
-  const isDailyTotals = view === "dailytotals";
   const isYearCompare = view === "yearcompare";
   const isBatterySoc = view === "batterysoc";
+  const isAutarky = view === "autarky";
   el("trend-view-power").classList.toggle("hidden", !isPower);
   el("trend-view-daycompare").classList.toggle(
     "hidden",
-    isPower || isDailyTotals || isYearCompare || isBatterySoc
+    isPower || isYearCompare || isBatterySoc || isAutarky
   );
-  // "Tagesverbrauch" (urspruenglich im "Verbrauch & Wechselrichter"-Tab) ist
-  // jetzt eine weitere Unteransicht des "Verlauf"-Tabs, siehe HTML - dort
-  // liegt die Sektion direkt im Verlauf-Panel, das dazugehoerige Element
-  // (#consumption-view-dailytotals) hat seinen Namen aus Kompatibilitaets-
-  // gruenden (CSS/Tests/refreshDailyTotalsChart) behalten.
-  el("consumption-view-dailytotals").classList.toggle("hidden", !isDailyTotals);
   el("trend-view-yearcompare").classList.toggle("hidden", !isYearCompare);
   el("trend-view-batterysoc").classList.toggle("hidden", !isBatterySoc);
+  el("trend-view-autarky").classList.toggle("hidden", !isAutarky);
 }
 
 function setTrendSubView(view) {
@@ -2131,9 +2131,9 @@ function setTrendSubView(view) {
     refreshChart().catch(console.error);
     return;
   }
-  if (view === "dailytotals") {
-    state.dailyTotals.chart?.resize();
-    refreshDailyTotalsChart().catch(console.error);
+  if (view === "autarky") {
+    state.autarky.chart?.resize();
+    refreshAutarkyChart().catch(console.error);
     return;
   }
   if (view === "yearcompare") {
@@ -2167,6 +2167,123 @@ function setupTrendSubView() {
   // Tabs (siehe setupViewTabs/TAB_LOADERS), damit noch nie besuchte Tabs
   // weiterhin erst bei Bedarf laden.
   applyTrendSubView(state.subView.trend);
+}
+
+// --- Ansichts-Auswahl "Auswertungen"-Tab: Erzeugung je Tag, Tagesverbrauch
+// oder Wechselrichter-Vergleich - immer nur EIN Diagramm sichtbar, gesteuert
+// ueber das Flyout-Menue am Reiter (siehe setupViewTabs/SUBVIEW_SETTERS). ---
+
+const EVALUATION_SUBVIEW_SECTIONS = {
+  pvdaily: () => el("evaluation-view-pvdaily"),
+  dailytotals: () => el("consumption-view-dailytotals"),
+  hourly: () => el("hourly-section"),
+};
+
+function applyEvaluationSubView(view) {
+  for (const [key, getSection] of Object.entries(EVALUATION_SUBVIEW_SECTIONS)) {
+    getSection().classList.toggle("hidden", key !== view);
+  }
+}
+
+function setEvaluationSubView(view) {
+  state.subView.evaluation = view;
+  applyEvaluationSubView(view);
+  // Im Hintergrund erzeugte Diagramme (waehrend ihre Sektion "display:none"
+  // war) auf die richtige Groesse bringen, siehe setForecastSubView().
+  resizeTabCharts("evaluation");
+}
+
+function setupEvaluationSubView() {
+  applyEvaluationSubView(state.subView.evaluation);
+}
+
+// --- Erzeugung je Tag: gestapeltes Saeulendiagramm der PV-Erzeugung (kWh)
+// je Kalendertag, je Wechselrichter eine Farbe (dieselbe Zuordnung wie im
+// Wechselrichter-Vergleich: Farbe nach Position des Geraets). ---
+
+async function refreshPvDailyChart() {
+  return withLoading(["#pvdaily-chart-wrapper"], async () => {
+    const days = state.pvDaily.days;
+    const deviceId = state.selectedDeviceId;
+    const result = await fetchJson(`/api/readings/daily-pv-per-device?days=${days}`);
+    if (state.pvDaily.days !== days || state.selectedDeviceId !== deviceId) return;
+    const labels = result.days.map((d) => shortDate(d.date));
+
+    // Farbe nach Position in der Gesamtliste, nicht in der gefilterten -
+    // ein einzeln gewaehlter Wechselrichter behaelt so seine Farbe.
+    const datasets = result.devices
+      .map((device, i) => ({ device, i }))
+      .filter(({ device }) => !deviceId || device.device_id === deviceId)
+      .map(({ device, i }) => ({
+        label: device.device_name,
+        data: result.days.map((d) => d.values[device.device_id]),
+        backgroundColor: dayColor(i),
+        borderColor: dayColor(i),
+        borderWidth: 1,
+        borderRadius: 2,
+        stack: "erzeugung",
+      }));
+
+    if (state.pvDaily.chart) {
+      state.pvDaily.chart.data.labels = labels;
+      state.pvDaily.chart.data.datasets = datasets;
+      state.pvDaily.chart.update();
+      return;
+    }
+
+    const ctx = el("pvdaily-chart").getContext("2d");
+    state.pvDaily.chart = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        events: chartEvents(),
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true, maxTicksLimit: 16 },
+            grid: { display: false },
+          },
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+            grid: { color: "#334155" },
+            title: { display: true, text: "PV-Erzeugung (kWh)", color: "#94a3b8" },
+          },
+        },
+        plugins: {
+          legend: { labels: { color: "#e2e8f0" } },
+          tooltip: {
+            callbacks: {
+              label: (item) =>
+                item.parsed.y === null
+                  ? `${item.dataset.label}: keine Daten`
+                  : `${item.dataset.label}: ${item.parsed.y.toFixed(1)} kWh`,
+              footer: (items) => {
+                const total = items.reduce((sum, item) => sum + (item.parsed.y || 0), 0);
+                return `Gesamt: ${total.toFixed(1)} kWh`;
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+}
+
+function setupPvDailyControls() {
+  const container = el("pvdaily-day-buttons");
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-days]");
+    if (!btn) return;
+    for (const b of container.querySelectorAll("button")) b.classList.remove("active");
+    btn.classList.add("active");
+    state.pvDaily.days = Number(btn.dataset.days);
+    refreshPvDailyChart().catch(console.error);
+  });
 }
 
 // --- Tagesverbrauch: gestapeltes Saeulendiagramm mit taeglichen kWh-Summen,
@@ -2230,7 +2347,7 @@ async function refreshDailyTotalsChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(false), // Tagesverbrauch zeigt strukturell nie nur einen Tag (min. 14)
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
@@ -2306,52 +2423,113 @@ function buildYearCompareDatasets(years) {
   });
 }
 
+// Hellere/dunklere Variante einer Jahresfarbe fuer den i-ten von n
+// Wechselrichtern: beim ersten Geraet aufgehellt, beim letzten abgedunkelt
+// (bei nur einem Geraet bleibt die Grundfarbe) - so bleibt die Jahresfarbe
+// erkennbar und die Wechselrichter lassen sich trotzdem unterscheiden.
+function deviceShade(hex, i, n) {
+  if (n <= 1) return hex;
+  const amount = 0.4 - 0.7 * (i / (n - 1)); // +0.4 (heller) ... -0.3 (dunkler)
+  const target = amount >= 0 ? 255 : 0;
+  const k = Math.abs(amount);
+  const channel = (offset) => {
+    const c = parseInt(hex.slice(offset, offset + 2), 16);
+    return Math.round(c + (target - c) * k)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+}
+
+// Je Jahr und Wechselrichter eine Datenreihe; alle Reihen eines Jahres
+// teilen sich einen Stapel (stack = Jahr), sodass pro Monat eine Saeule je
+// Jahr nebeneinander steht und die Wechselrichter darin gestapelt sind.
+function buildYearCompareDeviceDatasets(years, devices) {
+  const total = years.length;
+  const datasets = [];
+  years.forEach((year, i) => {
+    const base = dayColor(total - 1 - i);
+    devices.forEach((device, d) => {
+      const color = deviceShade(base, d, devices.length);
+      datasets.push({
+        label: `${year.year} · ${device.device_name}`,
+        data: year.device_values?.[device.device_id] ?? [],
+        backgroundColor: color,
+        borderColor: color,
+        borderWidth: 1,
+        stack: String(year.year),
+      });
+    });
+  });
+  return datasets;
+}
+
+function updateYearCompareModeButtons() {
+  const container = el("yearcompare-mode-buttons");
+  const multi = state.devices.length > 1;
+  container.classList.toggle("hidden", !multi);
+  const active = multi ? state.yearCompare.mode : "total";
+  for (const b of container.querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.mode === active);
+  }
+  return active === "device";
+}
+
 async function refreshYearCompareChart() {
   return withLoading(["#yearcompare-chart-wrapper"], async () => {
     const { granularity, years } = state.yearCompare;
+    const deviceMode = updateYearCompareModeButtons();
     const params = new URLSearchParams({ granularity, years: String(years) });
+    if (deviceMode) params.set("per_device", "true");
     const result = await fetchJson(`/api/readings/yearly-comparison?${params.toString()}`);
-    if (state.yearCompare.granularity !== granularity || state.yearCompare.years !== years) {
+    if (
+      state.yearCompare.granularity !== granularity ||
+      state.yearCompare.years !== years ||
+      (state.yearCompare.mode === "device" && state.devices.length > 1) !== deviceMode
+    ) {
       return;
     }
 
-    const datasets = buildYearCompareDatasets(result.years);
+    const datasets = deviceMode
+      ? buildYearCompareDeviceDatasets(result.years, result.devices || [])
+      : buildYearCompareDatasets(result.years);
+    const chartType = deviceMode ? "bar" : "line";
     const xTitle = granularity === "week" ? "Kalenderwoche" : "Monat";
-    // Wie beim Tagesvergleich: Werte-Anzeige nur an, wenn genau EIN Jahr
-    // gezeigt wird (sonst wuerden sich die Tooltips mehrerer ueberlagerter
-    // Jahre gegenseitig ueberdecken) - siehe chartEventsFor().
-    const isSingleYear = result.years.length === 1;
+
+    // Linie <-> Saeulen laesst sich in Chart.js nicht per update() umstellen
+    // - bei einem Wechsel des Darstellungstyps neu aufbauen.
+    if (state.yearCompare.chart && state.yearCompare.chartType !== chartType) {
+      state.yearCompare.chart.destroy();
+      state.yearCompare.chart = null;
+    }
 
     if (state.yearCompare.chart) {
       state.yearCompare.chart.data.labels = result.labels;
       state.yearCompare.chart.data.datasets = datasets;
       state.yearCompare.chart.options.scales.x.title.text = xTitle;
-      // options.events wird bei einer reinen Datenaktualisierung nicht
-      // automatisch neu ausgewertet (siehe Kommentar in
-      // refreshDayCompareChart()) - hier explizit nachziehen, da sich die
-      // Jahresanzahl ueber die Buttons jederzeit aendern kann, ohne dass
-      // der Chart neu erzeugt wird.
-      state.yearCompare.chart.options.events = chartEventsFor(isSingleYear);
       state.yearCompare.chart.update();
       return;
     }
 
     const ctx = el("yearcompare-chart").getContext("2d");
+    state.yearCompare.chartType = chartType;
     state.yearCompare.chart = new Chart(ctx, {
-      type: "line",
+      type: chartType,
       data: { labels: result.labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(isSingleYear),
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
+            stacked: deviceMode,
             ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true },
             grid: { color: "#334155" },
             title: { display: true, text: xTitle, color: "#94a3b8" },
           },
           y: {
+            stacked: deviceMode,
             beginAtZero: true,
             ticks: { color: "#94a3b8" },
             grid: { color: "#334155" },
@@ -2395,6 +2573,14 @@ function setupYearCompareControls() {
     for (const b of yearsContainer.querySelectorAll("button")) b.classList.remove("active");
     btn.classList.add("active");
     state.yearCompare.years = Number(btn.dataset.years);
+    refreshYearCompareChart().catch(console.error);
+  });
+
+  const modeContainer = el("yearcompare-mode-buttons");
+  modeContainer.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mode]");
+    if (!btn) return;
+    state.yearCompare.mode = btn.dataset.mode;
     refreshYearCompareChart().catch(console.error);
   });
 }
@@ -2462,10 +2648,6 @@ async function refreshBatterySocChart() {
 
     if (state.batterySoc.chart) {
       state.batterySoc.chart.data.datasets = datasets;
-      // Wie beim Tagesvergleich: options.events wird bei einer reinen
-      // Datenaktualisierung nicht automatisch neu ausgewertet, deshalb
-      // hier explizit nachziehen.
-      state.batterySoc.chart.options.events = chartEventsFor(reqDays === 1);
       state.batterySoc.chart.update();
       return;
     }
@@ -2477,10 +2659,7 @@ async function refreshBatterySocChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        // Wie beim Tagesvergleich: Werte-Anzeige nur automatisch an, wenn
-        // genau ein Tag dargestellt wird - bei mehreren ueberlagerten
-        // Tagen wuerden sich die Tooltips sonst gegenseitig verdecken.
-        events: chartEventsFor(reqDays === 1),
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
@@ -2604,10 +2783,6 @@ async function refreshAutarkyChart() {
     });
     const xTitle = granularity === "week" ? "Kalenderwoche" : "Monat";
     const yRange = autarkyYearsYRange(result.years);
-    // Wie beim Jahresvergleich: Werte-Anzeige nur an, wenn genau EIN Jahr
-    // gezeigt wird (sonst wuerden sich die Tooltips mehrerer ueberlagerter
-    // Jahre gegenseitig ueberdecken).
-    const isSingleYear = result.years.length === 1;
 
     if (state.autarky.chart) {
       state.autarky.chart.data.labels = result.labels;
@@ -2615,10 +2790,6 @@ async function refreshAutarkyChart() {
       state.autarky.chart.options.scales.x.title.text = xTitle;
       state.autarky.chart.options.scales.y.min = yRange.min;
       state.autarky.chart.options.scales.y.max = yRange.max;
-      // options.events wird bei einer reinen Datenaktualisierung nicht
-      // automatisch neu ausgewertet (siehe Kommentar in
-      // refreshDayCompareChart()) - hier explizit nachziehen.
-      state.autarky.chart.options.events = chartEventsFor(isSingleYear);
       state.autarky.chart.update();
       return;
     }
@@ -2630,7 +2801,7 @@ async function refreshAutarkyChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(isSingleYear),
+        events: chartEvents(),
         interaction: { mode: "index", intersect: false },
         scales: {
           x: {
@@ -2701,9 +2872,7 @@ function hourLabel(bucketIso, multiDay) {
 }
 
 function updateHourlyCompareVisibility() {
-  // Der Wechselrichter-Vergleich (einziger Inhalt des "Wechselrichter"-Tabs,
-  // seit "Tagesverbrauch" in den "Verlauf"-Tab verschoben wurde - siehe
-  // applyTrendSubView - und das dortige Flyout-Menue deshalb entfallen ist)
+  // Der Wechselrichter-Vergleich (Unteransicht des "Auswertungen"-Tabs)
   // ergibt nur Sinn, wenn oben "Alle (Summe)" ausgewaehlt ist
   // (selectedDeviceId === "") UND es ueberhaupt mehr als einen
   // Wechselrichter gibt - bei einem einzelnen ausgewaehlten (oder einzigen
@@ -2741,10 +2910,6 @@ async function refreshHourlyCompareChart() {
     if (state.hourlyCompare.chart) {
       state.hourlyCompare.chart.data.labels = labels;
       state.hourlyCompare.chart.data.datasets = datasets;
-      // Siehe Kommentar in refreshDayCompareChart(): options.events muss bei
-      // einer Aenderung der Tagesanzahl (1 Tag <-> mehrere Tage) explizit
-      // nachgezogen werden.
-      state.hourlyCompare.chart.options.events = chartEventsFor(!multiDay);
       state.hourlyCompare.chart.update();
       return;
     }
@@ -2756,7 +2921,7 @@ async function refreshHourlyCompareChart() {
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        events: chartEventsFor(!multiDay),
+        events: chartEvents(),
         // "index" + intersect:false: beim Hovern ueber eine Stunde (egal auf
         // welchem der gestapelten Balken der Maus-Zeiger genau liegt) werden
         // alle Wechselrichter fuer diese Stunde im Tooltip aufgelistet, nicht
@@ -3008,21 +3173,24 @@ function refreshOverview() {
 }
 
 function refreshTrendTab() {
-  // refreshDailyTotalsChart gehoert seit der Verschiebung von
-  // "Tagesverbrauch" hierher (siehe applyTrendSubView) mit zum Verlauf-Tab.
-  // refreshYearCompareChart (Jahresvergleich) und refreshBatterySocChart
-  // (Speicherstand) ebenso.
+  // Die Jahresdiagramme (Jahresvergleich, Autarkie) aendern sich nur
+  // langsam; ihre abgeschlossenen Tage kommen im Backend aus dem Cache, das
+  // regelmaessige Neuladen ist daher guenstig.
   return Promise.allSettled([
     refreshChart(),
     refreshDayCompareChart(),
-    refreshDailyTotalsChart(),
     refreshYearCompareChart(),
     refreshBatterySocChart(),
+    refreshAutarkyChart(),
   ]);
 }
 
-function refreshConsumptionTab() {
-  return Promise.allSettled([refreshHourlyCompareChart()]);
+function refreshEvaluationTab() {
+  return Promise.allSettled([
+    refreshPvDailyChart(),
+    refreshDailyTotalsChart(),
+    refreshHourlyCompareChart(),
+  ]);
 }
 
 function refreshForecastTab() {
@@ -3080,15 +3248,12 @@ function setupForecastSubView() {
 const TAB_LOADERS = {
   overview: refreshOverview,
   trend: refreshTrendTab,
-  consumption: refreshConsumptionTab,
-  autarky: refreshAutarkyChart,
+  evaluation: refreshEvaluationTab,
   forecast: refreshForecastTab,
 };
 
-// Die Monatsansicht aendert sich nur langsam; fuer sie reicht ein taegliches
-// Neuladen. Die heutige Uebersichtskachel entwickelt sich dagegen im Laufe
-// des Tages und wird deshalb weiterhin alle fuenf Minuten aktualisiert.
-const AUTARKY_REFRESH_MS = 24 * 60 * 60 * 1000;
+// Die heutige Autarkie-Kachel der Uebersicht entwickelt sich im Laufe des
+// Tages und wird alle fuenf Minuten aktualisiert.
 const AUTARKY_TODAY_REFRESH_MS = 5 * 60 * 1000;
 
 // Periodisches Auto-Refresh je Tab, erst gestartet, sobald der Tab zum
@@ -3096,8 +3261,7 @@ const AUTARKY_TODAY_REFRESH_MS = 5 * 60 * 1000;
 // eigenes, schnelleres Intervall (siehe init()) und steht daher nicht hier.
 const TAB_INTERVALS_MS = {
   trend: 5 * 60 * 1000,
-  consumption: 5 * 60 * 1000,
-  autarky: AUTARKY_REFRESH_MS,
+  evaluation: 5 * 60 * 1000,
   // An das Backend-Cache-TTL angeglichen (siehe energy_forecast.CACHE_TTL
   // = 30 Minuten) - eine neue Prognose auf dem Server soll ohne
   // Seiten-Reload zuverlaessig binnen derselben Zeitspanne im Frontend
@@ -3135,12 +3299,11 @@ const TAB_CHARTS = {
   trend: () => [
     state.chart,
     state.dayCompare.chart,
-    state.dailyTotals.chart,
     state.yearCompare.chart,
     state.batterySoc.chart,
+    state.autarky.chart,
   ],
-  consumption: () => [state.hourlyCompare.chart],
-  autarky: () => [state.autarky.chart],
+  evaluation: () => [state.pvDaily.chart, state.dailyTotals.chart, state.hourlyCompare.chart],
   forecast: () => [
     state.forecastChart,
     state.forecastHoursTodayChart,
@@ -3162,6 +3325,7 @@ function resizeTabCharts(tabId) {
 // data-subview.
 const SUBVIEW_SETTERS = {
   trend: setTrendSubView,
+  evaluation: setEvaluationSubView,
   forecast: setForecastSubView,
 };
 
@@ -3282,21 +3446,12 @@ function setupViewTabs() {
   activate(initial);
 }
 
-// Werte-Anzeige (Tooltip/Hover) je Diagramm: kein manueller Umschalter mehr
-// (frueher ein einzelner globaler Knopf, der verwirrenderweise gleichzeitig
-// an mehreren Stellen im Dashboard auftauchte, obwohl er ALLE Diagramme auf
-// einmal umgeschaltet hat) - stattdessen automatisch abhaengig davon, ob
-// gerade genau EIN Tag dargestellt wird: bei mehreren Tagen/einem laengeren
-// Zeitraum zaehlt der grobe Verlauf mehr als ein einzelner Messpunkt, dort
-// bleiben die Werte deshalb ausgeblendet. Auf einem Touch-Geraet bleiben
-// sie zusaetzlich IMMER aus, damit die Seite frei scrollt (kein Tooltip, der
-// die Scroll-Geste abfaengt).
-function chartEventsFor(isSingleDayView) {
-  return !isTouchDevice() && isSingleDayView
-    ? ["mousemove", "mouseout", "click", "touchstart", "touchmove"]
-    : [];
+// Werte-Anzeige (Tooltip/Hover) der Diagramme: am Desktop immer an. Auf einem
+// Touch-Geraet bleibt sie IMMER aus, damit die Seite frei scrollt (kein
+// Tooltip, der die Scroll-Geste abfaengt).
+function chartEvents() {
+  return isTouchDevice() ? [] : ["mousemove", "mouseout", "click", "touchstart", "touchmove"];
 }
-
 
 function isTouchDevice() {
   return (
@@ -3349,6 +3504,8 @@ async function init() {
   setupRangeButtons();
   setupTrendSubView();
   setupDayCompareControls();
+  setupEvaluationSubView();
+  setupPvDailyControls();
   setupDailyTotalsControls();
   setupYearCompareControls();
   setupBatterySocControls();
