@@ -51,6 +51,7 @@ export function makeBackend({ historyDelayMs = () => 0, historyPv = () => null }
           {
             timestamp: "2026-07-13T12:00:00",
             pv_power_w: pv,
+            pv_pure_power_w: pv,
             home_power_w: 0,
             feed_in_power_w: 0,
             grid_draw_power_w: 0,

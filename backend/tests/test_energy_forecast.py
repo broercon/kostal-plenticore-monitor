@@ -102,6 +102,7 @@ def test_hourly_history_uses_pure_pv_per_inverter(client):
                     timestamp=start + timedelta(minutes=minute),
                     pv_power_w=pv,
                     battery_power_w=battery,
+                    pv3_power_w=battery,  # Batterie am PV3-String
                 )
                 for minute, pv, battery in [(0, 5000.0, 1000.0), (30, 3000.0, 0.0)]
             ]
@@ -580,10 +581,13 @@ def test_pure_pv_sql_matches_python_helper(client):
     """
     start = datetime(2026, 6, 1, 12, tzinfo=timezone.utc)
     samples = [
-        (0, 5000.0, 1000.0),
-        (15, 3000.0, None),
-        (30, 800.0, -200.0),
-        (45, 0.0, 0.0),
+        (0, 5000.0, 1000.0, 1000.0),
+        (15, 3000.0, None, None),
+        (30, 800.0, -200.0, -200.0),
+        (45, 0.0, 0.0, 0.0),
+        # Batterie vorhanden, aber kein PV3-Wert: nichts abziehen.
+        (50, 600.0, 1600.0, None),
+        (55, 2800.0, -1800.0, None),
     ]
     db = SessionLocal()
     try:
@@ -595,8 +599,9 @@ def test_pure_pv_sql_matches_python_helper(client):
                     timestamp=start + timedelta(minutes=minute),
                     pv_power_w=pv,
                     battery_power_w=battery,
+                    pv3_power_w=pv3,
                 )
-                for minute, pv, battery in samples
+                for minute, pv, battery, pv3 in samples
             ]
         )
         db.commit()
@@ -604,7 +609,7 @@ def test_pure_pv_sql_matches_python_helper(client):
         db.close()
 
     sql_result = load_hourly_pv_history(start, start + timedelta(hours=1))
-    expected = sum(pure_pv_power_w(pv, battery) for _, pv, battery in samples) / len(
+    expected = sum(pure_pv_power_w(pv, battery, pv3) for _, pv, battery, pv3 in samples) / len(
         samples
     )
     assert sql_result["wr1"][start + timedelta(hours=1)] == round(expected, 6)

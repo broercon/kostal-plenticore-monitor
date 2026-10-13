@@ -118,11 +118,34 @@ def test_pv_yield_excludes_battery_on_pv3(client):
     _add([
         Reading(device_id="wr1", device_name="wr1",
                 timestamp=(noon + timedelta(minutes=m)).astimezone(ZoneInfo("UTC")),
-                pv_power_w=4000.0, battery_power_w=4000.0)
+                pv_power_w=4000.0, battery_power_w=4000.0, pv3_power_w=4000.0)
         for m in (0, 15)
     ])
     periods = {p.key: p for p in build_pv_yield_summary()}
     assert periods["today"].kwh == 0.0  # Batterie herausgerechnet, nicht ~1.0
+
+
+def test_pv_yield_keeps_pv_when_battery_has_no_pv3(client):
+    """Regression: ein Hybrid mit zwei Strings und separatem Batterieanschluss
+    meldet keinen PV3-Wert, pv_power_w = pv1+pv2 enthaelt die Batterie nicht.
+    Entladen mit 4000 W bei 4000 W PV darf die PV nicht auf 0 druecken."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.daily_summary import build_pv_yield_summary
+    from app.models import Reading
+
+    tz = ZoneInfo("Europe/Berlin")
+    d = datetime.now(tz).date()
+    noon = datetime(d.year, d.month, d.day, 12, 0, tzinfo=tz)
+    _add([
+        Reading(device_id="wr1", device_name="wr1",
+                timestamp=(noon + timedelta(minutes=m)).astimezone(ZoneInfo("UTC")),
+                pv_power_w=4000.0, battery_power_w=4000.0, pv3_power_w=None)
+        for m in (0, 15)
+    ])
+    periods = {p.key: p for p in build_pv_yield_summary()}
+    assert periods["today"].kwh == 1.0  # 4000 W * 0.25 h
 
 
 def test_pv_yield_falls_back_to_integration_without_counter(client):

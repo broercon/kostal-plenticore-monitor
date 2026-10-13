@@ -104,12 +104,12 @@ function fmtPercent(value) {
 }
 
 // Reine PV-Erzeugung in Watt (ohne die ggf. am PV3-String haengende
-// Batterie): pv_power_w - battery_power_w, auf >= 0 begrenzt. Passt zur
-// serverseitigen PV-Ertrag-Berechnung (integrate_pure_pv_kwh). Geraete ohne
-// Batterie (battery_power_w null) liefern schlicht pv_power_w.
+// Batterie). Wird vom Backend je Geraet berechnet (pv_pure_power_w, siehe
+// aggregation.pure_pv_power_w) - dort ist bekannt, ob ein PV3-Wert existiert,
+// der in Summen und Zeitreihen nicht mehr vorliegt. Passt zur
+// serverseitigen PV-Ertrag-Berechnung (integrate_pure_pv_kwh).
 function purePvWatt(r) {
-  if (r.pv_power_w === null || r.pv_power_w === undefined) return null;
-  return Math.max(0, r.pv_power_w - (r.battery_power_w || 0));
+  return r.pv_pure_power_w === undefined ? null : r.pv_pure_power_w;
 }
 
 // Deckungsgleich mit aggregation.MAX_INTEGRATION_GAP_HOURS im Backend: ein

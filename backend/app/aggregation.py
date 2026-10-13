@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import case, func
+
 from .models import Reading
 
 HISTORY_FIELDS = [
@@ -15,6 +17,28 @@ HISTORY_FIELDS = [
     "battery_power_w",
     "ac_power_w",
 ]
+
+# Aus pv_power_w/battery_power_w/pv3_power_w je Messzeile abgeleitet (siehe
+# pure_pv_power_w) - keine Datenbankspalte. Wird wie die HISTORY_FIELDS
+# aggregiert und ueber Geraete summiert, damit auch Buckets und
+# Geraetesummen die reine PV kennen, obwohl pv3_power_w dort nicht mehr
+# vorliegt.
+PV_PURE_FIELD = "pv_pure_power_w"
+AGGREGATED_FIELDS = [*HISTORY_FIELDS, PV_PURE_FIELD]
+
+
+def aggregation_value(row, field: str) -> float | None:
+    """Wert eines (ggf. abgeleiteten) Feldes aus einer Messzeile bzw. einem
+    Dict (Poller-Messwert)."""
+    getter = row.get if isinstance(row, dict) else lambda name: getattr(row, name, None)
+    if field == PV_PURE_FIELD:
+        if PV_PURE_FIELD in (row if isinstance(row, dict) else {}):
+            return row[PV_PURE_FIELD]
+        pv = getter("pv_power_w")
+        if pv is None:
+            return None
+        return pure_pv_power_w(pv, getter("battery_power_w"), getter("pv3_power_w"))
+    return getter(field)
 
 
 def _bucket_key(ts: datetime, bucket_seconds: int) -> int:
@@ -36,10 +60,10 @@ def aggregate_per_device(
     for row in rows:
         bk = _bucket_key(row.timestamp, bucket_seconds)
         key = (row.device_id, bk)
-        s = sums.setdefault(key, {f: 0.0 for f in HISTORY_FIELDS})
-        c = counts.setdefault(key, {f: 0 for f in HISTORY_FIELDS})
-        for field in HISTORY_FIELDS:
-            value = getattr(row, field)
+        s = sums.setdefault(key, {f: 0.0 for f in AGGREGATED_FIELDS})
+        c = counts.setdefault(key, {f: 0 for f in AGGREGATED_FIELDS})
+        for field in AGGREGATED_FIELDS:
+            value = aggregation_value(row, field)
             if value is not None:
                 s[field] += value
                 c[field] += 1
@@ -47,7 +71,7 @@ def aggregate_per_device(
     result: dict[str, dict[int, dict[str, float | None]]] = {}
     for (device_id, bk), s in sums.items():
         c = counts[(device_id, bk)]
-        avgs = {f: (s[f] / c[f] if c[f] > 0 else None) for f in HISTORY_FIELDS}
+        avgs = {f: (s[f] / c[f] if c[f] > 0 else None) for f in AGGREGATED_FIELDS}
         result.setdefault(device_id, {})[bk] = avgs
     return result
 
@@ -223,7 +247,7 @@ def combine_devices(
         combined: dict[int, dict[str, float | None]] = {}
         for bk in all_buckets:
             merged: dict[str, float | None] = {}
-            for field in HISTORY_FIELDS:
+            for field in AGGREGATED_FIELDS:
                 total = None
                 for buckets in per_device.values():
                     point = buckets.get(bk)
@@ -312,6 +336,7 @@ def combine_devices(
                 if raw_battery_output else battery_total
             ),
             "ac_power_w": ac_total,
+            PV_PURE_FIELD: _sum_field(PV_PURE_FIELD, device_ids, bk),
         }
     return combined
 
@@ -329,7 +354,7 @@ def combine_latest_readings(
     if not readings:
         return None
     per_device = {
-        reading["device_id"]: {0: {field: reading.get(field) for field in HISTORY_FIELDS}}
+        reading["device_id"]: {0: {field: aggregation_value(reading, field) for field in AGGREGATED_FIELDS}}
         for reading in readings
     }
     combined = combine_devices(per_device, has_grid_meter, battery_power_inverted)
@@ -385,7 +410,9 @@ def integrate_kwh(rows: list[Reading], field: str) -> float | None:
     return round(energy_wh / 1000, 3)
 
 
-def pure_pv_power_w(pv_power_w: float, battery_power_w: float | None) -> float:
+def pure_pv_power_w(
+    pv_power_w: float, battery_power_w: float | None, pv3_power_w: float | None
+) -> float:
     """Reine PV-Leistung (W) - PV-Leistung OHNE Batterie-Anteil, fuer einen
     einzelnen Messpunkt.
 
@@ -396,8 +423,15 @@ def pure_pv_power_w(pv_power_w: float, battery_power_w: float | None) -> float:
     Subtraktion ist damit vorzeichensicher (die rohe Batteriegroesse, die in
     pv_power_w steckt, wird exakt wieder abgezogen) - unabhaengig davon, ob die
     Batterie gerade laedt oder entlaedt. Auf >= 0 begrenzt (Messrauschen).
-    Geraete ohne Batterie (battery_power_w = None) liefern schlicht
-    pv_power_w. Nachts ist pv1+pv2 = 0, daher auch die reine PV = 0.
+
+    Die Batterie wird NUR abgezogen, wenn das Geraet einen PV3-Wert liefert
+    (pv3_power_w nicht None) - nur dann haengt sie am PV3-String. Hat das
+    Geraet keinen PV3-Eingang (pv3_power_w None, z.B. Hybrid mit zwei Strings
+    und separatem Batterieanschluss), ist pv_power_w = pv1+pv2 bereits die
+    reine PV; ein Abzug wuerde beim Laden zu viel und beim Entladen (auf 0
+    gekappt) zu wenig ergeben. Geraete ohne Batterie (battery_power_w None)
+    liefern schlicht pv_power_w. Nachts ist pv1+pv2 = 0, daher auch die reine
+    PV = 0.
 
     Einzige Quelle dieser Formel - wird sowohl von integrate_pure_pv_kwh()
     hier als auch (als aequivalenter SQL-Ausdruck, siehe dortiger Kommentar)
@@ -405,7 +439,53 @@ def pure_pv_power_w(pv_power_w: float, battery_power_w: float | None) -> float:
     Test (test_energy_forecast.py) stellt sicher, dass beide Implementierungen
     dieselben Werte liefern.
     """
+    if pv3_power_w is None:
+        return max(0.0, pv_power_w)
     return max(0.0, pv_power_w - (battery_power_w or 0.0))
+
+
+def pure_pv_sql_expression():
+    """SQL-Ausdruck fuer reine PV-Leistung je Messpunkt (fuer AVG-Aggregation
+    in load_hourly_pv_history() und _load_per_device_buckets()).
+
+    Muss exakt aggregation.pure_pv_power_w() entsprechen (Batterie wird nur
+    bei vorhandenem pv3_power_w abgezogen, Details dort). Diese Aggregation laeuft bewusst in SQL
+    statt in Python, weil load_hourly_pv_history() bis zu TRAINING_DAYS Tage
+    Rohmessungen (Sekunden-/Minutentakt) zusammenfasst - das rohreihenweise
+    Laden in Python waere fuer diese Datenmenge zu teuer (siehe die
+    Performance-Arbeit an den Energie-Zeitraum-Uebersichten). Ein
+    Cross-Check-Test (test_pure_pv_sql_matches_python_helper) vergleicht
+    beide Implementierungen gegen dieselben Beispieldaten, damit sie nicht
+    unbemerkt auseinanderlaufen.
+    """
+    return case(
+        (Reading.pv_power_w.is_(None), None),
+        # greatest() und nicht max(): gesucht ist der groessere der beiden
+        # Werte INNERHALB einer Zeile. max() ist in PostgreSQL
+        # ausschliesslich eine Aggregatfunktion ueber Zeilen hinweg und
+        # existiert mit zwei Argumenten gar nicht.
+        else_=func.greatest(
+            0.0,
+            case(
+                (Reading.pv3_power_w.is_(None), Reading.pv_power_w),
+                else_=Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
+            ),
+        ),
+    )
+
+
+def combined_row_values(values: dict, pure_pv_as_pv: bool = True) -> dict:
+    """Felder einer kombinierten Zeile (combine_devices) als Reading-Argumente.
+
+    pv_pure_power_w ist keine Datenbankspalte und wird entfernt. Mit
+    pure_pv_as_pv=True ersetzt die je Geraet korrekt berechnete reine PV den
+    pv_power_w-Wert der Summenzeile: die Summe hat keinen pv3_power_w mehr,
+    pure_pv_power_w() zieht die (rohe) Batterie dann nicht ein zweites Mal ab.
+    """
+    fields = {k: v for k, v in values.items() if k != PV_PURE_FIELD}
+    if pure_pv_as_pv:
+        fields["pv_power_w"] = values.get(PV_PURE_FIELD)
+    return fields
 
 
 def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
@@ -415,7 +495,7 @@ def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
     points = [
         SimpleNamespace(
             timestamp=r.timestamp,
-            value=pure_pv_power_w(r.pv_power_w, r.battery_power_w),
+            value=pure_pv_power_w(r.pv_power_w, r.battery_power_w, r.pv3_power_w),
         )
         for r in rows
         if r.pv_power_w is not None
@@ -426,7 +506,7 @@ def integrate_pure_pv_kwh(rows: list[Reading]) -> float | None:
 # Felder, die fuer das Tagesvergleichs-Diagramm gemittelt werden. feed_in_power_w
 # wird nur intern fuer die Solar/Batterie-Aufteilung gebraucht (siehe unten) und
 # nicht direkt an den Client zurueckgegeben.
-DAY_PROFILE_RAW_FIELDS = ["pv_power_w", "home_power_w", "grid_draw_power_w", "feed_in_power_w", "battery_power_w"]
+DAY_PROFILE_RAW_FIELDS = ["pv_power_w", "home_power_w", "grid_draw_power_w", "feed_in_power_w", "battery_power_w", "pv3_power_w"]
 
 
 def day_profile(
@@ -493,7 +573,7 @@ def day_profile(
         # Reine PV-Erzeugung: die ggf. am PV3-String haengende Batterie
         # herausrechnen (siehe integrate_pure_pv_kwh) - fuer die Anzeige UND
         # fuer die Energiebilanz unten (battery_net), siehe Docstring oben.
-        pv_pure = max(0.0, pv - (battery or 0.0)) if pv is not None else None
+        pv_pure = pure_pv_power_w(pv, battery, avg["pv3_power_w"]) if pv is not None else None
 
         home_from_solar = None
         home_from_battery = None
@@ -825,7 +905,7 @@ def daily_home_source_breakdown_kwh(
         # Reine PV (Batterie am PV3-String herausgerechnet) - siehe
         # pure_pv_power_w sowie den Docstring oben, warum battery_net
         # NICHT mit dem rohen pv gerechnet werden darf.
-        pv_pure = pure_pv_power_w(pv, row.battery_power_w)
+        pv_pure = pure_pv_power_w(pv, row.battery_power_w, row.pv3_power_w)
 
         # Gleiche Herleitung wie in day_profile(): Anteil direkt aus dem Netz
         # kann Hausverbrauch nicht uebersteigen, Rest wird zwischen PV und

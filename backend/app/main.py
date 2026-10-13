@@ -16,10 +16,13 @@ from sqlalchemy import select
 from . import auth
 from .aggregation import (
     HISTORY_FIELDS,
+    PV_PURE_FIELD,
     aggregate_per_device,
+    aggregation_value,
     build_battery_soc_day_series,
     combine_devices,
     combine_latest_readings,
+    combined_row_values,
     daily_home_source_breakdown_kwh,
     daily_kwh_totals,
     day_profile,
@@ -121,7 +124,13 @@ COMBINED_DEVICE_ID = "_all_"
 # ORM-Objekterzeugung, siehe docs/CALCULATIONS.md "Performance:
 # Core-Select..."). Zwei Varianten je nachdem, ob device_name gebraucht wird
 # (z.B. fuer eine Legende je Geraet).
-_BULK_READING_COLUMNS = [Reading.device_id, Reading.timestamp, *[getattr(Reading, f) for f in HISTORY_FIELDS]]
+_BULK_READING_COLUMNS = [
+    Reading.device_id,
+    Reading.timestamp,
+    *[getattr(Reading, f) for f in HISTORY_FIELDS],
+    # Fuer pure_pv_power_w(): entscheidet, ob die Batterie am PV3-String haengt.
+    Reading.pv3_power_w,
+]
 _BULK_READING_COLUMNS_WITH_NAME = [*_BULK_READING_COLUMNS, Reading.device_name]
 _SOC_READING_COLUMNS = [Reading.device_id, Reading.device_name, Reading.timestamp, Reading.battery_soc_percent]
 
@@ -422,7 +431,10 @@ def get_latest(_user: User = Depends(auth.get_current_user)) -> list[ReadingOut]
     fuer die Herleitung. Das Frontend nutzt diesen Eintrag fuer die
     "Alle (Summe)"-Ansicht, wenn vorhanden."""
     readings = list(poller.latest.values())
-    result = [ReadingOut(**reading) for reading in readings]
+    result = [
+        ReadingOut(**reading, pv_pure_power_w=aggregation_value(reading, PV_PURE_FIELD))
+        for reading in readings
+    ]
 
     if len(settings.inverters) > 1 and readings:
         combined = combine_latest_readings(
@@ -504,6 +516,7 @@ def get_history(
                     "feed_in_power_w": c.get("feed_in_power_w"),
                     "grid_draw_power_w": c.get("grid_draw_power_w"),
                     "pv_power_w": o.get("pv_power_w"),
+                    "pv_pure_power_w": o.get(PV_PURE_FIELD),
                     "battery_power_w": o.get("battery_power_w"),
                 }
         else:
@@ -755,12 +768,15 @@ def get_day_profile(
             per_device, _has_grid_meter_map(), _battery_inverted_map(),
             raw_battery_output=True,
         )
+        # Die Summe hat keinen pv3_power_w mehr - combined_row_values setzt
+        # stattdessen die je Geraet korrekt berechnete reine PV als
+        # pv_power_w ein (die Batterie bleibt roh).
         synthetic_rows = [
             Reading(
                 device_id="_combined_",
                 device_name="_combined_",
                 timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                **values,
+                **combined_row_values(values),
             )
             for bk, values in combined.items()
         ]
@@ -829,7 +845,7 @@ def get_daily_totals(
                 device_id="_combined_",
                 device_name="_combined_",
                 timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-                **values,
+                **combined_row_values(values, pure_pv_as_pv=False),
             )
             for bk, values in combined.items()
         ]

@@ -27,14 +27,18 @@ from .aggregation import (
     BATTERY_CHARGE,
     BATTERY_DISCHARGE,
     HISTORY_FIELDS,
+    AGGREGATED_FIELDS,
+    PV_PURE_FIELD,
     aggregate_per_device,
     combine_devices,
+    combined_row_values,
     daily_battery_energy_flows,
     daily_home_source_breakdown_kwh,
     daily_kwh_totals,
     daily_pv_yield_totals,
     integrate_kwh,
     integrate_pure_pv_kwh,
+    pure_pv_sql_expression,
 )
 from .config import settings
 from .database import SessionLocal
@@ -55,7 +59,13 @@ COMBINED_DEVICE_ID = "_all_"
 # daily_home_source_breakdown_kwh), ohne die uebrigen ~14 Spalten von
 # Reading unnoetig mitzuladen - siehe main._BULK_READING_COLUMNS fuer
 # dieselbe Ueberlegung auf main.py-Seite.
-_BULK_READING_COLUMNS = [Reading.device_id, Reading.timestamp, *[getattr(Reading, f) for f in HISTORY_FIELDS]]
+_BULK_READING_COLUMNS = [
+    Reading.device_id,
+    Reading.timestamp,
+    *[getattr(Reading, f) for f in HISTORY_FIELDS],
+    # Fuer pure_pv_power_w(): entscheidet, ob die Batterie am PV3-String haengt.
+    Reading.pv3_power_w,
+]
 
 
 def _has_grid_meter_map() -> dict[str, bool]:
@@ -137,7 +147,7 @@ def _rows_from_per_device(
             device_id="_combined_",
             device_name="_combined_",
             timestamp=datetime.fromtimestamp(bk, tz=timezone.utc),
-            **values,
+            **combined_row_values(values),
         )
         for bk, values in combined.items()
     ]
@@ -195,6 +205,8 @@ def _load_per_device_buckets(
                 Reading.device_id,
                 bucket,
                 *[func.avg(getattr(Reading, field)).label(field) for field in HISTORY_FIELDS],
+                # Je Messzeile berechnet, dann gemittelt - wie aggregate_per_device().
+                func.avg(pure_pv_sql_expression()).label(PV_PURE_FIELD),
             )
             .where(
                 Reading.timestamp >= since - padding,
@@ -208,7 +220,7 @@ def _load_per_device_buckets(
     result: dict[str, dict[int, dict[str, float | None]]] = {}
     for row in rows:
         result.setdefault(row.device_id, {})[int(row.bucket)] = {
-            field: getattr(row, field) for field in HISTORY_FIELDS
+            field: getattr(row, field) for field in AGGREGATED_FIELDS
         }
     return result
 

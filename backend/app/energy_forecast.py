@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 from sqlalchemy import case, delete, func, select, text
 
+from .aggregation import pure_pv_sql_expression
 from .config import settings
 from .database import SessionLocal
 from .forecast_config import get_config
@@ -111,33 +112,6 @@ def _hour_key(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
-def _pure_pv_sql_expression():
-    """SQL-Ausdruck fuer reine PV-Leistung je Messpunkt (fuer AVG-Aggregation
-    in load_hourly_pv_history()).
-
-    Muss exakt aggregation.pure_pv_power_w() entsprechen (max(0, pv_power_w -
-    battery_power_w), Details dort). Diese Aggregation laeuft bewusst in SQL
-    statt in Python, weil load_hourly_pv_history() bis zu TRAINING_DAYS Tage
-    Rohmessungen (Sekunden-/Minutentakt) zusammenfasst - das rohreihenweise
-    Laden in Python waere fuer diese Datenmenge zu teuer (siehe die
-    Performance-Arbeit an den Energie-Zeitraum-Uebersichten). Ein
-    Cross-Check-Test (test_pure_pv_sql_matches_python_helper) vergleicht
-    beide Implementierungen gegen dieselben Beispieldaten, damit sie nicht
-    unbemerkt auseinanderlaufen.
-    """
-    return case(
-        (Reading.pv_power_w.is_(None), None),
-        # greatest() und nicht max(): gesucht ist der groessere der beiden
-        # Werte INNERHALB einer Zeile. max() ist in PostgreSQL
-        # ausschliesslich eine Aggregatfunktion ueber Zeilen hinweg und
-        # existiert mit zwei Argumenten gar nicht.
-        else_=func.greatest(
-            0.0,
-            Reading.pv_power_w - func.coalesce(Reading.battery_power_w, 0.0),
-        ),
-    )
-
-
 def _hour_bucket_expression():
     """Messzeitpunkt auf die volle Stunde abgerundet und um eine Stunde nach
     vorn geschoben, als Text "YYYY-MM-DDTHH:00:00" in UTC.
@@ -167,7 +141,7 @@ def _raw_hourly_pv_average(
     hinter load_hourly_pv_history(), das die abgeschlossenen Stunden davon
     ueber hourly_pv_cache zwischenspeichert (siehe dort)."""
     bucket = _hour_bucket_expression()
-    pure_pv = _pure_pv_sql_expression()
+    pure_pv = pure_pv_sql_expression()
     session = SessionLocal()
     try:
         rows = session.execute(

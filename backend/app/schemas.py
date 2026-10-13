@@ -21,6 +21,9 @@ class ReadingOut(BaseModel):
     feed_in_power_w: float | None = None
     grid_draw_power_w: float | None = None
     pv_power_w: float | None = None
+    # Reine PV (ohne ggf. am PV3-String haengende Batterie), siehe
+    # aggregation.pure_pv_power_w.
+    pv_pure_power_w: float | None = None
     ac_power_w: float | None = None
     battery_power_w: float | None = None
     battery_soc_percent: float | None = None
@@ -37,6 +40,7 @@ class HistoryPoint(BaseModel):
     feed_in_power_w: float | None = None
     grid_draw_power_w: float | None = None
     pv_power_w: float | None = None
+    pv_pure_power_w: float | None = None
     battery_power_w: float | None = None
 
 
