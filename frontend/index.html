@@ -695,18 +695,34 @@
         <table class="sizing-table" id="sizing-month-table">
           <thead>
             <tr>
-              <th>Monat</th>
-              <th>Tage</th>
-              <th>Tage mit Netzbezug &gt; 0.5 kWh</th>
+              <th rowspan="2">Monat</th>
+              <th rowspan="2">Tage</th>
+              <th rowspan="2">Tage mit Netzbezug &gt; 0.5 kWh</th>
+              <th colspan="2" class="sizing-group">Weniger Netzbezug</th>
+              <th colspan="4" class="sizing-group">Tage nach Nutzung +1 Modul</th>
+              <th colspan="4" class="sizing-group">Tage nach Nutzung +2 Module</th>
+            </tr>
+            <tr>
               <th>+1 Modul</th>
               <th>+2 Module</th>
-              <th>Tage nach Nutzung +1</th>
-              <th>Tage nach Nutzung +2</th>
+              <th class="sizing-group-start">ungenutzt</th>
+              <th>teilweise</th>
+              <th>vollständig</th>
+              <th>mehrfach</th>
+              <th class="sizing-group-start">ungenutzt</th>
+              <th>teilweise</th>
+              <th>vollständig</th>
+              <th>mehrfach</th>
             </tr>
           </thead>
           <tbody id="sizing-month-body"></tbody>
         </table>
       </div>
+      <p class="chart-hint muted">
+        Monate mit ▸ lassen sich anklicken: darunter erscheinen die Tage, an
+        denen ein größerer Speicher geholfen hätte – mit gemessenem Netzbezug,
+        der Einsparung und dem Anteil der genutzten Zusatzkapazität.
+      </p>
 
       <h3 class="sizing-subhead">Nutzungshäufigkeit der Zusatzkapazität je Tag</h3>
       <p class="muted">

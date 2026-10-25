@@ -66,7 +66,14 @@ function sizingPayload(overrides = {}) {
       { month: "2026-09", ...bucket({ avoided_kwh: [0, 0] }) },
       { month: "2026-10", ...bucket({ days: 24, complete_days: 23 }) },
     ],
-    daily: [],
+    daily: [
+      // Ohne Einfluss: taucht beim Aufklappen nicht auf.
+      { date: "2026-10-21", complete: true, base_grid_kwh: 0, measured_grid_kwh: 0.1, avoided_kwh: [0, 0], usage_ratio: [0, 0], usage: ["unused", "unused"] },
+      { date: "2026-10-23", complete: true, base_grid_kwh: 4.7, measured_grid_kwh: 5.19, avoided_kwh: [2.2, 4.62], usage_ratio: [0.92, 0.96], usage: ["partial", "full"] },
+      // Nur +2 hilft (wenig): erscheint trotzdem.
+      { date: "2026-10-24", complete: true, base_grid_kwh: 5.5, measured_grid_kwh: 5.73, avoided_kwh: [0, 0.1], usage_ratio: [0, 0.02], usage: ["unused", "unused"] },
+      { date: "2026-09-10", complete: true, base_grid_kwh: 0, measured_grid_kwh: 0.05, avoided_kwh: [0, 0], usage_ratio: [0, 0], usage: ["unused", "unused"] },
+    ],
     extra_usable_kwh: [2.4, 4.8],
     grid_charge_kwh: 0.5,
     grid_charge_days: 1,
@@ -128,17 +135,19 @@ test("Speicher-Erweiterung: Monatstabelle mit +1/+2 und Nutzung, leere Monate ma
   assert.match(october, /Okt 2026/);
   assert.match(october, /24 \(23 vollständig\)/);
   assert.match(october, /6\.0 kWh.*9\.5 kWh/);
-  assert.equal(rows.at(-1).children.length, 7);
-  assert.equal(rows.at(-1).children[2].textContent, "3");
-  assert.equal(rows[0].lastChild.colSpan, 6);
+  const cells = [...rows.at(-1).children].map((td) => td.textContent);
+  assert.equal(cells.length, 13);
+  assert.equal(cells[2], "3");
+  // Nutzungsstufen nur als Zahlen, je Stufe eine Spalte (Woerter stehen im Kopf).
+  assert.deepEqual(cells.slice(5), ["10", "15", "4", "1", "12", "16", "2", "0"]);
+  const head = [...app.document.querySelectorAll("#sizing-month-table thead tr:last-child th")].map((th) => th.textContent);
+  assert.deepEqual(head.slice(2), ["ungenutzt", "teilweise", "vollständig", "mehrfach", "ungenutzt", "teilweise", "vollständig", "mehrfach"]);
+  assert.equal(rows[0].lastChild.colSpan, 12);
   assert.match(
     app.document.getElementById("sizing-grid-days").textContent,
     /an 3 von 54 Tagen wurden gemessen mehr als 0\.5 kWh aus dem Netz bezogen/
   );
   assert.doesNotMatch(app.document.getElementById("sizing-month-table").textContent, /Zusatznutzen/);
-  assert.match(october, /10 ungenutzt · 15 teilweise · 4 vollständig · 1 mehrfach/);
-  // Stufen ohne Tage entfallen: Variante +2 hat keinen "mehrfach"-Tag.
-  assert.match(rows.at(-1).children[6].textContent, /^12 ungenutzt · 16 teilweise · 2 vollständig$/);
 
   const usage = [...app.document.querySelectorAll("#sizing-usage-body tr")].map((r) => r.textContent);
   assert.equal(usage.length, 2);
@@ -255,4 +264,34 @@ test("Speicher-Erweiterung: Netzbezug-Kachel nennt den Zeitraum, nicht 'heute'",
   assert.match(tile, /jetzigen Speicher \(11\.04 kWh\)/);
   assert.match(tile, /bisher, 54 Tage/);
   assert.doesNotMatch(tile, /heute/);
+});
+
+test("Speicher-Erweiterung: Monat aufklappen zeigt nur Tage, an denen mehr Speicher geholfen haette", async () => {
+  const app = await openSizing();
+  await waitFor(() => app.document.querySelectorAll("#sizing-month-body tr").length === 12);
+  const monthRow = (m) => app.document.querySelector(`#sizing-month-body tr[data-month="${m}"]`);
+  // September hat keinen Tag mit Einfluss: nicht aufklappbar.
+  assert.equal(monthRow("2026-09"), null);
+  const october = monthRow("2026-10");
+  assert.ok(october.classList.contains("sizing-row-expandable"));
+  assert.match(october.textContent, /^▸ Okt 2026/);
+
+  october.dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
+  await waitFor(() => app.document.querySelectorAll("#sizing-month-body tr.sizing-row-day").length === 2);
+  const dayRows = [...app.document.querySelectorAll("#sizing-month-body tr.sizing-row-day")];
+  const first = [...dayRows[0].children].map((td) => td.textContent);
+  assert.equal(first[0], "23.10.2026");
+  assert.equal(first[2], "5.2 kWh gemessen");
+  assert.deepEqual(first.slice(3, 5), ["2.2 kWh", "4.6 kWh"]);
+  // Anteil der genutzten Zusatzkapazitaet in der Spalte der jeweiligen Stufe.
+  assert.deepEqual(first.slice(5), ["", "92 %", "", "", "", "", "96 %", ""]);
+  assert.equal([...dayRows[1].children][0].textContent, "24.10.2026");
+  assert.match(monthRow("2026-10").textContent, /^▾ Okt 2026/);
+  assert.equal(monthRow("2026-10").getAttribute("aria-expanded"), "true");
+
+  // Bleibt bei einer Aktualisierung offen, zweiter Klick klappt zu.
+  await app.window.eval("refreshBatterySizing()");
+  assert.equal(app.document.querySelectorAll("#sizing-month-body tr.sizing-row-day").length, 2);
+  monthRow("2026-10").dispatchEvent(new app.window.MouseEvent("click", { bubbles: true }));
+  assert.equal(app.document.querySelectorAll("#sizing-month-body tr.sizing-row-day").length, 0);
 });

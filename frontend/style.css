@@ -1113,3 +1113,42 @@ canvas {
 .sizing-box--note {
   border-color: var(--accent-yellow);
 }
+
+.sizing-table th.sizing-group {
+  text-align: center;
+  border-bottom: none;
+}
+
+.sizing-table .sizing-group-start {
+  border-left: 1px solid var(--panel-border);
+}
+
+.sizing-row-expandable {
+  cursor: pointer;
+}
+
+.sizing-row-expandable:hover td,
+.sizing-row-expandable:focus-visible td {
+  background: var(--panel-hover);
+}
+
+.sizing-row-expandable:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}
+
+.sizing-row-day td {
+  color: var(--muted);
+  font-size: 0.8rem;
+  background: var(--bg);
+}
+
+.sizing-row-day td:first-child {
+  padding-left: 24px;
+}
+
+/* 13 Spalten: Ueberschriften duerfen umbrechen, die Zahlen nicht. */
+.sizing-table thead th {
+  white-space: normal;
+  vertical-align: bottom;
+}

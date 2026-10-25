@@ -68,6 +68,9 @@ const state = {
     chart: null,
     axis: [],
     byMonth: {},
+    // Aufgeklappte Monate der Monatstabelle ("YYYY-MM") - bleiben bei
+    // automatischer Aktualisierung erhalten.
+    expanded: new Set(),
   },
   forecastChart: null,
   forecastAccuracyChart: null,
@@ -2402,17 +2405,6 @@ function sizingVariantName(variant) {
   return `+${variant.extra_modules} ${modules} (${variant.nominal_kwh.toFixed(2)} kWh)`;
 }
 
-const SIZING_USAGE_LABELS = { unused: "ungenutzt", partial: "teilweise", full: "vollständig", multi: "mehrfach" };
-
-// Tage je Nutzungsstufe ausgeschrieben ("22 ungenutzt · 2 teilweise"),
-// Stufen ohne Tage entfallen.
-function usageText(usage) {
-  const parts = SIZING_USAGE_KEYS.filter((key) => usage?.[key]).map(
-    (key) => `${usage[key]} ${SIZING_USAGE_LABELS[key]}`
-  );
-  return parts.length ? parts.join(" · ") : "–";
-}
-
 function fillList(id, items) {
   const list = el(id);
   list.replaceChildren(
@@ -2526,32 +2518,89 @@ function renderSizingChart(data, axis, byMonth) {
   });
 }
 
-function renderSizingTables(data, axis, byMonth) {
-  const rows = axis.map((month) => {
-    const tr = document.createElement("tr");
-    const entry = byMonth[month];
-    const cells = entry
-      ? [
-          fmtMonth(month),
-          entry.complete_days === entry.days ? `${entry.days}` : `${entry.days} (${entry.complete_days} vollständig)`,
-          String(entry.grid_days_over_threshold),
-          fmtKwh(entry.avoided_kwh[0]),
-          fmtKwh(entry.avoided_kwh[1]),
-          usageText(entry.usage[0]),
-          usageText(entry.usage[1]),
-        ]
-      : [fmtMonth(month), "keine Daten"];
-    for (const text of cells) {
-      const td = document.createElement("td");
-      td.textContent = text;
-      tr.append(td);
-    }
-    if (!entry) {
-      tr.lastChild.colSpan = 6;
-      tr.classList.add("sizing-row-empty");
-    }
-    return tr;
+// Ein Tag zaehlt als "mit Einfluss", wenn ein groesserer Speicher dort
+// spuerbar Netzbezug vermieden haette (in der Anzeige mindestens 0.1 kWh).
+const SIZING_DAY_INFLUENCE_KWH = 0.05;
+// Spalten der Monatstabelle: Monat, Tage, Tage > 0.5 kWh, 2x vermieden,
+// 2x vier Nutzungsstufen.
+const SIZING_MONTH_COLUMNS = 13;
+
+function sizingInfluenceDays(data) {
+  const byMonth = {};
+  for (const day of data.daily ?? []) {
+    if (Math.max(...day.avoided_kwh) < SIZING_DAY_INFLUENCE_KWH) continue;
+    (byMonth[day.date.slice(0, 7)] ??= []).push(day);
+  }
+  return byMonth;
+}
+
+function sizingRow(cells, className) {
+  const tr = document.createElement("tr");
+  if (className) tr.className = className;
+  cells.forEach((text, i) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    // Erste Spalte jeder Nutzungsgruppe optisch absetzen.
+    if (i === 5 || i === 9) td.classList.add("sizing-group-start");
+    tr.append(td);
   });
+  return tr;
+}
+
+// Nutzungsstufen eines Tages: in der Spalte seiner Stufe der Anteil der
+// genutzten Zusatzkapazitaet, die anderen drei Spalten bleiben leer.
+function dayUsageCells(day, i) {
+  return SIZING_USAGE_KEYS.map((key) =>
+    day.usage[i] === key ? `${Math.round(day.usage_ratio[i] * 100)} %` : ""
+  );
+}
+
+function renderSizingTables(data, axis, byMonth) {
+  const influence = sizingInfluenceDays(data);
+  const expanded = state.batterySizing.expanded;
+  const rows = [];
+  for (const month of axis) {
+    const entry = byMonth[month];
+    if (!entry) {
+      const tr = sizingRow([fmtMonth(month), "keine Daten"], "sizing-row-empty");
+      tr.lastChild.colSpan = SIZING_MONTH_COLUMNS - 1;
+      rows.push(tr);
+      continue;
+    }
+    const days = influence[month] ?? [];
+    const isOpen = days.length > 0 && expanded.has(month);
+    const marker = days.length ? (isOpen ? "▾ " : "▸ ") : "";
+    const tr = sizingRow([
+      marker + fmtMonth(month),
+      entry.complete_days === entry.days ? `${entry.days}` : `${entry.days} (${entry.complete_days} vollständig)`,
+      String(entry.grid_days_over_threshold),
+      fmtKwh(entry.avoided_kwh[0]),
+      fmtKwh(entry.avoided_kwh[1]),
+      ...SIZING_USAGE_KEYS.map((key) => String(entry.usage[0][key])),
+      ...SIZING_USAGE_KEYS.map((key) => String(entry.usage[1][key])),
+    ]);
+    if (days.length) {
+      tr.classList.add("sizing-row-expandable");
+      tr.dataset.month = month;
+      tr.tabIndex = 0;
+      tr.setAttribute("aria-expanded", String(isOpen));
+      tr.title = isOpen ? "Tage ausblenden" : "Tage anzeigen, an denen ein größerer Speicher geholfen hätte";
+    }
+    rows.push(tr);
+    if (isOpen) {
+      for (const day of days) {
+        rows.push(sizingRow([
+          shortDate(day.date) + day.date.slice(0, 4),
+          "",
+          day.measured_grid_kwh === null ? "–" : `${fmtKwh(day.measured_grid_kwh)} gemessen`,
+          fmtKwh(day.avoided_kwh[0]),
+          fmtKwh(day.avoided_kwh[1]),
+          ...dayUsageCells(day, 0),
+          ...dayUsageCells(day, 1),
+        ], "sizing-row-day"));
+      }
+    }
+  }
   el("sizing-month-body").replaceChildren(...rows);
 
   // Gemessene Tage mit Netzbezug zum Vergleich: nicht jeder davon haette
@@ -2631,6 +2680,28 @@ function renderBatterySizing(data) {
   renderSizingTables(data, axis, byMonth);
   renderSizingBoxes(data);
   fillList("sizing-assumptions", data.assumptions);
+}
+
+function toggleSizingMonth(row) {
+  const month = row?.dataset.month;
+  if (!month || !state.batterySizing.data) return;
+  const expanded = state.batterySizing.expanded;
+  if (expanded.has(month)) expanded.delete(month);
+  else expanded.add(month);
+  renderSizingTables(state.batterySizing.data, state.batterySizing.axis, state.batterySizing.byMonth);
+}
+
+function setupSizingTable() {
+  const body = el("sizing-month-body");
+  body.addEventListener("click", (e) => toggleSizingMonth(e.target.closest("tr.sizing-row-expandable")));
+  body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target.closest("tr.sizing-row-expandable");
+    if (!row) return;
+    e.preventDefault();
+    toggleSizingMonth(row);
+    body.querySelector(`tr[data-month="${row.dataset.month}"]`)?.focus();
+  });
 }
 
 async function refreshBatterySizing() {
@@ -3867,6 +3938,7 @@ async function init() {
   setupDayCompareControls();
   setupEvaluationSubView();
   setupPvDailyControls();
+  setupSizingTable();
   setupDailyTotalsControls();
   setupYearCompareControls();
   setupBatterySocControls();
