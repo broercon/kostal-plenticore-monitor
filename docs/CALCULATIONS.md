@@ -100,7 +100,7 @@ dem Bedarf anfällt. Netzladung gibt es im Modell nicht. Neue Module gehen mit
 Nennkapazität ein, die vorhandenen mit der kalibrierten; alle Varianten
 starten mit der gemessenen gespeicherten Energie.
 
-**Validierung.** Das simulierte Modell des heutigen Speichers wird gegen den
+**Validierung.** Das simulierte Modell des jetzigen Speichers wird gegen den
 gemessenen Ladestand (mittlere Abweichung und RMSE in %-Punkten) und den
 gemessenen Netzbezug abzüglich erkannter Netzladung geprüft (absolut, je Tag
 und in Prozent – bei sehr kleinem Netzbezug im Sommer ist die Prozentangabe
@@ -108,12 +108,12 @@ allein irreführend).
 
 **Kennzahlen.**
 
-- *Nutzen* = simulierter Netzbezug (heute) − simulierter Netzbezug (Variante),
+- *Nutzen* = simulierter Netzbezug (jetziger Speicher) − simulierter Netzbezug (Variante),
   je Tag; Monats- und Gesamtwerte sind Summen dieser Tageswerte. Einspeisung
   und Netzbezug werden nie über Monatssummen gegeneinander verrechnet.
 - *Zusatznutzen des zweiten Moduls* = (+2) − (+1).
 - *Nutzungshäufigkeit* je Tag = zusätzlich ans Haus abgegebene Energie
-  gegenüber dem heutigen Speicher ÷ nutzbare Zusatzkapazität nach Verlusten
+  gegenüber dem jetzigen Speicher ÷ nutzbare Zusatzkapazität nach Verlusten
   (Module × Modulkapazität × (1 − Mindestladung) × η_entladen). Unter 5 %
   ungenutzt, 5–95 % teilweise, 95–100 % vollständig, über 100 % mehrfach
   (mehrere Zyklen am Tag).

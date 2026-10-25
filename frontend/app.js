@@ -2443,9 +2443,9 @@ function renderSizingKpis(data) {
     detail: ["(+2) − (+1)", period],
   });
   tiles.push({
-    title: `Netzbezug heute (${data.variants[0].nominal_kwh.toFixed(2)} kWh)`,
+    title: "Netzbezug ohne Erweiterung",
     value: fmtKwh(bucket.base_grid_kwh),
-    detail: ["simuliert, ohne Erweiterung", period],
+    detail: [`simuliert mit dem jetzigen Speicher (${data.variants[0].nominal_kwh.toFixed(2)} kWh)`, period],
   });
 
   el("sizing-kpis").replaceChildren(

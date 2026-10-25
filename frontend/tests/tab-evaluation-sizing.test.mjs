@@ -235,3 +235,13 @@ test("Speicher-Erweiterung: Admin-Formular rechnet Wirkungsgrade in Prozent um",
   assert.equal(saved.usable_capacity_kwh, null);
   assert.equal(saved.module_capacity_kwh, 2.76);
 });
+
+test("Speicher-Erweiterung: Netzbezug-Kachel nennt den Zeitraum, nicht 'heute'", async () => {
+  const app = await openSizing();
+  await waitFor(() => app.document.querySelectorAll(".sizing-kpi").length === 4);
+  const tile = app.document.querySelectorAll(".sizing-kpi")[3].textContent;
+  assert.match(tile, /Netzbezug ohne Erweiterung/);
+  assert.match(tile, /jetzigen Speicher \(11\.04 kWh\)/);
+  assert.match(tile, /bisher, 54 Tage/);
+  assert.doesNotMatch(tile, /heute/);
+});
