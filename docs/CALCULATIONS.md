@@ -96,13 +96,17 @@ viele Zyklen pro Tag. Positiver Überschuss lädt (Leistungsgrenze, freier
 Platz, Ladewirkungsgrad), der Rest wird eingespeist; Bedarf wird bis zur
 Mindestladung aus dem Speicher gedeckt, der Rest kommt aus dem Netz. Weil
 die Schritte zeitlich abgearbeitet werden, hilft nur Überschuss, der **vor**
-dem Bedarf anfällt. Netzladung gibt es im Modell nicht. Neue Module gehen mit
+dem Bedarf anfällt. Lädt der echte Wechselrichter den leeren Speicher aus
+dem Netz nach (Notladung), wird die gemessene Menge als Netzbezug angesetzt –
+aber nur, wenn der nachgerechnete Speicher in diesem Schritt ebenfalls leer
+ist (höchstens 2 % der Kapazität über der Mindestladung). Ein größerer
+Speicher, der noch Energie hat, vermeidet die Notladung. Neue Module gehen mit
 Nennkapazität ein, die vorhandenen mit der kalibrierten; alle Varianten
 starten mit der gemessenen gespeicherten Energie.
 
 **Validierung.** Das simulierte Modell des jetzigen Speichers wird gegen den
 gemessenen Ladestand (mittlere Abweichung und RMSE in %-Punkten) und den
-gemessenen Netzbezug abzüglich erkannter Netzladung geprüft (absolut, je Tag
+gemessenen Netzbezug (beide inklusive Netzladung) geprüft (absolut, je Tag
 und in Prozent – bei sehr kleinem Netzbezug im Sommer ist die Prozentangabe
 allein irreführend).
 

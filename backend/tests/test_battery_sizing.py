@@ -520,3 +520,37 @@ def test_missing_months_are_shown_as_range_or_list():
     assert bs._fmt_month_list(["2025-11", "2025-12", "2026-01"]) == "Nov 2025 bis Jan 2026"
     assert bs._fmt_month_list(["2025-11", "2026-01"]) == "Nov 2025, Jan 2026"
     assert bs._fmt_month_list(["2025-11", "2025-12", "2026-02"]) == "Nov 2025, Dez 2025, Feb 2026"
+
+
+def _grid_charge_day(start_energy_kwh: float, capacity_kwh: float = 10.0):
+    # 1 h ohne PV und ohne Hausverbrauch; der echte Wechselrichter laedt in
+    # dieser Zeit mit 500 W aus dem Netz (Notladung).
+    slots = _day("2026-10-23", _hours(1, 0, 0), start_hour=8)
+    for s in slots:
+        s[bs.I_BAT] = -500.0
+        s[bs.I_GRID] = 500.0
+    params = _ideal(capacity_kwh=capacity_kwh, min_soc=0.1)
+    return simulate({"2026-10-23": slots}, params, start_energy_kwh=start_energy_kwh).days["2026-10-23"]
+
+
+def test_measured_grid_charge_counts_when_storage_is_empty():
+    day = _grid_charge_day(start_energy_kwh=1.0)  # = Mindestladung, also leer
+    assert day.grid_charge_kwh == pytest.approx(0.5)
+    assert day.grid_kwh == pytest.approx(0.5)
+
+
+def test_grid_charge_is_avoided_when_storage_still_has_energy():
+    # Ein groesserer Speicher mit Energie ueber der Mindestladung haette die
+    # Notladung nicht gebraucht.
+    day = _grid_charge_day(start_energy_kwh=5.0)
+    assert day.grid_charge_kwh == 0.0
+    assert day.grid_kwh == pytest.approx(0.0)
+
+
+def test_grid_charge_detection_ignores_pv_charging():
+    slot = _day("2026-10-23", _hours(1, 3000, 500))[0]
+    slot[bs.I_BAT], slot[bs.I_GRID] = -2000.0, 150.0
+    assert bs.grid_charge_w(slot) == 0.0
+    slot[bs.I_BAT], slot[bs.I_GRID], slot[bs.I_PV] = -1000.0, 1300.0, 500.0
+    slot[bs.I_HOME] = 800.0
+    assert bs.grid_charge_w(slot) == pytest.approx(1000.0)

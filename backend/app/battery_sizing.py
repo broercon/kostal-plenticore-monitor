@@ -79,6 +79,10 @@ GRID_DAY_THRESHOLD_KWH = 0.5
 
 # Schwellen für das Erkennen von Netzladung und Abregelung in den Messwerten.
 GRID_CHARGE_MIN_W = 100.0
+# Gemessene Netzladung wird in der Nachrechnung nur angesetzt, wenn der
+# nachgerechnete Speicher in diesem Schritt ebenfalls (fast) leer ist: höchstens
+# so viel (Anteil der Kapazität) über der Mindestladung.
+GRID_CHARGE_EMPTY_MARGIN = 0.02
 CURTAILMENT_SHARE = 0.97
 
 # Index der Werte innerhalb eines gecachten Schritts.
@@ -308,6 +312,7 @@ class DayResult:
     feed_kwh: float = 0.0
     charge_kwh: float = 0.0  # aus PV-Überschuss in den Speicher geflossen (vor Verlusten)
     discharge_kwh: float = 0.0  # an das Haus abgegeben (nach Verlusten)
+    grid_charge_kwh: float = 0.0  # angesetzte Netzladung (in grid_kwh enthalten)
     slots: int = 0
 
 
@@ -334,8 +339,13 @@ def simulate(
     aus dem Speicher gedeckt (begrenzt durch Entladeleistung und Energie
     oberhalb der Mindestladung, mit Entladewirkungsgrad), der Rest kommt aus
     dem Netz. Weil die Schritte strikt zeitlich abgearbeitet werden, kann nur
-    Überschuss genutzt werden, der VOR dem Bedarf anfällt. Netzladung gibt es
-    im Modell nicht.
+    Überschuss genutzt werden, der VOR dem Bedarf anfällt.
+
+    Netzladung: Lädt der echte Wechselrichter den leeren Speicher aus dem
+    Netz nach (gemessen, siehe grid_charge_w), wird diese Menge als
+    Netzbezug angesetzt - aber nur, wenn auch der nachgerechnete Speicher in
+    diesem Schritt leer ist. Ein größerer Speicher, der noch Energie hat,
+    hätte die Notladung nicht gebraucht.
 
     Zwischen AC-Seite und Batterie liegt die Wandlungsstufe aus
     StorageParams. Ist der Speicher leer, deckt das Netz nur den Hausbedarf
@@ -396,6 +406,10 @@ def simulate(
                 energy_wh -= standby_wh
             else:
                 grid_wh += standby_wh
+            charge_from_grid_w = grid_charge_w(slot)
+            if charge_from_grid_w > 0 and energy_wh <= min_wh + GRID_CHARGE_EMPTY_MARGIN * capacity_wh:
+                grid_wh += charge_from_grid_w * SLOT_HOURS
+                totals.grid_charge_kwh += charge_from_grid_w * SLOT_HOURS / 1000
             totals.grid_kwh += grid_wh / 1000
             if record_soc:
                 result.soc_trace[slot[I_TS]] = 100 * energy_wh / capacity_wh
@@ -702,24 +716,23 @@ def measured_grid_kwh(slots: list[list]) -> float | None:
     return sum(values) * SLOT_HOURS / 1000
 
 
+def grid_charge_w(slot: list) -> float:
+    """Gemessene Ladeleistung (W) eines Schritts, die nicht aus PV-Überschuss
+    stammen kann (Netzladung, z.B. Notladung bei sehr niedrigem Ladestand).
+    0, wenn nicht aus dem Netz geladen wurde oder Werte fehlen."""
+    bat, pv, home, grid = slot[I_BAT], slot[I_PV], slot[I_HOME], slot[I_GRID]
+    if None in (bat, pv, home, grid) or bat >= 0 or grid < GRID_CHARGE_MIN_W:
+        return 0.0
+    from_grid = min(grid, -bat - max(0.0, pv - home))
+    return from_grid if from_grid > GRID_CHARGE_MIN_W else 0.0
+
+
 def grid_charge_kwh_per_day(day_inputs: dict[str, list[list]]) -> dict[str, float]:
-    """In den Speicher geladene Energie, die nicht aus PV-Überschuss stammen
-    kann (Netzladung, z.B. Notladung bei sehr niedrigem Ladestand oder
-    zeitgesteuerte Ladung). Die Simulation lädt nie aus dem Netz - diese
-    Menge wird deshalb beim Vergleich mit dem gemessenen Netzbezug
-    herausgerechnet."""
-    result: dict[str, float] = {}
-    for day, slots in day_inputs.items():
-        total = 0.0
-        for slot in slots:
-            bat, pv, home, grid = slot[I_BAT], slot[I_PV], slot[I_HOME], slot[I_GRID]
-            if None in (bat, pv, home, grid) or bat >= 0 or grid < GRID_CHARGE_MIN_W:
-                continue
-            from_grid = min(grid, -bat - max(0.0, pv - home))
-            if from_grid > GRID_CHARGE_MIN_W:
-                total += from_grid * SLOT_HOURS / 1000
-        result[day] = total
-    return result
+    """Gemessene Netzladung (kWh) je Tag, siehe grid_charge_w."""
+    return {
+        day: sum(grid_charge_w(slot) for slot in slots) * SLOT_HOURS / 1000
+        for day, slots in day_inputs.items()
+    }
 
 
 def curtailment_summary(day_inputs: dict[str, list[list]], feed_in_limit_w: float | None) -> dict:
@@ -760,13 +773,13 @@ def curtailment_summary(day_inputs: dict[str, list[list]], feed_in_limit_w: floa
     }
 
 
-def validate(day_inputs: dict[str, list[list]], base: SimulationResult, grid_charge: dict[str, float]) -> dict:
+def validate(day_inputs: dict[str, list[list]], base: SimulationResult) -> dict:
     """Simuliertes 11,04-kWh-Modell gegen die Messung.
 
     Ladestand: mittlere und quadratisch gemittelte Abweichung (%-Punkte)
     über alle Schritte mit gemessenem Ladestand. Netzbezug: über alle Tage,
-    an denen ein gemessener Netzbezug vorliegt, gemessen (abzüglich
-    Netzladung) gegen simuliert."""
+    an denen ein gemessener Netzbezug vorliegt, gemessen gegen simuliert
+    (beide inklusive Netzladung)."""
     diffs = [
         base.soc_trace[slot[I_TS]] - slot[I_SOC]
         for slots in day_inputs.values()
@@ -780,7 +793,7 @@ def validate(day_inputs: dict[str, list[list]], base: SimulationResult, grid_cha
         if not valid or len(valid) < COMPLETE_DAY_SHARE * len(slots):
             continue
         days += 1
-        measured_grid += sum(max(0.0, s[I_GRID]) for s in valid) * SLOT_HOURS / 1000 - grid_charge.get(day, 0.0)
+        measured_grid += sum(max(0.0, s[I_GRID]) for s in valid) * SLOT_HOURS / 1000
         sim_grid += base.days[day].grid_kwh if day in base.days else 0.0
     return {
         "soc_points": len(diffs),
@@ -905,7 +918,7 @@ def evaluate(
         "months": [{"month": m, **months[m].to_dict()} for m in sorted(months)],
         "daily": daily,
         "extra_usable_kwh": [round(e, 2) for e in extra],
-        "validation": validate(day_inputs, base, grid_charge),
+        "validation": validate(day_inputs, base),
         "grid_charge_kwh": round(sum(grid_charge.values()), 1),
         "grid_charge_days": sum(1 for v in grid_charge.values() if v >= 0.1),
         "grid_day_threshold_kwh": GRID_DAY_THRESHOLD_KWH,
@@ -972,7 +985,8 @@ def _assumptions(calibration: Calibration, curtailment: dict, result: dict, cove
     notes = [
         f"Jetziger Speicher: {p.capacity_kwh:.1f} kWh nutzbar, Mindestladung {p.min_soc * 100:.0f} %, "
         f"{efficiency} ({origin}). Jedes neue Modul bringt {calibration.module_kwh:.2f} kWh.",
-        "Geladen wird nur mit PV-Überschuss, nicht aus dem Netz.",
+        "Geladen wird mit PV-Überschuss. Lädt der Wechselrichter den leeren Speicher aus dem Netz nach, ist "
+        "das wie gemessen eingerechnet – bei einem größeren Speicher nur, wenn auch er leer gewesen wäre.",
         "Verbrauch und Wetter wie in den ausgewerteten Tagen.",
     ]
     if not coverage["full_year"] and coverage["days"]:
