@@ -61,6 +61,14 @@ const state = {
     days: 1,
     chart: null,
   },
+  // Speicher-Erweiterung (Auswertungen-Tab): letzte Antwort des Backends
+  // und das Monatsdiagramm.
+  batterySizing: {
+    data: null,
+    chart: null,
+    axis: [],
+    byMonth: {},
+  },
   forecastChart: null,
   forecastAccuracyChart: null,
   forecastHoursTodayChart: null,
@@ -385,6 +393,43 @@ function optionalNumber(value) {
   if (trimmed === "") return null;
   const number = Number(trimmed);
   return Number.isFinite(number) ? number : null;
+}
+
+// Formularfeld -> Konfigurationsfeld der Speicher-Erweiterung. Wirkungsgrade
+// werden im Formular in Prozent gezeigt, im Backend als Anteil gespeichert.
+const BATTERY_SIZING_FORM_FIELDS = [
+  ["bsz-nominal", "nominal_capacity_kwh", 1],
+  ["bsz-module", "module_capacity_kwh", 1],
+  ["bsz-usable", "usable_capacity_kwh", 1],
+  ["bsz-min-soc", "min_soc_percent", 1],
+  ["bsz-max-charge", "max_charge_w", 1],
+  ["bsz-max-discharge", "max_discharge_w", 1],
+  ["bsz-inverter-limit", "inverter_battery_limit_w", 1],
+  ["bsz-feed-in-limit", "feed_in_limit_w", 1],
+  ["bsz-eta-charge", "eta_charge", 100],
+  ["bsz-eta-discharge", "eta_discharge", 100],
+  ["bsz-standby", "standby_w", 1],
+  ["bsz-cost-1", "cost_plus_one_eur", 1],
+  ["bsz-cost-2", "cost_plus_two_eur", 1],
+  ["bsz-price", "price_ct_per_kwh", 1],
+  ["bsz-feed-in", "feed_in_ct_per_kwh", 1],
+];
+
+async function loadBatterySizingConfigIntoForm() {
+  const cfg = await fetchJson("/api/admin/battery-sizing/config");
+  for (const [id, key, scale] of BATTERY_SIZING_FORM_FIELDS) {
+    const value = cfg[key];
+    el(id).value = value === null || value === undefined ? "" : String(Math.round(value * scale * 1000) / 1000);
+  }
+}
+
+function batterySizingFormPayload() {
+  const payload = {};
+  for (const [id, key, scale] of BATTERY_SIZING_FORM_FIELDS) {
+    const value = optionalNumber(el(id).value);
+    payload[key] = value === null ? null : value / scale;
+  }
+  return payload;
 }
 
 async function loadForecastConfigIntoForm() {
@@ -1382,6 +1427,7 @@ function setupAdminArea() {
   el("admin-area-btn").addEventListener("click", async () => {
     el("admin-reset-result").textContent = "";
     el("fc-save-result").textContent = "";
+    el("bsz-save-result").textContent = "";
     el("dr-save-result").textContent = "";
     el("dr-trigger-result").textContent = "";
     overlay.classList.remove("hidden");
@@ -1395,6 +1441,12 @@ function setupAdminArea() {
     } catch (err) {
       console.error(err);
       el("fc-save-result").textContent = "Prognosekonfiguration konnte nicht geladen werden.";
+    }
+    try {
+      await loadBatterySizingConfigIntoForm();
+    } catch (err) {
+      console.error(err);
+      el("bsz-save-result").textContent = "Rahmendaten der Speicher-Erweiterung konnten nicht geladen werden.";
     }
     try {
       await loadDailyReportConfigIntoForm();
@@ -1435,6 +1487,30 @@ function setupAdminArea() {
       result.textContent = "Gespeichert.";
       await loadForecastConfigIntoForm();
       await refreshForecast();
+    } catch (err) {
+      console.error(err);
+      result.textContent = "Verbindung zum Server fehlgeschlagen.";
+    }
+  });
+
+  // --- Speicher-Erweiterung: Rahmendaten speichern ---
+  el("battery-sizing-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = el("bsz-save-result");
+    result.textContent = "Speichert …";
+    try {
+      const res = await fetch("/api/admin/battery-sizing/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batterySizingFormPayload()),
+      });
+      if (!res.ok) {
+        result.textContent = await extractErrorMessage(res);
+        return;
+      }
+      result.textContent = "Gespeichert.";
+      await loadBatterySizingConfigIntoForm();
+      await refreshBatterySizing();
     } catch (err) {
       console.error(err);
       result.textContent = "Verbindung zum Server fehlgeschlagen.";
@@ -2177,6 +2253,7 @@ const EVALUATION_SUBVIEW_SECTIONS = {
   pvdaily: () => el("evaluation-view-pvdaily"),
   dailytotals: () => el("consumption-view-dailytotals"),
   hourly: () => el("hourly-section"),
+  sizing: () => el("evaluation-view-sizing"),
 };
 
 function applyEvaluationSubView(view) {
@@ -2283,6 +2360,299 @@ function setupPvDailyControls() {
     btn.classList.add("active");
     state.pvDaily.days = Number(btn.dataset.days);
     refreshPvDailyChart().catch(console.error);
+  });
+}
+
+// --- Speicher-Erweiterung: simulierter zusaetzlich vermiedener Netzbezug
+// bei +1 / +2 Speichermodulen (Backend: battery_sizing.py). Hausweit, daher
+// unabhaengig vom oben gewaehlten Wechselrichter. Monate ohne Messdaten
+// bleiben sichtbar leer statt hochgerechnet zu werden. ---
+
+const SIZING_COLORS = ["#60a5fa", "#c084fc"];
+const SIZING_USAGE_KEYS = ["unused", "partial", "full", "multi"];
+const SIZING_SOURCE_LABELS = { config: "eingetragen", measured: "aus Messdaten", default: "Annahme" };
+const MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+
+function fmtMonth(month) {
+  const [y, m] = month.split("-");
+  return `${MONTH_NAMES[Number(m) - 1]} ${y}`;
+}
+
+function shiftMonth(month, delta) {
+  const [y, m] = month.split("-").map(Number);
+  const index = y * 12 + (m - 1) + delta;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+// Monatsachse: mindestens die letzten 12 Monate bis zum juengsten Monat mit
+// Daten, bei laengerer Historie entsprechend weiter zurueck.
+function sizingMonthAxis(months) {
+  if (!months.length) return [];
+  const last = months[months.length - 1].month;
+  let current = [months[0].month, shiftMonth(last, -11)].sort()[0];
+  const axis = [];
+  while (current <= last) {
+    axis.push(current);
+    current = shiftMonth(current, 1);
+  }
+  return axis;
+}
+
+function sizingVariantName(variant) {
+  const modules = variant.extra_modules === 1 ? "Modul" : "Module";
+  return `+${variant.extra_modules} ${modules} (${variant.nominal_kwh.toFixed(2)} kWh)`;
+}
+
+function usageText(usage) {
+  return SIZING_USAGE_KEYS.map((key) => usage?.[key] ?? 0).join(" / ");
+}
+
+function fillList(id, items) {
+  const list = el(id);
+  list.replaceChildren(
+    ...items.map((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      return li;
+    })
+  );
+}
+
+function renderSizingKpis(data) {
+  const fullYear = data.coverage.full_year;
+  const bucket = fullYear ? data.last_365_days : data.total;
+  const period = fullYear ? "letzte 365 Tage" : `bisher, ${bucket.days} Tage`;
+  const tiles = data.variants
+    .filter((v) => v.extra_modules > 0)
+    .map((variant, i) => {
+      const avoided = bucket.avoided_kwh[i];
+      const share = bucket.base_grid_kwh > 0 ? (100 * avoided) / bucket.base_grid_kwh : null;
+      return {
+        title: sizingVariantName(variant),
+        value: fmtKwh(avoided),
+        detail: [
+          `weniger Netzbezug (${period})`,
+          share === null ? null : `${share.toFixed(0)} % des simulierten Netzbezugs`,
+          `${fmtKwh(bucket.feed_in_reduction_kwh[i])} weniger Einspeisung`,
+        ],
+      };
+    });
+  tiles.push({
+    title: "Zusatznutzen 2. Modul",
+    value: fmtKwh(bucket.second_module_kwh),
+    detail: ["(+2) − (+1)", period],
+  });
+  tiles.push({
+    title: `Netzbezug heute (${data.variants[0].nominal_kwh.toFixed(2)} kWh)`,
+    value: fmtKwh(bucket.base_grid_kwh),
+    detail: ["simuliert, ohne Erweiterung", period],
+  });
+
+  el("sizing-kpis").replaceChildren(
+    ...tiles.map((tile) => {
+      const box = document.createElement("div");
+      box.className = "sizing-kpi";
+      const title = document.createElement("strong");
+      title.textContent = tile.title;
+      const value = document.createElement("span");
+      value.className = "sizing-kpi-value";
+      value.textContent = tile.value;
+      box.append(title, value);
+      for (const line of tile.detail.filter(Boolean)) {
+        const span = document.createElement("span");
+        span.className = "muted";
+        span.textContent = line;
+        box.append(span);
+      }
+      return box;
+    })
+  );
+}
+
+function renderSizingChart(data, axis, byMonth) {
+  const labels = axis.map(fmtMonth);
+  const datasets = data.variants
+    .filter((v) => v.extra_modules > 0)
+    .map((variant, i) => ({
+      label: sizingVariantName(variant),
+      data: axis.map((m) => byMonth[m]?.avoided_kwh[i] ?? null),
+      backgroundColor: SIZING_COLORS[i],
+      borderColor: SIZING_COLORS[i],
+      borderWidth: 1,
+      borderRadius: 2,
+    }));
+
+  if (state.batterySizing.chart) {
+    state.batterySizing.chart.data.labels = labels;
+    state.batterySizing.chart.data.datasets = datasets;
+    state.batterySizing.chart.update();
+    return;
+  }
+
+  state.batterySizing.chart = new Chart(el("sizing-chart").getContext("2d"), {
+    type: "bar",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      events: chartEvents(),
+      interaction: { mode: "index", intersect: false },
+      scales: {
+        x: { ticks: { color: "#94a3b8", maxRotation: 0, autoSkip: true }, grid: { display: false } },
+        y: {
+          beginAtZero: true,
+          ticks: { color: "#94a3b8", callback: (v) => `${v} kWh` },
+          grid: { color: "#334155" },
+          title: { display: true, text: "Vermiedener Netzbezug (kWh)", color: "#94a3b8" },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: "#e2e8f0" } },
+        tooltip: {
+          callbacks: {
+            label: (item) =>
+              item.parsed.y === null
+                ? `${item.dataset.label}: keine Daten`
+                : `${item.dataset.label}: ${item.parsed.y.toFixed(1)} kWh`,
+            footer: (items) => {
+              const month = state.batterySizing.byMonth[state.batterySizing.axis[items[0]?.dataIndex]];
+              return month ? `${month.days} Tage mit Daten` : "keine Messdaten";
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderSizingTables(data, axis, byMonth) {
+  const rows = axis.map((month) => {
+    const tr = document.createElement("tr");
+    const entry = byMonth[month];
+    const cells = entry
+      ? [
+          fmtMonth(month),
+          entry.complete_days === entry.days ? `${entry.days}` : `${entry.days} (${entry.complete_days} vollständig)`,
+          fmtKwh(entry.avoided_kwh[0]),
+          fmtKwh(entry.avoided_kwh[1]),
+          fmtKwh(entry.second_module_kwh),
+          usageText(entry.usage[0]),
+          usageText(entry.usage[1]),
+        ]
+      : [fmtMonth(month), "keine Daten"];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.append(td);
+    }
+    if (!entry) {
+      tr.lastChild.colSpan = 6;
+      tr.classList.add("sizing-row-empty");
+    }
+    return tr;
+  });
+  el("sizing-month-body").replaceChildren(...rows);
+
+  el("sizing-extra-capacity").textContent = data.extra_usable_kwh
+    .map((kwh, i) => `${kwh.toFixed(2)} kWh bei +${i + 1}`)
+    .join(", ");
+  el("sizing-usage-body").replaceChildren(
+    ...data.variants
+      .filter((v) => v.extra_modules > 0)
+      .map((variant, i) => {
+        const tr = document.createElement("tr");
+        for (const text of [sizingVariantName(variant), ...SIZING_USAGE_KEYS.map((k) => String(data.total.usage[i][k]))]) {
+          const td = document.createElement("td");
+          td.textContent = text;
+          tr.append(td);
+        }
+        return tr;
+      })
+  );
+}
+
+function renderSizingBoxes(data) {
+  const v = data.validation;
+  fillList(
+    "sizing-validation",
+    v
+      ? [
+          `Ladestand: im Mittel ${v.soc_mean_error.toFixed(1)} %-Punkte Abweichung, RMSE ${v.soc_rmse.toFixed(1)} %-Punkte (${v.soc_points} Messpunkte).`,
+          v.grid_days
+            ? `Netzbezug an ${v.grid_days} Tagen: gemessen ${fmtKwh(v.grid_measured_kwh)} (ohne Netzladung), simuliert ${fmtKwh(v.grid_simulated_kwh)} – Abweichung ${fmtKwh(v.grid_deviation_kwh)} bzw. ${v.grid_deviation_kwh_per_day.toFixed(2)} kWh je Tag${v.grid_deviation_percent === null ? "" : ` (${v.grid_deviation_percent.toFixed(0)} %)`}.`
+            : "Netzbezug: noch keine vollständigen Tage mit Netzmessung.",
+          `Netzladung in den Messdaten: ${fmtKwh(data.grid_charge_kwh)} an ${data.grid_charge_days} ${data.grid_charge_days === 1 ? "Tag" : "Tagen"} (in der Simulation nicht enthalten).`,
+        ]
+      : ["Noch keine Daten für eine Prüfung."]
+  );
+
+  const c = data.calibration;
+  const src = (key) => SIZING_SOURCE_LABELS[c.sources[key]] ?? "–";
+  fillList("sizing-calibration", [
+    `Nutzbare Kapazität: ${c.capacity_kwh.toFixed(2)} kWh (${c.state_of_health_percent.toFixed(0)} % vom Nennwert, ${src("capacity")})`,
+    `Mindestladung: ${c.min_soc_percent.toFixed(0)} % (${src("min_soc")})`,
+    `Wirkungsgrad Laden / Entladen: ${(c.eta_charge * 100).toFixed(1)} % / ${(c.eta_discharge * 100).toFixed(1)} % (${src("eta_charge")})`,
+    `Leistung Laden / Entladen: ${fmtWatt(c.max_charge_w)} / ${fmtWatt(c.max_discharge_w)} (${src("max_charge")})`,
+    `Standby: ${Math.round(c.standby_w)} W (${src("standby")})`,
+  ]);
+
+  const box = el("sizing-financial");
+  const f = data.financial;
+  if (!f) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent =
+      "Offen: Erweiterungskosten, Strompreis und Einspeisevergütung im Admin-Bereich eintragen – dann erscheint hier eine Bewertung.";
+    box.replaceChildren(p);
+    return;
+  }
+  const list = document.createElement("ul");
+  f.variants.forEach((variant, i) => {
+    const li = document.createElement("li");
+    const name = sizingVariantName(data.variants[i + 1]);
+    const payback = variant.payback_years !== null
+      ? `Amortisation nach ${variant.payback_years.toFixed(1)} Jahren`
+      : f.full_year
+        ? "keine Amortisation berechenbar"
+        : "Amortisation erst mit einem vollen Jahr Daten";
+    li.textContent = `${name}: ${variant.savings_eur.toFixed(0)} € Ersparnis${f.full_year ? " pro Jahr" : " im bisherigen Zeitraum"}`
+      + (variant.cost_eur === null ? "" : ` bei ${variant.cost_eur.toFixed(0)} € Kosten – ${payback}`);
+    list.append(li);
+  });
+  const note = document.createElement("p");
+  note.className = "muted";
+  note.textContent = `Strompreis ${f.price_ct_per_kwh} ct/kWh, Einspeisevergütung ${f.feed_in_ct_per_kwh} ct/kWh; entgangene Einspeisung ist abgezogen.`;
+  box.replaceChildren(list, note);
+}
+
+function renderBatterySizing(data) {
+  if (!data?.variants) {
+    el("sizing-coverage").textContent = "Keine Daten verfügbar.";
+    return;
+  }
+  const cov = data.coverage;
+  el("sizing-coverage").textContent = cov.days
+    ? `Datenbasis: ${cov.days} Tage (${shortDate(cov.first_day)}${cov.first_day.slice(0, 4)} bis ${shortDate(cov.last_day)}${cov.last_day.slice(0, 4)}), davon ${cov.complete_days} vollständig.`
+      + (cov.full_year ? "" : " Noch kein volles Jahr – Jahreszeiten ohne Daten fehlen in der Bewertung.")
+    : "Noch keine abgeschlossenen Tage mit Messdaten.";
+
+  const byMonth = Object.fromEntries(data.months.map((m) => [m.month, m]));
+  const axis = sizingMonthAxis(data.months);
+  // Fuer den Tooltip des (nur einmal erzeugten) Diagramms.
+  state.batterySizing.byMonth = byMonth;
+  state.batterySizing.axis = axis;
+  renderSizingKpis(data);
+  renderSizingChart(data, axis, byMonth);
+  renderSizingTables(data, axis, byMonth);
+  renderSizingBoxes(data);
+  fillList("sizing-assumptions", data.assumptions);
+}
+
+async function refreshBatterySizing() {
+  return withLoading(["#sizing-chart-wrapper"], async () => {
+    const data = await fetchJson("/api/readings/battery-sizing");
+    state.batterySizing.data = data;
+    renderBatterySizing(data);
   });
 }
 
@@ -3190,6 +3560,7 @@ function refreshEvaluationTab() {
     refreshPvDailyChart(),
     refreshDailyTotalsChart(),
     refreshHourlyCompareChart(),
+    refreshBatterySizing(),
   ]);
 }
 
@@ -3303,7 +3674,12 @@ const TAB_CHARTS = {
     state.batterySoc.chart,
     state.autarky.chart,
   ],
-  evaluation: () => [state.pvDaily.chart, state.dailyTotals.chart, state.hourlyCompare.chart],
+  evaluation: () => [
+    state.pvDaily.chart,
+    state.dailyTotals.chart,
+    state.hourlyCompare.chart,
+    state.batterySizing.chart,
+  ],
   forecast: () => [
     state.forecastChart,
     state.forecastHoursTodayChart,

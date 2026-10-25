@@ -21,6 +21,9 @@ gemeinsam in einem Docker-Container, die Datenbank daneben.
 - Autarkiegrad (Anteil des Hausverbrauchs aus PV/Speicher statt Netz) je
   Kalendermonat sowie als Tageswert in der Übersicht
 - Vergleich mehrerer Wechselrichter und Kalendertage
+- Speicher-Erweiterung: Simulation, wie viel Netzbezug ein um ein oder zwei
+  Module größerer Speicher vermieden hätte – je Monat, aus den eigenen
+  Messdaten kalibriert und laufend fortgeschrieben
 - Automatischer Import vorhandener Wechselrichter-Logdaten
 - Benutzerverwaltung mit Admin- und Betreiberrolle
 - Datengetriebene PV-Prognose aus historischen Mess- und Wetterdaten, mit

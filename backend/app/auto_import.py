@@ -33,6 +33,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .config import InverterConfig, settings
+from .battery_sizing import invalidate_battery_sizing_cache
 from .daily_summary import invalidate_energy_cache
 from .energy_forecast import invalidate_hourly_pv_cache
 from .import_logdata import _download, import_rows, parse_logdata
@@ -211,6 +212,16 @@ async def _run_import_body() -> None:
                 except Exception:  # noqa: BLE001
                     logger.exception(
                         "Konnte Energie-Zeitraum-Cache nach Import fuer %s nicht invalidieren",
+                        cfg.name,
+                    )
+                try:
+                    invalidate_battery_sizing_cache(
+                        date.fromisoformat(result["range_begin"]),
+                        date.fromisoformat(result["range_end"]),
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Konnte Speicher-Erweiterungs-Cache nach Import fuer %s nicht invalidieren",
                         cfg.name,
                     )
                 try:

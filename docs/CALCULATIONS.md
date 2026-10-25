@@ -47,8 +47,84 @@ ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 ## Auswertungen
 
 Der Reiter "Auswertungen" bündelt die Säulendiagramme. Über das Menü am
-Reiter wählt man die Ansicht: "Erzeugung je Tag", "Tagesverbrauch" oder
-"Wechselrichter-Vergleich".
+Reiter wählt man die Ansicht: "Erzeugung je Tag", "Tagesverbrauch",
+"Wechselrichter-Vergleich" oder "Speicher-Erweiterung".
+
+## Speicher-Erweiterung: lohnt sich ein größerer Speicher?
+
+Die Ansicht beantwortet, wie viel Netzbezug ein um ein oder zwei Module
+erweiterter Speicher (BYD HVM: 11,04 → 13,8 / 16,56 kWh) **in der
+Vergangenheit** vermieden hätte. Berechnet in `backend/app/battery_sizing.py`,
+geliefert von `GET /api/readings/battery-sizing`. Sie ist hausweit und
+ignoriert den oben gewählten Wechselrichter.
+
+**Datenbasis.** Je abgeschlossenem Kalendertag werden die Messwerte zu
+5-Minuten-Schritten verdichtet: reine PV aller Wechselrichter, Hausverbrauch
+aus der korrigierten Energiebilanz (dieselbe Mehrgeräte-Logik wie überall,
+siehe unten), gemessener Netzbezug/Einspeisung, Batterieleistung und
+Ladestand. Diese Tagesreihen landen in `battery_sizing_days` und werden nur
+einmal berechnet; ein Logdaten-Import verwirft die betroffenen Tage. Der
+heutige Tag zählt nicht mit. Monate ohne Messdaten werden **nicht
+hochgerechnet**, sondern als „keine Daten“ angezeigt – die Aussage wird mit
+jedem Tag vollständiger und ist erst nach einem vollen Jahr über alle
+Jahreszeiten belastbar.
+
+**Kalibrierung des vorhandenen Speichers** (Werte aus dem Admin-Bereich haben
+Vorrang, sonst aus den Messdaten, sonst eine ausgewiesene Annahme):
+
+- *Mindestladung*: Median des Ladestands in Schritten, in denen trotz
+  Bedarf nicht mehr entladen wird.
+- *Lade-/Entladeleistung*: höchste gemessene Leistung (5-Minuten-Mittel).
+  Bei mehr Modulen wächst sie anteilig mit (höhere Systemspannung bei
+  gleichem Strom), optional begrenzt durch den Wechselrichter.
+- *Kapazität und Wirkungsgrade*: Regression über einstündige Fenster
+  `ΔSoC = a·E_laden − b·E_entladen − s·Stunden` mit `a = η_laden/C`,
+  `b = 1/(η_entladen·C)`. Ohne eingetragene Kapazität wird
+  `η_laden = η_entladen` angenommen; mit eingetragener Kapazität (SoH) werden
+  beide Wirkungsgrade getrennt bestimmt. Fenster nahe 100 % oder an der
+  Mindestladung bleiben außen vor.
+- *Wandlungsstufe*: Überschuss und Bedarf entstehen AC-seitig, die Batterie
+  misst DC-seitig. Je Richtung wird eine Gerade `Batterie = Faktor · AC +
+  Versatz` angepasst; sie enthält Wandlungsverluste und den Eigenverbrauch
+  des Wechselrichters (an der Testanlage z. B. Entladen 1,026 × Bedarf + 73 W).
+  Ohne diese Stufe lag der simulierte Ladestand im Mittel 3 %-Punkte zu hoch.
+- *Standby*: aus der Regression, sonst 10 W (Annahme).
+
+**Simulation.** Drei Speicher mit identischer Logik werden fortlaufend über
+alle Tage simuliert – der Ladestand wird über Mitternacht mitgeführt, beliebig
+viele Zyklen pro Tag. Positiver Überschuss lädt (Leistungsgrenze, freier
+Platz, Ladewirkungsgrad), der Rest wird eingespeist; Bedarf wird bis zur
+Mindestladung aus dem Speicher gedeckt, der Rest kommt aus dem Netz. Weil
+die Schritte zeitlich abgearbeitet werden, hilft nur Überschuss, der **vor**
+dem Bedarf anfällt. Netzladung gibt es im Modell nicht. Neue Module gehen mit
+Nennkapazität ein, die vorhandenen mit der kalibrierten; alle Varianten
+starten mit der gemessenen gespeicherten Energie.
+
+**Validierung.** Das simulierte Modell des heutigen Speichers wird gegen den
+gemessenen Ladestand (mittlere Abweichung und RMSE in %-Punkten) und den
+gemessenen Netzbezug abzüglich erkannter Netzladung geprüft (absolut, je Tag
+und in Prozent – bei sehr kleinem Netzbezug im Sommer ist die Prozentangabe
+allein irreführend).
+
+**Kennzahlen.**
+
+- *Nutzen* = simulierter Netzbezug (heute) − simulierter Netzbezug (Variante),
+  je Tag; Monats- und Gesamtwerte sind Summen dieser Tageswerte. Einspeisung
+  und Netzbezug werden nie über Monatssummen gegeneinander verrechnet.
+- *Zusatznutzen des zweiten Moduls* = (+2) − (+1).
+- *Nutzungshäufigkeit* je Tag = zusätzlich ans Haus abgegebene Energie
+  gegenüber dem heutigen Speicher ÷ nutzbare Zusatzkapazität nach Verlusten
+  (Module × Modulkapazität × (1 − Mindestladung) × η_entladen). Unter 5 %
+  ungenutzt, 5–95 % teilweise, 95–100 % vollständig, über 100 % mehrfach
+  (mehrere Zyklen am Tag).
+- *Netzladung*: Laden, das nicht aus PV-Überschuss stammen kann, bei
+  gleichzeitigem Netzbezug.
+- *Abregelung*: nicht messbar. Gezählt wird nur, wie lange die Einspeisung
+  an der eingetragenen Grenze (oder ohne Grenze an einem auffälligen Plateau)
+  lag.
+- *Wirtschaftlichkeit* erscheint erst, wenn Strompreis, Einspeisevergütung
+  und mindestens eine Kostenangabe eingetragen sind; Amortisation erst mit
+  einem vollen Jahr Daten.
 
 ## Erzeugung je Tag: PV-Ertrag je Wechselrichter
 

@@ -991,3 +991,125 @@ canvas {
     text-align: left;
   }
 }
+
+/* ---- Auswertungen > Speicher-Erweiterung ---- */
+
+.sizing-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin: 14px 0 6px;
+}
+
+.sizing-kpi {
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sizing-kpi strong,
+.sizing-kpi span {
+  display: block;
+}
+
+.sizing-kpi-value {
+  margin: 5px 0;
+  color: var(--accent-blue);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.sizing-kpi span.muted {
+  font-size: 0.78rem;
+}
+
+.sizing-subhead {
+  margin: 22px 0 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--panel-border);
+  font-size: 1rem;
+}
+
+/* Breite Tabellen scrollen auf dem Handy in ihrem Rahmen statt die ganze
+   Seite seitlich zu verschieben. */
+.sizing-table-wrapper {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
+.sizing-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sizing-table th,
+.sizing-table td {
+  text-align: right;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--panel-border);
+  white-space: nowrap;
+}
+
+.sizing-table th:first-child,
+.sizing-table td:first-child {
+  text-align: left;
+}
+
+.sizing-table th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sizing-row-empty td {
+  color: var(--muted);
+}
+
+.sizing-row-empty td:last-child {
+  text-align: left;
+  font-style: italic;
+}
+
+.sizing-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.sizing-box {
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--bg);
+  margin-top: 10px;
+}
+
+.sizing-boxes .sizing-box {
+  margin-top: 0;
+}
+
+.sizing-box h3 {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.sizing-box ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.sizing-box p {
+  margin: 0;
+}
+
+.sizing-box--note {
+  border-color: var(--accent-yellow);
+}

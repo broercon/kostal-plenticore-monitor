@@ -108,6 +108,68 @@
     </section>
 
     <section class="admin-section">
+      <h3>Speicher-Erweiterung</h3>
+      <p class="muted">Rahmendaten für die Auswertung „Speicher-Erweiterung“.
+        Leere Felder werden aus den Messdaten abgeleitet. Preise und Kosten
+        sind optional – erst wenn sie eingetragen sind, erscheint eine
+        finanzielle Bewertung.</p>
+      <form id="battery-sizing-form">
+        <div class="forecast-site-grid">
+          <label>Nennkapazität heute (kWh)
+            <input type="number" id="bsz-nominal" min="0.1" step="0.01" required />
+          </label>
+          <label>Kapazität je Modul (kWh)
+            <input type="number" id="bsz-module" min="0.1" step="0.01" required />
+          </label>
+          <label>Nutzbare Kapazität / SoH (kWh)
+            <input type="number" id="bsz-usable" min="0.1" step="0.01" placeholder="aus Messdaten" />
+          </label>
+          <label>Mindestladung (%)
+            <input type="number" id="bsz-min-soc" min="0" max="99" step="1" placeholder="aus Messdaten" />
+          </label>
+          <label>Max. Ladeleistung (W)
+            <input type="number" id="bsz-max-charge" min="1" step="1" placeholder="aus Messdaten" />
+          </label>
+          <label>Max. Entladeleistung (W)
+            <input type="number" id="bsz-max-discharge" min="1" step="1" placeholder="aus Messdaten" />
+          </label>
+          <label>Grenze Wechselrichter für Batterie (W)
+            <input type="number" id="bsz-inverter-limit" min="1" step="1" placeholder="keine" />
+          </label>
+          <label>Einspeisebegrenzung (W)
+            <input type="number" id="bsz-feed-in-limit" min="1" step="1" placeholder="keine" />
+          </label>
+          <label>Wirkungsgrad Laden (%)
+            <input type="number" id="bsz-eta-charge" min="51" max="100" step="0.1" placeholder="aus Messdaten" />
+          </label>
+          <label>Wirkungsgrad Entladen (%)
+            <input type="number" id="bsz-eta-discharge" min="51" max="100" step="0.1" placeholder="aus Messdaten" />
+          </label>
+          <label>Standby-Verbrauch (W)
+            <input type="number" id="bsz-standby" min="0" step="1" placeholder="10 (Annahme)" />
+          </label>
+          <span></span>
+          <label>Kosten +1 Modul (€)
+            <input type="number" id="bsz-cost-1" min="0" step="1" placeholder="offen" />
+          </label>
+          <label>Kosten +2 Module (€)
+            <input type="number" id="bsz-cost-2" min="0" step="1" placeholder="offen" />
+          </label>
+          <label>Strompreis (ct/kWh)
+            <input type="number" id="bsz-price" min="0" step="0.01" placeholder="offen" />
+          </label>
+          <label>Einspeisevergütung (ct/kWh)
+            <input type="number" id="bsz-feed-in" min="0" step="0.01" placeholder="offen" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" id="bsz-save">Rahmendaten speichern</button>
+        </div>
+        <p class="login-error muted" id="bsz-save-result"></p>
+      </form>
+    </section>
+
+    <section class="admin-section">
       <h3>Täglicher Mail-Report</h3>
       <p class="muted">Verschickt einmal täglich zur eingestellten Uhrzeit eine
         Zusammenfassung (aktive Wechselrichter, PV-Ertrag je Gerät + Summe) über
@@ -188,6 +250,7 @@
         <button type="button" data-subview="pvdaily">Erzeugung je Tag</button>
         <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
         <button type="button" data-subview="hourly">Wechselrichter-Vergleich</button>
+        <button type="button" data-subview="sizing">Speicher-Erweiterung</button>
       </div>
     </div>
 
@@ -602,6 +665,96 @@
         Der Wechselrichter-Vergleich ist nur in der Ansicht "Alle (Summe)" mit
         mehreren Wechselrichtern verfügbar.
       </p>
+    </section>
+
+    <section class="chart-section hidden" id="evaluation-view-sizing">
+      <div class="daycompare-header">
+        <h2>Speicher-Erweiterung</h2>
+        <p class="muted">
+          Wie viel Netzbezug hätte ein größerer Speicher vermieden? Aus den
+          gemessenen PV- und Verbrauchswerten werden der vorhandene Speicher und
+          eine Erweiterung um ein bzw. zwei Module mit identischer Logik
+          simuliert (Laden nur aus PV-Überschuss). Gilt immer für die ganze
+          Anlage und wird mit jedem abgeschlossenen Tag vollständiger.
+        </p>
+        <p class="muted" id="sizing-coverage">–</p>
+      </div>
+
+      <div class="sizing-kpis" id="sizing-kpis"></div>
+
+      <h3 class="sizing-subhead">Zusätzlich vermiedener Netzbezug je Monat</h3>
+      <div class="chart-canvas-wrapper" id="sizing-chart-wrapper">
+        <canvas id="sizing-chart"></canvas>
+      </div>
+      <p class="chart-hint muted">
+        Je Monat zwei Säulen: +1 und +2 Module gegenüber dem heutigen Speicher.
+        Monate ohne Messdaten bleiben leer und werden nicht hochgerechnet.
+      </p>
+
+      <div class="sizing-table-wrapper">
+        <table class="sizing-table" id="sizing-month-table">
+          <thead>
+            <tr>
+              <th>Monat</th>
+              <th>Tage</th>
+              <th>+1 Modul</th>
+              <th>+2 Module</th>
+              <th>Zusatznutzen 2. Modul</th>
+              <th title="ungenutzt / teilweise / vollständig / mehrfach">Nutzung +1</th>
+              <th title="ungenutzt / teilweise / vollständig / mehrfach">Nutzung +2</th>
+            </tr>
+          </thead>
+          <tbody id="sizing-month-body"></tbody>
+        </table>
+      </div>
+
+      <h3 class="sizing-subhead">Nutzungshäufigkeit der Zusatzkapazität je Tag</h3>
+      <p class="muted">
+        Zusätzlich entnommene Energie gegenüber dem heutigen Speicher, geteilt
+        durch die nutzbare Zusatzkapazität nach Verlusten
+        (<span id="sizing-extra-capacity">–</span>). Ungenutzt: unter 5 %,
+        teilweise: 5–95 %, vollständig: 95–100 %, mehrfach: über 100 % (mehrere
+        Zyklen am Tag).
+      </p>
+      <div class="sizing-table-wrapper">
+        <table class="sizing-table" id="sizing-usage-table">
+          <thead>
+            <tr><th>Variante</th><th>ungenutzt</th><th>teilweise</th><th>vollständig</th><th>mehrfach</th></tr>
+          </thead>
+          <tbody id="sizing-usage-body"></tbody>
+        </table>
+      </div>
+
+      <div class="sizing-boxes">
+        <div class="sizing-box">
+          <h3>Modellprüfung</h3>
+          <ul id="sizing-validation"></ul>
+        </div>
+        <div class="sizing-box">
+          <h3>Kenngrößen des vorhandenen Speichers</h3>
+          <ul id="sizing-calibration"></ul>
+        </div>
+        <div class="sizing-box">
+          <h3>Wirtschaftlichkeit</h3>
+          <div id="sizing-financial"></div>
+        </div>
+      </div>
+
+      <div class="sizing-box">
+        <h3>Annahmen und fehlende Daten</h3>
+        <ul id="sizing-assumptions"></ul>
+      </div>
+
+      <div class="sizing-box sizing-box--note">
+        <h3>Vor einer Erweiterung beachten</h3>
+        <p class="muted">
+          BYD macht für das Erweitern bestehender HVM-Systeme eigene Vorgaben,
+          u. a. zum Firmware-Stand der Steuereinheit (BMU), zum Alter der
+          vorhandenen Module und zum Angleichen der Ladestände von alten und
+          neuen Modulen vor dem Zusammenschalten. Ob und wie die Erweiterung bei
+          dieser Anlage möglich ist, vorab mit dem Installateur bzw. BYD klären.
+        </p>
+      </div>
     </section>
   </div>
 

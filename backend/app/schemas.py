@@ -488,3 +488,137 @@ class ForecastAccuracyOut(BaseModel):
     # forecast_evaluation.get_forecast_accuracy fuer die Begruendung. None,
     # solange fuer heute noch keine passenden Messwerte vorliegen.
     today_so_far: ForecastAccuracyDayOut | None = None
+
+
+class BatterySizingConfigIn(BaseModel):
+    """Rahmendaten der Speicher-Erweiterung. Leere optionale Felder heissen
+    "aus den Messdaten ableiten" (bzw. bei Preisen/Kosten: keine finanzielle
+    Bewertung), siehe battery_sizing.calibrate."""
+
+    nominal_capacity_kwh: float = Field(default=11.04, gt=0, le=100)
+    module_capacity_kwh: float = Field(default=2.76, gt=0, le=50)
+    usable_capacity_kwh: float | None = Field(default=None, gt=0, le=100)
+    min_soc_percent: float | None = Field(default=None, ge=0, lt=100)
+    max_charge_w: float | None = Field(default=None, gt=0, le=50000)
+    max_discharge_w: float | None = Field(default=None, gt=0, le=50000)
+    inverter_battery_limit_w: float | None = Field(default=None, gt=0, le=50000)
+    eta_charge: float | None = Field(default=None, gt=0.5, le=1)
+    eta_discharge: float | None = Field(default=None, gt=0.5, le=1)
+    standby_w: float | None = Field(default=None, ge=0, le=500)
+    feed_in_limit_w: float | None = Field(default=None, gt=0, le=100000)
+    cost_plus_one_eur: float | None = Field(default=None, ge=0)
+    cost_plus_two_eur: float | None = Field(default=None, ge=0)
+    price_ct_per_kwh: float | None = Field(default=None, ge=0, le=500)
+    feed_in_ct_per_kwh: float | None = Field(default=None, ge=0, le=500)
+
+
+class BatterySizingConfigOut(BatterySizingConfigIn):
+    source: str
+
+
+class BatterySizingVariantOut(BaseModel):
+    key: str
+    modules: int
+    extra_modules: int
+    nominal_kwh: float
+
+
+class BatterySizingCalibrationOut(BaseModel):
+    capacity_kwh: float
+    state_of_health_percent: float
+    min_soc_percent: float
+    max_charge_w: float
+    max_discharge_w: float
+    eta_charge: float
+    eta_discharge: float
+    standby_w: float
+    # Kenngroesse -> "config" | "measured" | "default"
+    sources: dict[str, str]
+    regression_windows: int
+
+
+class BatterySizingCoverageOut(BaseModel):
+    first_day: str | None = None
+    last_day: str | None = None
+    days: int
+    complete_days: int
+    missing_months: list[str]
+    full_year: bool
+
+
+class BatterySizingCurtailmentOut(BaseModel):
+    limit_w: float | None = None
+    limit_source: str | None = None
+    hours_at_limit: float
+    days_at_limit: int
+    max_feed_in_w: float | None = None
+    suspected: bool
+
+
+class BatterySizingValidationOut(BaseModel):
+    soc_points: int
+    soc_mean_error: float | None = None
+    soc_rmse: float | None = None
+    grid_days: int
+    grid_measured_kwh: float | None = None
+    grid_simulated_kwh: float | None = None
+    grid_deviation_percent: float | None = None
+    grid_deviation_kwh: float | None = None
+    grid_deviation_kwh_per_day: float | None = None
+
+
+class BatterySizingBucketOut(BaseModel):
+    """Summen ueber einen Zeitraum. Listen haben je einen Eintrag fuer
+    +1 und +2 Module (in dieser Reihenfolge)."""
+
+    days: int
+    complete_days: int
+    base_grid_kwh: float
+    avoided_kwh: list[float]
+    second_module_kwh: float
+    feed_in_reduction_kwh: list[float]
+    # Je Variante: Kategorie (unused/partial/full/multi) -> Anzahl Tage
+    usage: list[dict[str, int]]
+
+
+class BatterySizingMonthOut(BatterySizingBucketOut):
+    month: str  # "YYYY-MM"
+
+
+class BatterySizingDayOut(BaseModel):
+    date: str
+    complete: bool
+    base_grid_kwh: float
+    avoided_kwh: list[float]
+    usage_ratio: list[float]
+    usage: list[str]
+
+
+class BatterySizingFinancialVariantOut(BaseModel):
+    cost_eur: float | None = None
+    savings_eur: float
+    payback_years: float | None = None
+
+
+class BatterySizingFinancialOut(BaseModel):
+    price_ct_per_kwh: float
+    feed_in_ct_per_kwh: float
+    full_year: bool
+    variants: list[BatterySizingFinancialVariantOut]
+
+
+class BatterySizingOut(BaseModel):
+    variants: list[BatterySizingVariantOut]
+    calibration: BatterySizingCalibrationOut
+    coverage: BatterySizingCoverageOut
+    curtailment: BatterySizingCurtailmentOut
+    validation: BatterySizingValidationOut | None = None
+    financial: BatterySizingFinancialOut | None = None
+    total: BatterySizingBucketOut
+    last_365_days: BatterySizingBucketOut
+    months: list[BatterySizingMonthOut]
+    daily: list[BatterySizingDayOut]
+    extra_usable_kwh: list[float]
+    grid_charge_kwh: float
+    grid_charge_days: int
+    assumptions: list[str]
