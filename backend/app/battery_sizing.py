@@ -935,60 +935,56 @@ def _financial(config: dict, last_year: dict, full_year: bool) -> dict | None:
     return {"price_ct_per_kwh": price, "feed_in_ct_per_kwh": feed_in, "full_year": full_year, "variants": variants}
 
 
-def _assumptions(calibration: Calibration, curtailment: dict, result: dict, coverage: dict) -> list[str]:
-    p = calibration.params
-    source_text = {"config": "eingetragen", "measured": "aus Messdaten", "default": "Annahme"}
+_MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
 
-    def src(key: str) -> str:
-        return source_text[calibration.sources[key]]
+
+def _fmt_month(month: str) -> str:
+    year, mon = month.split("-")
+    return f"{_MONTH_NAMES[int(mon) - 1]} {year}"
+
+
+def _fmt_month_list(months: list[str]) -> str:
+    """Aufeinanderfolgende Monate als Spanne ("Nov 2025 bis Jun 2026"),
+    sonst als Aufzählung."""
+    if len(months) > 2:
+        index = [int(m[:4]) * 12 + int(m[5:]) for m in months]
+        if index == list(range(index[0], index[0] + len(index))):
+            return f"{_fmt_month(months[0])} bis {_fmt_month(months[-1])}"
+    return ", ".join(_fmt_month(m) for m in months)
+
+
+def _assumptions(calibration: Calibration, curtailment: dict, result: dict, coverage: dict) -> list[str]:
+    """Nur das Wesentliche, um das Ergebnis einordnen zu können - die
+    Details der Kalibrierung stehen in "calibration"."""
+    p = calibration.params
+    sources = {calibration.sources[k] for k in ("capacity", "min_soc", "eta_charge", "eta_discharge")}
+    if "config" in sources:
+        origin = "teils im Admin-Bereich eingetragen"
+    elif "default" in sources:
+        origin = "teils angenommen, weil die Messdaten noch nicht reichen"
+    else:
+        origin = "aus deinen Messdaten ermittelt"
+    if round(p.eta_charge, 3) == round(p.eta_discharge, 3):
+        efficiency = f"Wirkungsgrad {p.eta_charge * 100:.0f} % je Richtung"
+    else:
+        efficiency = f"Wirkungsgrad {p.eta_charge * 100:.0f} % beim Laden, {p.eta_discharge * 100:.0f} % beim Entladen"
 
     notes = [
-        f"Nutzbare Kapazität der vorhandenen Module: {p.capacity_kwh:.2f} kWh bei 0–100 % Ladestand "
-        f"({src('capacity')}; Nennwert {calibration.nominal_kwh:.2f} kWh). Neue Module mit "
-        f"Nennkapazität {calibration.module_kwh:.2f} kWh.",
-        f"Mindestladung {p.min_soc * 100:.0f} % ({src('min_soc')}), für alle Varianten gleich.",
-        f"Wirkungsgrad Laden {p.eta_charge * 100:.1f} % ({src('eta_charge')}), Entladen "
-        f"{p.eta_discharge * 100:.1f} % ({src('eta_discharge')}).",
-        f"Standby-Verbrauch des Speichers {p.standby_w:.0f} W ({src('standby')}).",
-        f"Lade-/Entladeleistung bei {calibration.nominal_kwh:.2f} kWh: {p.max_charge_w / 1000:.1f} / "
-        f"{p.max_discharge_w / 1000:.1f} kW "
-        f"({src('max_charge')}); wächst bei mehr Modulen anteilig mit der Systemspannung"
-        + (f", begrenzt durch den Wechselrichter auf {calibration.inverter_limit_w / 1000:.1f} kW." if calibration.inverter_limit_w else "."),
-        f"Wandlungsverluste und Eigenverbrauch des Wechselrichters: beim Laden kommen "
-        f"{p.charge_factor:.3f} × Überschuss {p.charge_offset_w:+.0f} W an der Batterie an "
-        f"({src('conversion_charge')}), beim Entladen muss sie {p.discharge_factor:.3f} × Bedarf "
-        f"{p.discharge_offset_w:+.0f} W liefern ({src('conversion_discharge')}).",
-        "Nachgerechnet wird in 5-Minuten-Schritten; Leistungsspitzen innerhalb eines Schritts sind gemittelt.",
-        "Die Nachrechnung lädt nur aus PV-Überschuss. Netzladung und prognosebasiertes oder verzögertes Laden "
-        "des echten Wechselrichters sind nicht nachgebildet; gemessene Netzladung "
-        f"({result['grid_charge_kwh']:.1f} kWh an {result['grid_charge_days']} "
-        f"{'Tag' if result['grid_charge_days'] == 1 else 'Tagen'}) ist beim Vergleich mit "
-        "dem gemessenen Netzbezug herausgerechnet.",
-        "Alle Varianten werden mit identischer Logik nachgerechnet; verglichen werden nur Nachrechnungen "
-        "miteinander, nicht Nachrechnung mit Messung.",
-        "Verbrauch und Erzeugung der Vergangenheit werden unverändert angenommen (kein geänderter Verbrauch, "
-        "kein anderes Wetterjahr).",
+        f"Jetziger Speicher: {p.capacity_kwh:.1f} kWh nutzbar, Mindestladung {p.min_soc * 100:.0f} %, "
+        f"{efficiency} ({origin}). Jedes neue Modul bringt {calibration.module_kwh:.2f} kWh.",
+        "Geladen wird nur mit PV-Überschuss, nicht aus dem Netz.",
+        "Verbrauch und Wetter wie in den ausgewerteten Tagen.",
     ]
-    if coverage["missing_months"]:
+    if not coverage["full_year"] and coverage["days"]:
+        missing = coverage["missing_months"]
         notes.append(
-            "Ohne Messdaten (nicht hochgerechnet): " + ", ".join(coverage["missing_months"]) + "."
-        )
-    if not coverage["full_year"]:
-        notes.append(
-            f"Erst {coverage['days']} Tage Daten – die Jahreswerte decken noch nicht alle Jahreszeiten ab "
-            "und sind nur für den gezeigten Zeitraum aussagekräftig."
+            f"Noch kein volles Jahr Daten ({coverage['days']} Tage)"
+            + (f" – {_fmt_month_list(missing)} fehlen und werden nicht hochgerechnet." if missing else ".")
         )
     if curtailment["suspected"]:
         notes.append(
-            f"Die Einspeisung lag {curtailment['hours_at_limit']:.1f} h an der Grenze – dort wurde "
-            "möglicherweise PV abgeregelt, die ein größerer Speicher hätte aufnehmen können. Diese Menge "
-            "ist nicht gemessen und nicht im Ergebnis enthalten."
-        )
-    else:
-        notes.append(
-            "Keine Hinweise auf Abregelung durch eine Einspeisebegrenzung"
-            + (f" (Grenze {curtailment['limit_w'] / 1000:.1f} kW)." if curtailment["limit_w"] else
-               " (keine Grenze eingetragen, kein Plateau in der Einspeisung erkennbar).")
+            f"Die Einspeisung lag {curtailment['hours_at_limit']:.1f} h an der Grenze – dort wurde vermutlich "
+            "PV abgeregelt, die ein größerer Speicher hätte aufnehmen können. Diese Menge ist nicht enthalten."
         )
     return notes
 

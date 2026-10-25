@@ -514,3 +514,9 @@ def test_days_with_measured_grid_draw_over_threshold_are_counted():
     assert result["daily"][0]["measured_grid_kwh"] == pytest.approx(0.6)
     assert result["daily"][3]["measured_grid_kwh"] is None
     assert result["grid_day_threshold_kwh"] == 0.5
+
+
+def test_missing_months_are_shown_as_range_or_list():
+    assert bs._fmt_month_list(["2025-11", "2025-12", "2026-01"]) == "Nov 2025 bis Jan 2026"
+    assert bs._fmt_month_list(["2025-11", "2026-01"]) == "Nov 2025, Jan 2026"
+    assert bs._fmt_month_list(["2025-11", "2025-12", "2026-02"]) == "Nov 2025, Dez 2025, Feb 2026"

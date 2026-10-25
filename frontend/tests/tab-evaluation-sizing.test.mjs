@@ -158,16 +158,15 @@ test("Speicher-Erweiterung: Kennzahlen, Validierung, Annahmen und offene Finanzd
   assert.match(kpis, /15 % des nachgerechneten Netzbezugs/);
 
   assert.match(app.document.getElementById("sizing-coverage").textContent, /54 Tage \(01\.09\.2026 bis 24\.10\.2026\).*53 vollständig.*Noch kein volles Jahr/);
-  const validation = app.document.getElementById("sizing-validation").textContent;
-  assert.match(validation, /RMSE 1\.3/);
-  assert.match(validation, /-0\.07 kWh je Tag/);
-  assert.match(validation, /Netzladung/);
-  assert.match(app.document.getElementById("sizing-calibration").textContent, /11\.37 kWh.*aus Messdaten/);
+  // Modellpruefung und Kenngroessen-Kasten gibt es nicht mehr.
+  assert.equal(app.document.getElementById("sizing-validation"), null);
+  assert.equal(app.document.getElementById("sizing-calibration"), null);
+  assert.doesNotMatch(app.document.getElementById("evaluation-view-sizing").textContent, /Modellprüfung|RMSE/);
   assert.deepEqual(
     [...app.document.querySelectorAll("#sizing-assumptions li")].map((li) => li.textContent),
     ["Annahme A", "Annahme B"]
   );
-  assert.match(app.document.getElementById("sizing-financial").textContent, /Offen: Erweiterungskosten/);
+  assert.match(app.document.getElementById("sizing-financial").textContent, /Offen – Strompreis, Einspeisevergütung und Erweiterungskosten/);
 });
 
 test("Speicher-Erweiterung: Wirtschaftlichkeit, sobald Preise eingetragen sind", async () => {

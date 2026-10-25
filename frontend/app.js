@@ -2370,7 +2370,6 @@ function setupPvDailyControls() {
 
 const SIZING_COLORS = ["#60a5fa", "#c084fc"];
 const SIZING_USAGE_KEYS = ["unused", "partial", "full", "multi"];
-const SIZING_SOURCE_LABELS = { config: "eingetragen", measured: "aus Messdaten", default: "Annahme" };
 const MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 
 function fmtMonth(month) {
@@ -2582,37 +2581,13 @@ function renderSizingTables(data, axis, byMonth) {
 }
 
 function renderSizingBoxes(data) {
-  const v = data.validation;
-  fillList(
-    "sizing-validation",
-    v
-      ? [
-          `Ladestand: im Mittel ${v.soc_mean_error.toFixed(1)} %-Punkte Abweichung, RMSE ${v.soc_rmse.toFixed(1)} %-Punkte (${v.soc_points} Messpunkte).`,
-          v.grid_days
-            ? `Netzbezug an ${v.grid_days} Tagen: gemessen ${fmtKwh(v.grid_measured_kwh)} (ohne Netzladung), nachgerechnet ${fmtKwh(v.grid_simulated_kwh)} – Abweichung ${fmtKwh(v.grid_deviation_kwh)} bzw. ${v.grid_deviation_kwh_per_day.toFixed(2)} kWh je Tag${v.grid_deviation_percent === null ? "" : ` (${v.grid_deviation_percent.toFixed(0)} %)`}.`
-            : "Netzbezug: noch keine vollständigen Tage mit Netzmessung.",
-          `Netzladung in den Messdaten: ${fmtKwh(data.grid_charge_kwh)} an ${data.grid_charge_days} ${data.grid_charge_days === 1 ? "Tag" : "Tagen"} (in der Nachrechnung nicht enthalten).`,
-        ]
-      : ["Noch keine Daten für eine Prüfung."]
-  );
-
-  const c = data.calibration;
-  const src = (key) => SIZING_SOURCE_LABELS[c.sources[key]] ?? "–";
-  fillList("sizing-calibration", [
-    `Nutzbare Kapazität: ${c.capacity_kwh.toFixed(2)} kWh (${c.state_of_health_percent.toFixed(0)} % vom Nennwert, ${src("capacity")})`,
-    `Mindestladung: ${c.min_soc_percent.toFixed(0)} % (${src("min_soc")})`,
-    `Wirkungsgrad Laden / Entladen: ${(c.eta_charge * 100).toFixed(1)} % / ${(c.eta_discharge * 100).toFixed(1)} % (${src("eta_charge")})`,
-    `Leistung Laden / Entladen: ${fmtWatt(c.max_charge_w)} / ${fmtWatt(c.max_discharge_w)} (${src("max_charge")})`,
-    `Standby: ${Math.round(c.standby_w)} W (${src("standby")})`,
-  ]);
-
   const box = el("sizing-financial");
   const f = data.financial;
   if (!f) {
     const p = document.createElement("p");
     p.className = "muted";
     p.textContent =
-      "Offen: Erweiterungskosten, Strompreis und Einspeisevergütung im Admin-Bereich eintragen – dann erscheint hier eine Bewertung.";
+      "Offen – Strompreis, Einspeisevergütung und Erweiterungskosten im Admin-Bereich eintragen.";
     box.replaceChildren(p);
     return;
   }
