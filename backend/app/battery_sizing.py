@@ -936,14 +936,14 @@ def _assumptions(calibration: Calibration, curtailment: dict, result: dict, cove
         f"{p.charge_factor:.3f} × Überschuss {p.charge_offset_w:+.0f} W an der Batterie an "
         f"({src('conversion_charge')}), beim Entladen muss sie {p.discharge_factor:.3f} × Bedarf "
         f"{p.discharge_offset_w:+.0f} W liefern ({src('conversion_discharge')}).",
-        "Simuliert wird in 5-Minuten-Schritten; Leistungsspitzen innerhalb eines Schritts sind gemittelt.",
-        "Die Simulation lädt nur aus PV-Überschuss. Netzladung und prognosebasiertes oder verzögertes Laden "
+        "Nachgerechnet wird in 5-Minuten-Schritten; Leistungsspitzen innerhalb eines Schritts sind gemittelt.",
+        "Die Nachrechnung lädt nur aus PV-Überschuss. Netzladung und prognosebasiertes oder verzögertes Laden "
         "des echten Wechselrichters sind nicht nachgebildet; gemessene Netzladung "
         f"({result['grid_charge_kwh']:.1f} kWh an {result['grid_charge_days']} "
         f"{'Tag' if result['grid_charge_days'] == 1 else 'Tagen'}) ist beim Vergleich mit "
         "dem gemessenen Netzbezug herausgerechnet.",
-        "Alle Varianten werden mit identischer Logik simuliert; verglichen werden nur Simulationen miteinander, "
-        "nicht Simulation mit Messung.",
+        "Alle Varianten werden mit identischer Logik nachgerechnet; verglichen werden nur Nachrechnungen "
+        "miteinander, nicht Nachrechnung mit Messung.",
         "Verbrauch und Erzeugung der Vergangenheit werden unverändert angenommen (kein geänderter Verbrauch, "
         "kein anderes Wetterjahr).",
     ]

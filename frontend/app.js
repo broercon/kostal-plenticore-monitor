@@ -2439,7 +2439,7 @@ function renderSizingKpis(data) {
         value: fmtKwh(avoided),
         detail: [
           `weniger Netzbezug (${period})`,
-          share === null ? null : `${share.toFixed(0)} % des simulierten Netzbezugs`,
+          share === null ? null : `${share.toFixed(0)} % des nachgerechneten Netzbezugs`,
           `${fmtKwh(bucket.feed_in_reduction_kwh[i])} weniger Einspeisung`,
         ],
       };
@@ -2447,7 +2447,7 @@ function renderSizingKpis(data) {
   tiles.push({
     title: "Netzbezug ohne Erweiterung",
     value: fmtKwh(bucket.base_grid_kwh),
-    detail: [`simuliert mit dem jetzigen Speicher (${data.variants[0].nominal_kwh.toFixed(2)} kWh)`, period],
+    detail: [`nachgerechnet mit dem jetzigen Speicher (${data.variants[0].nominal_kwh.toFixed(2)} kWh)`, period],
   });
 
   el("sizing-kpis").replaceChildren(
@@ -2580,9 +2580,9 @@ function renderSizingBoxes(data) {
       ? [
           `Ladestand: im Mittel ${v.soc_mean_error.toFixed(1)} %-Punkte Abweichung, RMSE ${v.soc_rmse.toFixed(1)} %-Punkte (${v.soc_points} Messpunkte).`,
           v.grid_days
-            ? `Netzbezug an ${v.grid_days} Tagen: gemessen ${fmtKwh(v.grid_measured_kwh)} (ohne Netzladung), simuliert ${fmtKwh(v.grid_simulated_kwh)} – Abweichung ${fmtKwh(v.grid_deviation_kwh)} bzw. ${v.grid_deviation_kwh_per_day.toFixed(2)} kWh je Tag${v.grid_deviation_percent === null ? "" : ` (${v.grid_deviation_percent.toFixed(0)} %)`}.`
+            ? `Netzbezug an ${v.grid_days} Tagen: gemessen ${fmtKwh(v.grid_measured_kwh)} (ohne Netzladung), nachgerechnet ${fmtKwh(v.grid_simulated_kwh)} – Abweichung ${fmtKwh(v.grid_deviation_kwh)} bzw. ${v.grid_deviation_kwh_per_day.toFixed(2)} kWh je Tag${v.grid_deviation_percent === null ? "" : ` (${v.grid_deviation_percent.toFixed(0)} %)`}.`
             : "Netzbezug: noch keine vollständigen Tage mit Netzmessung.",
-          `Netzladung in den Messdaten: ${fmtKwh(data.grid_charge_kwh)} an ${data.grid_charge_days} ${data.grid_charge_days === 1 ? "Tag" : "Tagen"} (in der Simulation nicht enthalten).`,
+          `Netzladung in den Messdaten: ${fmtKwh(data.grid_charge_kwh)} an ${data.grid_charge_days} ${data.grid_charge_days === 1 ? "Tag" : "Tagen"} (in der Nachrechnung nicht enthalten).`,
         ]
       : ["Noch keine Daten für eine Prüfung."]
   );

@@ -145,8 +145,9 @@ test("Speicher-Erweiterung: Kennzahlen, Validierung, Annahmen und offene Finanzd
   assert.match(kpis, /6\.0 kWh/);
   assert.match(kpis, /9\.5 kWh/);
   assert.doesNotMatch(kpis, /Zusatznutzen/);
+  assert.doesNotMatch(app.document.getElementById("evaluation-view-sizing").textContent, /simul/i);
   assert.match(kpis, /bisher, 54 Tage/);
-  assert.match(kpis, /15 % des simulierten Netzbezugs/);
+  assert.match(kpis, /15 % des nachgerechneten Netzbezugs/);
 
   assert.match(app.document.getElementById("sizing-coverage").textContent, /54 Tage \(01\.09\.2026 bis 24\.10\.2026\).*53 vollständig.*Noch kein volles Jahr/);
   const validation = app.document.getElementById("sizing-validation").textContent;
