@@ -490,3 +490,27 @@ def test_update_config_keeps_optional_fields_empty(client):
     saved = update_config({"nominal_capacity_kwh": 13.8, "module_capacity_kwh": 2.76})
     assert saved["nominal_capacity_kwh"] == 13.8
     assert saved["usable_capacity_kwh"] is None
+
+
+def test_days_with_measured_grid_draw_over_threshold_are_counted():
+    # Gezaehlt wird der GEMESSENE Netzbezug (> 0,5 kWh), unabhaengig davon,
+    # ob ein groesserer Speicher geholfen haette. Tage ohne Netzmessung
+    # zaehlen nicht.
+    def day(name: str, grid_w: float | None) -> list[list]:
+        slots = _day(name, _hours(1, 0, 600))
+        for s in slots:
+            s[bs.I_GRID] = grid_w
+        return slots
+
+    inputs = {
+        "2026-06-15": day("2026-06-15", 600.0),  # 0,6 kWh
+        "2026-06-16": day("2026-06-16", 400.0),  # 0,4 kWh
+        "2026-06-17": day("2026-06-17", 500.0),  # genau 0,5 kWh: nicht mehr als
+        "2026-07-01": day("2026-07-01", None),
+    }
+    result = evaluate(inputs, _calibration(_ideal()), "Europe/Berlin")
+    assert result["total"]["grid_days_over_threshold"] == 1
+    assert [m["grid_days_over_threshold"] for m in result["months"]] == [1, 0]
+    assert result["daily"][0]["measured_grid_kwh"] == pytest.approx(0.6)
+    assert result["daily"][3]["measured_grid_kwh"] is None
+    assert result["grid_day_threshold_kwh"] == 0.5

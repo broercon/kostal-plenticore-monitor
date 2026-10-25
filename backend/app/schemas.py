@@ -574,6 +574,9 @@ class BatterySizingBucketOut(BaseModel):
     days: int
     complete_days: int
     base_grid_kwh: float
+    # Tage, an denen gemessen mehr als grid_day_threshold_kwh aus dem Netz
+    # bezogen wurde - unabhaengig davon, ob ein groesserer Speicher half.
+    grid_days_over_threshold: int
     avoided_kwh: list[float]
     feed_in_reduction_kwh: list[float]
     # Je Variante: Kategorie (unused/partial/full/multi) -> Anzahl Tage
@@ -588,6 +591,7 @@ class BatterySizingDayOut(BaseModel):
     date: str
     complete: bool
     base_grid_kwh: float
+    measured_grid_kwh: float | None = None
     avoided_kwh: list[float]
     usage_ratio: list[float]
     usage: list[str]
@@ -620,4 +624,5 @@ class BatterySizingOut(BaseModel):
     extra_usable_kwh: list[float]
     grid_charge_kwh: float
     grid_charge_days: int
+    grid_day_threshold_kwh: float
     assumptions: list[str]

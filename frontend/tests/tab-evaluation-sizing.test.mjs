@@ -9,6 +9,7 @@ function bucket(overrides = {}) {
     days: 30,
     complete_days: 30,
     base_grid_kwh: 40,
+    grid_days_over_threshold: 3,
     avoided_kwh: [6, 9.5],
     feed_in_reduction_kwh: [6.5, 10.2],
     usage: [
@@ -69,6 +70,7 @@ function sizingPayload(overrides = {}) {
     extra_usable_kwh: [2.4, 4.8],
     grid_charge_kwh: 0.5,
     grid_charge_days: 1,
+    grid_day_threshold_kwh: 0.5,
     assumptions: ["Annahme A", "Annahme B"],
     ...overrides,
   };
@@ -126,11 +128,17 @@ test("Speicher-Erweiterung: Monatstabelle mit +1/+2 und Nutzung, leere Monate ma
   assert.match(october, /Okt 2026/);
   assert.match(october, /24 \(23 vollständig\)/);
   assert.match(october, /6\.0 kWh.*9\.5 kWh/);
-  assert.equal(rows.at(-1).children.length, 6);
+  assert.equal(rows.at(-1).children.length, 7);
+  assert.equal(rows.at(-1).children[2].textContent, "3");
+  assert.equal(rows[0].lastChild.colSpan, 6);
+  assert.match(
+    app.document.getElementById("sizing-grid-days").textContent,
+    /an 3 von 54 Tagen wurden gemessen mehr als 0\.5 kWh aus dem Netz bezogen/
+  );
   assert.doesNotMatch(app.document.getElementById("sizing-month-table").textContent, /Zusatznutzen/);
   assert.match(october, /10 ungenutzt · 15 teilweise · 4 vollständig · 1 mehrfach/);
   // Stufen ohne Tage entfallen: Variante +2 hat keinen "mehrfach"-Tag.
-  assert.match(rows.at(-1).children[5].textContent, /^12 ungenutzt · 16 teilweise · 2 vollständig$/);
+  assert.match(rows.at(-1).children[6].textContent, /^12 ungenutzt · 16 teilweise · 2 vollständig$/);
 
   const usage = [...app.document.querySelectorAll("#sizing-usage-body tr")].map((r) => r.textContent);
   assert.equal(usage.length, 2);

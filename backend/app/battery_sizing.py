@@ -72,6 +72,11 @@ USAGE_CATEGORIES = (USAGE_UNUSED, USAGE_PARTIAL, USAGE_FULL, USAGE_MULTI)
 USAGE_UNUSED_BELOW = 0.05
 USAGE_FULL_FROM = 0.95
 
+# Tage, an denen gemessen mehr als so viel aus dem Netz bezogen wurde, werden
+# je Monat gezählt - als Vergleich zu den Nutzungsstufen, die nur zählen, ob
+# ein größerer Speicher geholfen hätte.
+GRID_DAY_THRESHOLD_KWH = 0.5
+
 # Schwellen für das Erkennen von Netzladung und Abregelung in den Messwerten.
 GRID_CHARGE_MIN_W = 100.0
 CURTAILMENT_SHARE = 0.97
@@ -687,6 +692,16 @@ def extra_usable_kwh(calibration: Calibration, extra_modules: int) -> float:
 # Messwert-Auswertungen (Validierung, Netzladung, Abregelung)
 # ---------------------------------------------------------------------------
 
+def measured_grid_kwh(slots: list[list]) -> float | None:
+    """Gemessener Netzbezug eines Tages (kWh) - so wie er war, inklusive
+    Netzladung. None, wenn an dem Tag kein Netzbezug gemessen wurde (z.B.
+    importierte Altdaten ohne Netzwerte)."""
+    values = [max(0.0, s[I_GRID]) for s in slots if s[I_GRID] is not None]
+    if not values:
+        return None
+    return sum(values) * SLOT_HOURS / 1000
+
+
 def grid_charge_kwh_per_day(day_inputs: dict[str, list[list]]) -> dict[str, float]:
     """In den Speicher geladene Energie, die nicht aus PV-Überschuss stammen
     kann (Netzladung, z.B. Notladung bei sehr niedrigem Ladestand oder
@@ -810,6 +825,7 @@ class _Bucket:
     avoided: list[float] = field(default_factory=lambda: [0.0, 0.0])
     feed_reduction: list[float] = field(default_factory=lambda: [0.0, 0.0])
     base_grid: float = 0.0
+    grid_days_over_threshold: int = 0
     usage: list[dict[str, int]] = field(default_factory=lambda: [_empty_counts(), _empty_counts()])
 
     def to_dict(self) -> dict:
@@ -817,6 +833,7 @@ class _Bucket:
             "days": self.days,
             "complete_days": self.complete_days,
             "base_grid_kwh": round(self.base_grid, 2),
+            "grid_days_over_threshold": self.grid_days_over_threshold,
             "avoided_kwh": [round(v, 2) for v in self.avoided],
             "feed_in_reduction_kwh": [round(v, 2) for v in self.feed_reduction],
             "usage": [dict(u) for u in self.usage],
@@ -852,12 +869,16 @@ def evaluate(
         buckets = [total, months.setdefault(day[:7], _Bucket())]
         if last_day and (last_day - date.fromisoformat(day)).days < 365:
             buckets.append(last_year)
+        measured_grid = measured_grid_kwh(day_inputs[day])
         entry = {"date": day, "complete": complete, "base_grid_kwh": round(base_day.grid_kwh, 3),
+                 "measured_grid_kwh": None if measured_grid is None else round(measured_grid, 3),
                  "avoided_kwh": [], "usage_ratio": [], "usage": []}
         for bucket in buckets:
             bucket.days += 1
             bucket.complete_days += 1 if complete else 0
             bucket.base_grid += base_day.grid_kwh
+            if measured_grid is not None and measured_grid > GRID_DAY_THRESHOLD_KWH:
+                bucket.grid_days_over_threshold += 1
         for i, sim in enumerate(variants):
             v_day = sim.days[day]
             avoided = base_day.grid_kwh - v_day.grid_kwh
@@ -887,6 +908,7 @@ def evaluate(
         "validation": validate(day_inputs, base, grid_charge),
         "grid_charge_kwh": round(sum(grid_charge.values()), 1),
         "grid_charge_days": sum(1 for v in grid_charge.values() if v >= 0.1),
+        "grid_day_threshold_kwh": GRID_DAY_THRESHOLD_KWH,
     }
 
 
@@ -1029,6 +1051,7 @@ def build_battery_sizing() -> dict:
             "total": _Bucket().to_dict(), "last_365_days": _Bucket().to_dict(), "months": [],
             "daily": [], "extra_usable_kwh": [extra_usable_kwh(calibration, n) for n in (1, 2)],
             "validation": None, "grid_charge_kwh": 0.0, "grid_charge_days": 0,
+            "grid_day_threshold_kwh": GRID_DAY_THRESHOLD_KWH,
         }
     evaluation.pop("base", None)
     coverage = _coverage(day_inputs, evaluation["daily"])

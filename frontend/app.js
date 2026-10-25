@@ -2535,6 +2535,7 @@ function renderSizingTables(data, axis, byMonth) {
       ? [
           fmtMonth(month),
           entry.complete_days === entry.days ? `${entry.days}` : `${entry.days} (${entry.complete_days} vollständig)`,
+          String(entry.grid_days_over_threshold),
           fmtKwh(entry.avoided_kwh[0]),
           fmtKwh(entry.avoided_kwh[1]),
           usageText(entry.usage[0]),
@@ -2547,12 +2548,20 @@ function renderSizingTables(data, axis, byMonth) {
       tr.append(td);
     }
     if (!entry) {
-      tr.lastChild.colSpan = 5;
+      tr.lastChild.colSpan = 6;
       tr.classList.add("sizing-row-empty");
     }
     return tr;
   });
   el("sizing-month-body").replaceChildren(...rows);
+
+  // Gemessene Tage mit Netzbezug zum Vergleich: nicht jeder davon haette
+  // sich mit mehr Speicher vermeiden lassen (z.B. wenn schon der jetzige
+  // Speicher vorher nicht voll wurde).
+  el("sizing-grid-days").textContent =
+    `Zum Vergleich: an ${data.total.grid_days_over_threshold} von ${data.total.days} Tagen wurden gemessen mehr als `
+    + `${data.grid_day_threshold_kwh} kWh aus dem Netz bezogen. Nicht an jedem dieser Tage hätte ein größerer `
+    + "Speicher geholfen – etwa wenn schon der jetzige Speicher vorher nicht voll wurde.";
 
   el("sizing-extra-capacity").textContent = data.extra_usable_kwh
     .map((kwh, i) => `${kwh.toFixed(2)} kWh bei +${i + 1}`)

@@ -116,6 +116,11 @@ allein irreführend).
   (Module × Modulkapazität × (1 − Mindestladung) × η_entladen). Unter 5 %
   ungenutzt, 5–95 % teilweise, 95–100 % vollständig, über 100 % mehrfach
   (mehrere Zyklen am Tag).
+- *Tage mit Netzbezug > 0,5 kWh*: zum Vergleich je Monat die Tage, an denen
+  **gemessen** mehr als 0,5 kWh aus dem Netz kamen (inklusive Netzladung).
+  Nicht jeder dieser Tage zählt bei der Nutzungshäufigkeit – etwa wenn schon
+  der jetzige Speicher vorher nicht voll wurde, wären zusätzliche Module
+  ebenfalls leer gewesen.
 - *Netzladung*: Laden, das nicht aus PV-Überschuss stammen kann, bei
   gleichzeitigem Netzbezug.
 - *Abregelung*: nicht messbar. Gezählt wird nur, wie lange die Einspeisung
