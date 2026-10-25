@@ -818,7 +818,6 @@ class _Bucket:
             "complete_days": self.complete_days,
             "base_grid_kwh": round(self.base_grid, 2),
             "avoided_kwh": [round(v, 2) for v in self.avoided],
-            "second_module_kwh": round(self.avoided[1] - self.avoided[0], 2),
             "feed_in_reduction_kwh": [round(v, 2) for v in self.feed_reduction],
             "usage": [dict(u) for u in self.usage],
         }

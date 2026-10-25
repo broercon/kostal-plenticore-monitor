@@ -2403,8 +2403,15 @@ function sizingVariantName(variant) {
   return `+${variant.extra_modules} ${modules} (${variant.nominal_kwh.toFixed(2)} kWh)`;
 }
 
+const SIZING_USAGE_LABELS = { unused: "ungenutzt", partial: "teilweise", full: "vollständig", multi: "mehrfach" };
+
+// Tage je Nutzungsstufe ausgeschrieben ("22 ungenutzt · 2 teilweise"),
+// Stufen ohne Tage entfallen.
 function usageText(usage) {
-  return SIZING_USAGE_KEYS.map((key) => usage?.[key] ?? 0).join(" / ");
+  const parts = SIZING_USAGE_KEYS.filter((key) => usage?.[key]).map(
+    (key) => `${usage[key]} ${SIZING_USAGE_LABELS[key]}`
+  );
+  return parts.length ? parts.join(" · ") : "–";
 }
 
 function fillList(id, items) {
@@ -2437,11 +2444,6 @@ function renderSizingKpis(data) {
         ],
       };
     });
-  tiles.push({
-    title: "Zusatznutzen 2. Modul",
-    value: fmtKwh(bucket.second_module_kwh),
-    detail: ["(+2) − (+1)", period],
-  });
   tiles.push({
     title: "Netzbezug ohne Erweiterung",
     value: fmtKwh(bucket.base_grid_kwh),
@@ -2535,7 +2537,6 @@ function renderSizingTables(data, axis, byMonth) {
           entry.complete_days === entry.days ? `${entry.days}` : `${entry.days} (${entry.complete_days} vollständig)`,
           fmtKwh(entry.avoided_kwh[0]),
           fmtKwh(entry.avoided_kwh[1]),
-          fmtKwh(entry.second_module_kwh),
           usageText(entry.usage[0]),
           usageText(entry.usage[1]),
         ]
@@ -2546,7 +2547,7 @@ function renderSizingTables(data, axis, byMonth) {
       tr.append(td);
     }
     if (!entry) {
-      tr.lastChild.colSpan = 6;
+      tr.lastChild.colSpan = 5;
       tr.classList.add("sizing-row-empty");
     }
     return tr;

@@ -10,7 +10,6 @@ function bucket(overrides = {}) {
     complete_days: 30,
     base_grid_kwh: 40,
     avoided_kwh: [6, 9.5],
-    second_module_kwh: 3.5,
     feed_in_reduction_kwh: [6.5, 10.2],
     usage: [
       { unused: 10, partial: 15, full: 4, multi: 1 },
@@ -63,7 +62,7 @@ function sizingPayload(overrides = {}) {
     total: bucket({ days: 54, complete_days: 53 }),
     last_365_days: bucket({ days: 54, complete_days: 53 }),
     months: [
-      { month: "2026-09", ...bucket({ avoided_kwh: [0, 0], second_module_kwh: 0 }) },
+      { month: "2026-09", ...bucket({ avoided_kwh: [0, 0] }) },
       { month: "2026-10", ...bucket({ days: 24, complete_days: 23 }) },
     ],
     daily: [],
@@ -117,7 +116,7 @@ test("Speicher-Erweiterung: zwei Saeulen je Monat, 12 Monate, Monate ohne Daten 
   assert.equal(footer([{ dataIndex: 0 }]), "keine Messdaten");
 });
 
-test("Speicher-Erweiterung: Monatstabelle mit Zusatznutzen und Nutzung, leere Monate markiert", async () => {
+test("Speicher-Erweiterung: Monatstabelle mit +1/+2 und Nutzung, leere Monate markiert", async () => {
   const app = await openSizing();
   await waitFor(() => app.document.querySelectorAll("#sizing-month-body tr").length === 12);
   const rows = [...app.document.querySelectorAll("#sizing-month-body tr")];
@@ -126,8 +125,12 @@ test("Speicher-Erweiterung: Monatstabelle mit Zusatznutzen und Nutzung, leere Mo
   const october = rows.at(-1).textContent;
   assert.match(october, /Okt 2026/);
   assert.match(october, /24 \(23 vollständig\)/);
-  assert.match(october, /3\.5 kWh/);
-  assert.match(october, /10 \/ 15 \/ 4 \/ 1/);
+  assert.match(october, /6\.0 kWh.*9\.5 kWh/);
+  assert.equal(rows.at(-1).children.length, 6);
+  assert.doesNotMatch(app.document.getElementById("sizing-month-table").textContent, /Zusatznutzen/);
+  assert.match(october, /10 ungenutzt · 15 teilweise · 4 vollständig · 1 mehrfach/);
+  // Stufen ohne Tage entfallen: Variante +2 hat keinen "mehrfach"-Tag.
+  assert.match(rows.at(-1).children[5].textContent, /^12 ungenutzt · 16 teilweise · 2 vollständig$/);
 
   const usage = [...app.document.querySelectorAll("#sizing-usage-body tr")].map((r) => r.textContent);
   assert.equal(usage.length, 2);
@@ -137,11 +140,11 @@ test("Speicher-Erweiterung: Monatstabelle mit Zusatznutzen und Nutzung, leere Mo
 
 test("Speicher-Erweiterung: Kennzahlen, Validierung, Annahmen und offene Finanzdaten", async () => {
   const app = await openSizing();
-  await waitFor(() => app.document.querySelectorAll(".sizing-kpi").length === 4);
+  await waitFor(() => app.document.querySelectorAll(".sizing-kpi").length === 3);
   const kpis = app.document.getElementById("sizing-kpis").textContent;
   assert.match(kpis, /6\.0 kWh/);
   assert.match(kpis, /9\.5 kWh/);
-  assert.match(kpis, /Zusatznutzen 2\. Modul/);
+  assert.doesNotMatch(kpis, /Zusatznutzen/);
   assert.match(kpis, /bisher, 54 Tage/);
   assert.match(kpis, /15 % des simulierten Netzbezugs/);
 
@@ -238,8 +241,8 @@ test("Speicher-Erweiterung: Admin-Formular rechnet Wirkungsgrade in Prozent um",
 
 test("Speicher-Erweiterung: Netzbezug-Kachel nennt den Zeitraum, nicht 'heute'", async () => {
   const app = await openSizing();
-  await waitFor(() => app.document.querySelectorAll(".sizing-kpi").length === 4);
-  const tile = app.document.querySelectorAll(".sizing-kpi")[3].textContent;
+  await waitFor(() => app.document.querySelectorAll(".sizing-kpi").length === 3);
+  const tile = app.document.querySelectorAll(".sizing-kpi")[2].textContent;
   assert.match(tile, /Netzbezug ohne Erweiterung/);
   assert.match(tile, /jetzigen Speicher \(11\.04 kWh\)/);
   assert.match(tile, /bisher, 54 Tage/);

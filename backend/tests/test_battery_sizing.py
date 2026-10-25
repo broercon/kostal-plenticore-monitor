@@ -218,7 +218,6 @@ def test_evaluate_counts_avoided_grid_and_usage_per_day():
     assert day1["usage"] == [USAGE_FULL, USAGE_FULL]
     assert result["daily"][1]["usage"] == [USAGE_UNUSED, USAGE_UNUSED]
     assert result["total"]["avoided_kwh"] == pytest.approx([2.76, 5.52], abs=0.01)
-    assert result["total"]["second_module_kwh"] == pytest.approx(2.76, abs=0.01)
     assert result["months"][0]["month"] == "2026-06"
     assert result["months"][0]["usage"][0] == {"unused": 1, "partial": 0, "full": 1, "multi": 0}
     # Nur zwei Teil-Tage: nicht vollstaendig.

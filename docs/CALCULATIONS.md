@@ -111,7 +111,6 @@ allein irreführend).
 - *Nutzen* = simulierter Netzbezug (jetziger Speicher) − simulierter Netzbezug (Variante),
   je Tag; Monats- und Gesamtwerte sind Summen dieser Tageswerte. Einspeisung
   und Netzbezug werden nie über Monatssummen gegeneinander verrechnet.
-- *Zusatznutzen des zweiten Moduls* = (+2) − (+1).
 - *Nutzungshäufigkeit* je Tag = zusätzlich ans Haus abgegebene Energie
   gegenüber dem jetzigen Speicher ÷ nutzbare Zusatzkapazität nach Verlusten
   (Module × Modulkapazität × (1 − Mindestladung) × η_entladen). Unter 5 %

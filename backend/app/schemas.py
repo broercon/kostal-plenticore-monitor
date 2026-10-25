@@ -575,7 +575,6 @@ class BatterySizingBucketOut(BaseModel):
     complete_days: int
     base_grid_kwh: float
     avoided_kwh: list[float]
-    second_module_kwh: float
     feed_in_reduction_kwh: list[float]
     # Je Variante: Kategorie (unused/partial/full/multi) -> Anzahl Tage
     usage: list[dict[str, int]]

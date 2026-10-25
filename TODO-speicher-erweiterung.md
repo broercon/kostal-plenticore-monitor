@@ -37,7 +37,6 @@ Fehlende Monate werden nicht hochgerechnet, sondern als „ohne Daten“ gezeigt
 
 ## Auswertung
 - [x] Vermiedener Netzbezug je Variante: gesamt und je Monat
-- [x] Zusatznutzen des zweiten Moduls ((+2) − (+1)): gesamt und je Monat
 - [x] Nutzungshäufigkeit je Kalendertag (ungenutzt < 5 %, teilweise, vollständig ≥ 95 %,
       > 100 % gesondert), Anzahl Tage gesamt und je Monat
 - [x] Liste der Annahmen und fehlenden Daten, Datenabdeckung (Tage, Monate ohne Daten)
@@ -52,9 +51,8 @@ Fehlende Monate werden nicht hochgerechnet, sondern als „ohne Daten“ gezeigt
 
 ## Frontend
 - [x] Neue Unteransicht „Speicher-Erweiterung“ im Tab „Auswertungen“
-- [x] Kennzahlen: vermiedener Netzbezug +1 / +2 Module, Zusatznutzen 2. Modul
+- [x] Kennzahlen: vermiedener Netzbezug +1 / +2 Module
 - [x] Monatsdiagramm mit zwei Balken je Monat (+1 / +2), Monate ohne Daten erkennbar
-- [x] Diagramm/Tabelle Zusatznutzen 2. Modul je Monat
 - [x] Tabelle Nutzungshäufigkeit je Monat und Variante
 - [x] Kasten Validierung, Datenabdeckung, Annahmen, Hinweis BYD-Erweiterungsvorgaben
 - [x] Admin-Formular für die Einstellungen
