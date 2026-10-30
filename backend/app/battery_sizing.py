@@ -70,7 +70,7 @@ USAGE_FULL = "full"
 USAGE_MULTI = "multi"
 USAGE_CATEGORIES = (USAGE_UNUSED, USAGE_PARTIAL, USAGE_FULL, USAGE_MULTI)
 USAGE_UNUSED_BELOW = 0.05
-USAGE_FULL_FROM = 0.95
+USAGE_FULL_FROM = 0.85
 
 # Tage, an denen gemessen mehr als so viel aus dem Netz bezogen wurde, werden
 # je Monat gezählt - als Vergleich zu den Nutzungsstufen, die nur zählen, ob

@@ -115,10 +115,32 @@ allein irreführend).
 - *Nutzen* = simulierter Netzbezug (jetziger Speicher) − simulierter Netzbezug (Variante),
   je Tag; Monats- und Gesamtwerte sind Summen dieser Tageswerte. Einspeisung
   und Netzbezug werden nie über Monatssummen gegeneinander verrechnet.
+  Die Einsparung zählt an dem Tag, an dem der Speicher **entlädt**, nicht an
+  dem, an dem er geladen wurde (fortlaufende Simulation, Ladestand über
+  Mitternacht mitgeführt). Ein Tageswert ist deshalb nicht „mindestens die
+  Zusatzkapazität“: Er hängt davon ab, wie viel Energie zum Zeitpunkt des
+  Bedarfs noch in den Zusatzmodulen steckt. Siehe das Beispiel unten.
+- *Beispiel 27.10.2026* (gemessen 9,0 kWh Netzbezug, +1 Modul 0,3 kWh,
+  +2 Module 2,3 kWh): Der gesamte Netzbezug fiel zwischen 0 und 9 Uhr an, vor
+  der PV (Lastspitze 6–8 Uhr mit 2,5–3,9 kW). Der Vortag war schwach (19 kWh
+  Überschuss bei 40 kWh Verbrauch) und hatte die Speicher fast geleert: Mit +1
+  Modul waren um Mitternacht nur ca. 0,4 kWh übrig (gegen 1 Uhr leer), mit +2
+  Modulen ca. 3 kWh (reichten bis in die 6-Uhr-Spitze). Ab 7 Uhr waren alle
+  Varianten leer. Was die Module tagsüber luden, wurde am Abend nicht
+  gebraucht (Ladestand blieb ≥ 53 %) und erscheint erst am 28.10. als
+  Ersparnis; ihre volle Kapazität nutzten sie am 26.10. (4,2 bzw. 6,3 kWh).
+- *Einen Tageswert nachrechnen*: `load_day_inputs` und `calibrate` wie in
+  `build_battery_sizing` aufrufen und dann `simulate` für jede Variante
+  (`variant_params(cal, n)`) mit `record_soc=True`. Für eine stündliche
+  Auflösung jeden 5-Minuten-Schritt als eigenen Schlüssel übergeben
+  (`{"2026-10-27#0001": [slot], …}`): `simulate` führt den Ladestand über die
+  Schlüssel fort und liefert den Netzbezug je Schritt. Im Container ausführen
+  (`docker exec -w /app -e PYTHONPATH=/app kostal-monitor python …`), weil die
+  API einen Login verlangt.
 - *Nutzungshäufigkeit* je Tag = zusätzlich ans Haus abgegebene Energie
   gegenüber dem jetzigen Speicher ÷ nutzbare Zusatzkapazität nach Verlusten
   (Module × Modulkapazität × (1 − Mindestladung) × η_entladen). Unter 5 %
-  ungenutzt, 5–95 % teilweise, 95–100 % vollständig, über 100 % mehrfach
+  ungenutzt, 5–85 % teilweise, 85–100 % vollständig, über 100 % mehrfach
   (mehrere Zyklen am Tag).
 - *Tage mit Netzbezug > 0,5 kWh*: zum Vergleich je Monat die Tage, an denen
   **gemessen** mehr als 0,5 kWh aus dem Netz kamen (inklusive Netzladung).

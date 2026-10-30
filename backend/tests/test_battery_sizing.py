@@ -195,8 +195,8 @@ def test_extra_usable_capacity_respects_minimum_and_losses():
 
 @pytest.mark.parametrize(
     ("ratio", "category"),
-    [(0.0, USAGE_UNUSED), (0.049, USAGE_UNUSED), (0.05, USAGE_PARTIAL), (0.94, USAGE_PARTIAL),
-     (0.95, USAGE_FULL), (1.0, USAGE_FULL), (1.01, USAGE_MULTI), (2.5, USAGE_MULTI)],
+    [(0.0, USAGE_UNUSED), (0.049, USAGE_UNUSED), (0.05, USAGE_PARTIAL), (0.84, USAGE_PARTIAL),
+     (0.85, USAGE_FULL), (0.95, USAGE_FULL), (1.0, USAGE_FULL), (1.01, USAGE_MULTI), (2.5, USAGE_MULTI)],
 )
 def test_usage_category_thresholds(ratio, category):
     assert usage_category(ratio) == category

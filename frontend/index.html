@@ -722,6 +722,11 @@
         Monate mit ▸ lassen sich anklicken: darunter erscheinen die Tage, an
         denen ein größerer Speicher geholfen hätte – mit gemessenem Netzbezug,
         der Einsparung und dem Anteil der genutzten Zusatzkapazität.
+        Die Einsparung zählt an dem Tag, an dem der Speicher entlädt, nicht an
+        dem, an dem er geladen wurde. Tageswerte verschieben sich daher
+        zwischen Nachbartagen (z. B. +1 Modul weniger als +2 Module, wenn nur
+        der größere Speicher noch Energie vom Vortag hatte) – aussagekräftig
+        sind die Monats- und Jahressummen.
       </p>
 
       <h3 class="sizing-subhead">Nutzungshäufigkeit der Zusatzkapazität je Tag</h3>
@@ -729,7 +734,8 @@
         Zusätzlich entnommene Energie gegenüber dem jetzigen Speicher, geteilt
         durch die nutzbare Zusatzkapazität nach Verlusten
         (<span id="sizing-extra-capacity">–</span>). Ungenutzt: unter 5 %,
-        teilweise: 5–95 %, vollständig: 95–100 %, mehrfach: über 100 % (mehrere
+        teilweise: 5–85 %, vollständig: 85–100 % (ab 85 % gilt die
+        Zusatzkapazität als voll ausgelastet), mehrfach: über 100 % (mehrere
         Zyklen am Tag).
       </p>
       <div class="sizing-table-wrapper">
