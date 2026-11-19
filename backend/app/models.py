@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -215,6 +215,54 @@ class HourlyPvCache(Base):
     # energy_forecast.load_hourly_pv_history.
     avg_power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BatterySizingDay(Base):
+    """Cache der verdichteten Tagesreihen (5-Minuten-Schritte) fuer die
+    Speicher-Erweiterungs-Auswertung (siehe battery_sizing.load_day_inputs).
+    Wie DailyEnergyCache nur fuer abgeschlossene Tage; ein nachtraeglicher
+    Logdaten-Import verwirft die betroffenen Tage
+    (battery_sizing.invalidate_battery_sizing_cache).
+
+    payload ist eine JSON-Liste [[epoch, pv, home, grid, feed, bat, soc], ...]
+    - als Text statt als eigene Zeilen je Schritt, weil die Reihen immer
+    tageweise vollstaendig gelesen werden (ca. 288 Schritte je Tag). Eine
+    leere Liste heisst "geprueft, keine Messwerte". version erlaubt, das
+    Format zu aendern, ohne alte Eintraege von Hand loeschen zu muessen."""
+
+    __tablename__ = "battery_sizing_days"
+
+    date: Mapped[str] = mapped_column(String(10), primary_key=True)  # "YYYY-MM-DD"
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BatterySizingSettings(Base):
+    """Im Admin-Bereich editierbare Rahmendaten der Speicher-Erweiterungs-
+    Auswertung (siehe battery_sizing_config.py). Bewusst eine einzelne Zeile
+    (id=1). Leere (NULL-)Werte bedeuten "aus den Messdaten ableiten" bzw.
+    bei den Preisen "keine finanzielle Bewertung"."""
+
+    __tablename__ = "battery_sizing_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nominal_capacity_kwh: Mapped[float] = mapped_column(Float, nullable=False)
+    module_capacity_kwh: Mapped[float] = mapped_column(Float, nullable=False)
+    usable_capacity_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_soc_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_charge_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_discharge_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    inverter_battery_limit_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eta_charge: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eta_discharge: Mapped[float | None] = mapped_column(Float, nullable=True)
+    standby_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feed_in_limit_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_plus_one_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_plus_two_eur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_ct_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feed_in_ct_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class WeatherHourly(Base):

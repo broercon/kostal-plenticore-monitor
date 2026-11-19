@@ -47,6 +47,12 @@ from .forecast_config import (
     get_config as get_forecast_config,
     update_config as update_forecast_config,
 )
+from .battery_sizing import build_battery_sizing, clear_memo as clear_battery_sizing_memo
+from .battery_sizing_config import (
+    InvalidBatterySizingConfig,
+    get_config as get_battery_sizing_config,
+    update_config as update_battery_sizing_config,
+)
 from .energy_forecast import forecast_service, refresh_forecast_for_new_day
 from .forecast_evaluation import get_forecast_accuracy, get_yesterday_hourly_comparison
 from .daily_summary import (
@@ -66,6 +72,9 @@ from .schemas import (
     AdminResetPasswordIn,
     AdminResetPasswordOut,
     AdminUserOut,
+    BatterySizingConfigIn,
+    BatterySizingConfigOut,
+    BatterySizingOut,
     BatterySocHistoryOut,
     BatterySummaryOut,
     ChangePasswordIn,
@@ -361,6 +370,27 @@ def put_forecast_config_endpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     forecast_service.invalidate()
     return ForecastConfigOut.model_validate(result)
+
+
+@app.get("/api/admin/battery-sizing/config", response_model=BatterySizingConfigOut)
+def get_battery_sizing_config_endpoint(
+    _admin: User = Depends(auth.require_admin),
+) -> BatterySizingConfigOut:
+    """Rahmendaten der Speicher-Erweiterungs-Auswertung. Leere optionale
+    Felder werden aus den Messdaten abgeleitet."""
+    return BatterySizingConfigOut.model_validate(get_battery_sizing_config())
+
+
+@app.put("/api/admin/battery-sizing/config", response_model=BatterySizingConfigOut)
+def put_battery_sizing_config_endpoint(
+    payload: BatterySizingConfigIn, _admin: User = Depends(auth.require_admin)
+) -> BatterySizingConfigOut:
+    try:
+        result = update_battery_sizing_config(payload.model_dump())
+    except InvalidBatterySizingConfig as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    clear_battery_sizing_memo()
+    return BatterySizingConfigOut.model_validate(result)
 
 
 @app.get("/api/forecast", response_model=EnergyForecastOut)
@@ -1009,6 +1039,19 @@ def get_battery_soc_history(
 
     result = build_battery_soc_day_series(rows, bucket_minutes, settings.timezone_name)
     return BatterySocHistoryOut(**result)
+
+
+@app.get("/api/readings/battery-sizing", response_model=BatterySizingOut)
+async def get_battery_sizing(
+    _user: User = Depends(auth.get_current_user),
+) -> BatterySizingOut:
+    """Speicher-Erweiterung: simulierter zusaetzlich vermiedener Netzbezug
+    bei +1 / +2 Speichermodulen, je Monat und gesamt, mit Kalibrierung,
+    Validierung und Nutzungshaeufigkeit (siehe battery_sizing.py). Nur
+    abgeschlossene Tage; hausweit, daher kein device_id-Parameter. Der
+    allererste Aufruf verdichtet die gesamte Historie und kann einige
+    Sekunden dauern - deshalb ausserhalb der Event-Loop."""
+    return BatterySizingOut.model_validate(await asyncio.to_thread(build_battery_sizing))
 
 
 # Statisches Frontend (index.html, app.js, style.css) unter "/" ausliefern.
