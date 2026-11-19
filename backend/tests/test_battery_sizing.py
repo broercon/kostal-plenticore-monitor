@@ -146,6 +146,17 @@ def test_efficiencies_and_conversion_reduce_usable_energy():
     assert result.days["2026-06-15"].grid_kwh == pytest.approx(0.5)
 
 
+def test_positive_charge_offset_never_feeds_in_more_than_surplus():
+    # Speicher fast voll, Versatz +200 W: nur 1 Wh passt noch hinein, der
+    # Versatz allein waere schon 16,7 Wh - belegt ist dann nichts, und die
+    # Einspeisung darf den Ueberschuss nicht uebersteigen.
+    params = _ideal(capacity_kwh=1.0, charge_offset_w=200)
+    inputs = {"2026-06-15": _day("2026-06-15", [(1100, 1000)])}
+    day = simulate(inputs, params, start_energy_kwh=0.999).days["2026-06-15"]
+    assert day.charge_kwh == pytest.approx(0.0)
+    assert day.feed_kwh == pytest.approx(100 * SLOT / 3600 / 1000)
+
+
 def test_gaps_are_skipped_without_changing_charge():
     inputs = {"2026-06-15": _day("2026-06-15", [(None, 500)] * 24 + _hours(1, 0, 1000))}
     result = simulate(inputs, _ideal(standby_w=50), start_energy_kwh=5.0)
@@ -443,6 +454,22 @@ def test_invalidation_drops_cached_days(client, frozen_sizing_now):
     finally:
         session.close()
     assert remaining == ["2026-06-15", "2026-06-17"]
+
+
+def test_result_built_during_invalidation_is_not_memoized(client, frozen_sizing_now, monkeypatch):
+    # Ein Import, der waehrend einer laufenden Auswertung Tage verwirft, darf
+    # nicht von deren (veraltetem) Ergebnis ueberdeckt werden.
+    _insert_days(date(2026, 6, 15), 3)
+    original = bs.load_day_inputs
+
+    def load_and_invalidate(*args):
+        result = original(*args)
+        bs.invalidate_battery_sizing_cache(date(2026, 6, 16), date(2026, 6, 16))
+        return result
+
+    monkeypatch.setattr(bs, "load_day_inputs", load_and_invalidate)
+    bs.build_battery_sizing()
+    assert bs._memo == {}
 
 
 def test_endpoint_without_data(client, frozen_sizing_now):

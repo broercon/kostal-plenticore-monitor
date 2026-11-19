@@ -181,6 +181,13 @@ def _load_slot_rows(start: date, end_exclusive: date) -> dict[str, list[list]]:
 
 _memo_lock = threading.Lock()
 _memo: dict[str, object] = {}
+# Erhöht bei jeder Invalidierung: Eine Auswertung, die währenddessen lief,
+# hat womöglich schon verworfene Tage gelesen und darf nicht gemerkt werden.
+_memo_generation = 0
+# Nur eine Auswertung gleichzeitig: zwei parallele Erstaufrufe würden sonst
+# dieselben Tage verdichten und beim Einfügen in battery_sizing_days am
+# Primärschlüssel kollidieren.
+_build_lock = threading.Lock()
 
 
 def invalidate_battery_sizing_cache(start_date: date, end_date: date) -> None:
@@ -205,8 +212,10 @@ def invalidate_battery_sizing_cache(start_date: date, end_date: date) -> None:
 
 
 def clear_memo() -> None:
+    global _memo_generation
     with _memo_lock:
         _memo.clear()
+        _memo_generation += 1
 
 
 def _earliest_reading_date() -> date | None:
@@ -384,7 +393,10 @@ def simulate(
                 # Davon belegter Überschuss (AC); der Rest wird eingespeist.
                 used_wh = 0.0
                 if dc_wh > 0:
-                    used_wh = min(net_wh, (dc_wh - params.charge_offset_w * SLOT_HOURS) / params.charge_factor)
+                    # Bei positivem Versatz und fast vollem Speicher kann dc_wh
+                    # unter dem Versatz liegen - dann ist kein Überschuss belegt,
+                    # sonst würde mehr eingespeist als überhaupt übrig war.
+                    used_wh = min(net_wh, max(0.0, (dc_wh - params.charge_offset_w * SLOT_HOURS) / params.charge_factor))
                 totals.charge_kwh += used_wh / 1000
                 totals.feed_kwh += (net_wh - used_wh) / 1000
             elif net_wh < 0:
@@ -1049,6 +1061,15 @@ def build_battery_sizing() -> dict:
         if key in _memo:
             return _memo[key]  # type: ignore[return-value]
 
+    with _build_lock:
+        with _memo_lock:
+            if key in _memo:
+                return _memo[key]  # type: ignore[return-value]
+            generation = _memo_generation
+        return _build(config, key, last_closed, generation)
+
+
+def _build(config: dict, key: str, last_closed: date, generation: int) -> dict:
     earliest = _earliest_reading_date()
     day_inputs = load_day_inputs(earliest, last_closed) if earliest else {}
     day_inputs = {d: s for d, s in day_inputs.items() if s}
@@ -1096,6 +1117,7 @@ def build_battery_sizing() -> dict:
     }
     result["assumptions"] = _assumptions(calibration, curtailment, evaluation, coverage)
     with _memo_lock:
-        _memo.clear()
-        _memo[key] = result
+        if generation == _memo_generation:
+            _memo.clear()
+            _memo[key] = result
     return result
