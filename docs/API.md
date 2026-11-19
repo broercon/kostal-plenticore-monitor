@@ -94,6 +94,14 @@ curl -b cookies.txt http://localhost:8000/api/devices
   - PV-Ertrag (kWh) je Kalendertag und Wechselrichter (reine PV-Erzeugung,
     gleiche Formel wie die PV-Ertrag-Leiste). Jeder Tag des Zeitraums ist
     enthalten, Geräte ohne Messwerte stehen als `null` darin.
+- `GET /api/readings/battery-sizing`
+  - Speicher-Erweiterung: simulierter zusätzlich vermiedener Netzbezug bei
+    +1 / +2 Speichermodulen – gesamt, letzte 365 Tage, je Monat und je Tag,
+    dazu Kalibrierung, Validierung, Nutzungshäufigkeit, Datenabdeckung und
+    die Liste der Annahmen. Hausweit, keine Parameter; nur abgeschlossene
+    Tage. Der allererste Aufruf verdichtet die gesamte Historie und kann
+    einige Sekunden dauern. Details unter
+    [Dashboard und Berechnungen](CALCULATIONS.md#speicher-erweiterung-lohnt-sich-ein-größerer-speicher).
 - `GET /api/readings/hourly-per-device`
   - `metric`: `feed_in`, `pv`, `home` oder `grid_draw`
   - `days`: Standard `1`, Bereich `1` bis `30`
@@ -119,6 +127,11 @@ Alle folgenden Endpunkte benötigen die Rolle `admin`:
   werden.
 - `PUT /api/admin/forecast/config` – Aktivierung und Standortkoordinaten in
   der Datenbank speichern.
+- `GET /api/admin/battery-sizing/config` – Rahmendaten der
+  Speicher-Erweiterung (Nenn-/Modulkapazität, optionale Kenngrößen, Preise).
+- `PUT /api/admin/battery-sizing/config` – Rahmendaten speichern. Leere
+  optionale Felder werden aus den Messdaten abgeleitet; Wirkungsgrade als
+  Anteil (`0.95`), nicht in Prozent.
 - `POST /api/admin/import-history` – Historienabgleich im Hintergrund
   starten; funktioniert auch bei `AUTO_IMPORT_HISTORY=false`.
 - `GET /api/admin/import-history/status` – Laufstatus und Ergebnis je Gerät.
