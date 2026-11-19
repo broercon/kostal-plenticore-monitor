@@ -86,8 +86,8 @@ Vorrang, sonst aus den Messdaten, sonst eine ausgewiesene Annahme):
 - *Wandlungsstufe*: Überschuss und Bedarf entstehen AC-seitig, die Batterie
   misst DC-seitig. Je Richtung wird eine Gerade `Batterie = Faktor · AC +
   Versatz` angepasst; sie enthält Wandlungsverluste und den Eigenverbrauch
-  des Wechselrichters (an der Testanlage z. B. Entladen 1,026 × Bedarf + 73 W).
-  Ohne diese Stufe lag der simulierte Ladestand im Mittel 3 %-Punkte zu hoch.
+  des Wechselrichters (typisch z. B. Entladen 1,03 × Bedarf + 70 W). Ohne
+  diese Stufe liegt der nachgerechnete Ladestand systematisch zu hoch.
 - *Standby*: aus der Regression, sonst 10 W (Annahme).
 
 **Simulation.** Drei Speicher mit identischer Logik werden fortlaufend über
@@ -120,20 +120,19 @@ allein irreführend).
   Mitternacht mitgeführt). Ein Tageswert ist deshalb nicht „mindestens die
   Zusatzkapazität“: Er hängt davon ab, wie viel Energie zum Zeitpunkt des
   Bedarfs noch in den Zusatzmodulen steckt. Siehe das Beispiel unten.
-- *Beispiel 27.10.2026* (gemessen 9,0 kWh Netzbezug, +1 Modul 0,3 kWh,
-  +2 Module 2,3 kWh): Der gesamte Netzbezug fiel zwischen 0 und 9 Uhr an, vor
-  der PV (Lastspitze 6–8 Uhr mit 2,5–3,9 kW). Der Vortag war schwach (19 kWh
-  Überschuss bei 40 kWh Verbrauch) und hatte die Speicher fast geleert: Mit +1
-  Modul waren um Mitternacht nur ca. 0,4 kWh übrig (gegen 1 Uhr leer), mit +2
-  Modulen ca. 3 kWh (reichten bis in die 6-Uhr-Spitze). Ab 7 Uhr waren alle
-  Varianten leer. Was die Module tagsüber luden, wurde am Abend nicht
-  gebraucht (Ladestand blieb ≥ 53 %) und erscheint erst am 28.10. als
-  Ersparnis; ihre volle Kapazität nutzten sie am 26.10. (4,2 bzw. 6,3 kWh).
+- *Beispiel* (fiktive Werte: Tag B mit 8 kWh Netzbezug, +1 Modul vermeidet
+  0,5 kWh, +2 Module 2,5 kWh): Der gesamte Netzbezug fällt nachts und früh
+  morgens an, vor der PV. Der Vortag A war schwach und hat die Speicher fast
+  geleert: Mit +1 Modul ist um Mitternacht nur noch wenig Energie übrig (kurz
+  danach leer), mit +2 Modulen reicht sie bis in die Morgenspitze. Danach
+  sind alle Varianten leer. Was die Module an Tag B tagsüber laden, wird am
+  Abend nicht gebraucht und erscheint erst an Tag C als Ersparnis; ihre volle
+  Kapazität haben sie bereits an Tag A genutzt.
 - *Einen Tageswert nachrechnen*: `load_day_inputs` und `calibrate` wie in
   `build_battery_sizing` aufrufen und dann `simulate` für jede Variante
   (`variant_params(cal, n)`) mit `record_soc=True`. Für eine stündliche
   Auflösung jeden 5-Minuten-Schritt als eigenen Schlüssel übergeben
-  (`{"2026-10-27#0001": [slot], …}`): `simulate` führt den Ladestand über die
+  (`{"2026-01-15#0001": [slot], …}`): `simulate` führt den Ladestand über die
   Schlüssel fort und liefert den Netzbezug je Schritt. Im Container ausführen
   (`docker exec -w /app -e PYTHONPATH=/app kostal-monitor python …`), weil die
   API einen Login verlangt.
