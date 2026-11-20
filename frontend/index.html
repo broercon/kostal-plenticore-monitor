@@ -247,6 +247,7 @@
         <span class="view-tab-icon" aria-hidden="true">&#9679;</span>Auswertungen
       </button>
       <div class="view-tab-menu">
+        <button type="button" data-subview="balance">Energiebilanz</button>
         <button type="button" data-subview="pvdaily">Erzeugung je Tag</button>
         <button type="button" data-subview="dailytotals">Tagesverbrauch</button>
         <button type="button" data-subview="hourly">Wechselrichter-Vergleich</button>
@@ -574,6 +575,69 @@
   </div>
 
   <div class="tab-panel hidden" id="tab-panel-evaluation" data-tab-panel="evaluation">
+    <section class="chart-section hidden" id="evaluation-view-balance">
+      <div class="daycompare-header">
+        <h2>Energiebilanz</h2>
+        <p class="muted">
+          Wie viel Energie erzeugt wurde, wie viel das Haus verbraucht hat und
+          woher dieser Strom kam (direkt von der PV-Anlage, aus dem Speicher
+          oder aus dem Netz) – je Jahr oder Monat. Gilt immer für die ganze
+          Anlage.
+        </p>
+      </div>
+      <div class="chart-toolbar daycompare-toolbar balance-toolbar">
+        <div class="range-buttons" id="balance-granularity-buttons">
+          <button type="button" data-granularity="year" class="active">Jahr</button>
+          <button type="button" data-granularity="month">Monat</button>
+        </div>
+        <div class="balance-period-nav">
+          <button type="button" id="balance-prev" aria-label="Vorheriger Zeitraum">&#8249;</button>
+          <select id="balance-period" aria-label="Zeitraum"></select>
+          <button type="button" id="balance-next" aria-label="Nächster Zeitraum">&#8250;</button>
+        </div>
+      </div>
+      <p class="muted balance-coverage" id="balance-coverage">–</p>
+
+      <div class="balance-cards" id="balance-cards">
+        <article class="balance-card" id="balance-consumption"></article>
+        <article class="balance-card" id="balance-generation"></article>
+      </div>
+      <div class="sizing-kpis balance-kpis" id="balance-kpis"></div>
+
+      <h3 class="sizing-subhead" id="balance-compare-title">Vergleich</h3>
+      <div class="sizing-table-wrapper">
+        <table class="sizing-table balance-table" id="balance-table">
+          <thead>
+            <tr>
+              <th>Zeitraum</th>
+              <th>Verbrauch</th>
+              <th class="balance-mix-col">Herkunft</th>
+              <th>aus PV</th>
+              <th>aus Speicher</th>
+              <th>aus Netz</th>
+              <th>Autarkie</th>
+              <th class="sizing-group-start">Erzeugt</th>
+              <th>Eingespeist</th>
+            </tr>
+          </thead>
+          <tbody id="balance-body"></tbody>
+        </table>
+      </div>
+      <p class="chart-hint muted">
+        Eine Zeile anklicken, um sie oben im Detail zu sehen. Die Balken
+        unter „Herkunft“ sind auf den größten Verbrauch der Tabelle skaliert,
+        damit sich die Zeiträume direkt vergleichen lassen. Prozentangaben
+        zum Vorjahr erscheinen nur, wenn beide Zeiträume vollständig erfasst
+        sind.
+      </p>
+      <p class="chart-hint muted">
+        „Erzeugt“ ist die Energie der PV-Module. Sie verteilt sich auf den
+        direkten Hausverbrauch, das Laden des Speichers und die Einspeisung,
+        der Rest sind Wandlungsverluste. Der Autarkiegrad zählt wie in der
+        Autarkie-Ansicht nur Tage mit Netzmessung.
+      </p>
+    </section>
+
     <section class="chart-section" id="evaluation-view-pvdaily">
       <div class="daycompare-header">
         <h2>Erzeugung je Tag</h2>

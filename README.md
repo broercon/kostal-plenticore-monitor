@@ -21,6 +21,8 @@ gemeinsam in einem Docker-Container, die Datenbank daneben.
 - Autarkiegrad (Anteil des Hausverbrauchs aus PV/Speicher statt Netz) je
   Kalendermonat sowie als Tageswert in der Übersicht
 - Vergleich mehrerer Wechselrichter und Kalendertage
+- Energiebilanz je Jahr oder Monat: Erzeugung, Hausverbrauch nach Quelle
+  (PV, Speicher, Netz), Autarkie und Eigenverbrauch, mit Vergleichstabelle
 - Speicher-Erweiterung: Simulation, wie viel Netzbezug ein um ein oder zwei
   Module größerer Speicher vermieden hätte – je Monat, aus den eigenen
   Messdaten kalibriert und laufend fortgeschrieben

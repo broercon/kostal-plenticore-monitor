@@ -249,6 +249,29 @@ class FeedInPeriod(BaseModel):
     kwh: float | None = None  # None = fuer keinen Tag des Zeitraums Daten vorhanden
 
 
+class EnergyBalanceMonth(BaseModel):
+    month: str  # "YYYY-MM"
+    days: int  # Tage mit mindestens einem Messwert
+    days_in_month: int
+    pv_kwh: float | None = None  # Erzeugung (reine PV)
+    feed_in_kwh: float | None = None
+    battery_charge_kwh: float | None = None
+    battery_discharge_kwh: float | None = None
+    # Hausverbrauch nach Quelle (wie Tagesverbrauch-Diagramm)
+    home_pv_kwh: float | None = None
+    home_battery_kwh: float | None = None
+    home_grid_kwh: float | None = None
+    # Grundlage fuer den Autarkiegrad (wie Autarkie-Ansicht, nur Tage mit
+    # echter Netzmessung)
+    autarky_home_kwh: float | None = None
+    autarky_grid_kwh: float | None = None
+
+
+class EnergyBalanceOut(BaseModel):
+    today: str  # "YYYY-MM-DD", lokales Datum der Anlage
+    months: list[EnergyBalanceMonth]
+
+
 class FeedInSummaryOut(BaseModel):
     periods: list[FeedInPeriod]
 

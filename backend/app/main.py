@@ -59,6 +59,7 @@ from .daily_summary import (
     build_autarky_yearly_comparison,
     build_daily_home_breakdown,
     build_daily_summaries,
+    build_energy_balance,
     build_battery_energy_summary,
     build_feed_in_summary,
     build_pv_yield_summary,
@@ -87,6 +88,7 @@ from .schemas import (
     DailyTotalsOut,
     DayProfileOut,
     DeviceOut,
+    EnergyBalanceOut,
     FeedInPeriod,
     FeedInSummaryOut,
     ForecastConfigIn,
@@ -959,6 +961,15 @@ def get_yearly_comparison(
     return YearlyComparisonOut(
         **build_yearly_comparison(granularity=granularity, years=years, per_device=per_device)
     )
+
+
+@app.get("/api/readings/energy-balance", response_model=EnergyBalanceOut)
+def get_energy_balance(_user: User = Depends(auth.get_current_user)) -> EnergyBalanceOut:
+    """Energiebilanz je Kalendermonat (Erzeugung, Einspeisung, Speicher,
+    Hausverbrauch nach Quelle) ueber die gesamte Historie - fuer
+    "Auswertungen > Energiebilanz". Hausweit, daher kein device_id.
+    Berechnung in daily_summary.build_energy_balance()."""
+    return EnergyBalanceOut(**build_energy_balance())
 
 
 @app.get("/api/readings/daily-pv-per-device", response_model=DailyPvPerDeviceOut)

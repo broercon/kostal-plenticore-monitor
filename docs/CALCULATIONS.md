@@ -47,8 +47,39 @@ ausblenden, z.B. um gezielt nur zwei Tage gegenüberzustellen.
 ## Auswertungen
 
 Der Reiter "Auswertungen" bündelt die Säulendiagramme. Über das Menü am
-Reiter wählt man die Ansicht: "Erzeugung je Tag", "Tagesverbrauch",
-"Wechselrichter-Vergleich" oder "Speicher-Erweiterung".
+Reiter wählt man die Ansicht: "Energiebilanz", "Erzeugung je Tag",
+"Tagesverbrauch", "Wechselrichter-Vergleich" oder "Speicher-Erweiterung".
+
+## Energiebilanz: Erzeugung und Verbrauch je Jahr oder Monat
+
+Zeigt für ein gewähltes Jahr oder einen Monat zwei Karten mit Summe und
+Anteilsbalken:
+
+- **Hausverbrauch** nach Quelle: direkt von der PV-Anlage, aus dem Speicher,
+  aus dem Netz. Gleiche Aufteilung wie im Tagesverbrauch-Diagramm (siehe
+  [Hausverbrauch nach Quelle](#hausverbrauch-nach-quelle)).
+- **Erzeugt** (reiner PV-Ertrag) und wohin die Energie ging: direkt im Haus
+  verbraucht, in den Speicher geladen, eingespeist. Der Rest sind
+  Wandlungsverluste (siehe
+  [Warum die Zeitraum-Übersichten nicht exakt aufgehen](#warum-die-zeitraum-übersichten-nicht-exakt-aufgehen)).
+
+Darunter stehen Autarkiegrad, Eigenverbrauchsquote (Anteil der Erzeugung, der
+nicht eingespeist wurde) und die Speicherbilanz. Die Vergleichstabelle listet
+alle Jahre bzw. alle Monate des gewählten Jahres und zusätzlich denselben
+Monat in anderen Jahren. Die Herkunftsbalken in der Tabelle sind auf den
+größten Verbrauch skaliert, damit sich die Zeiträume vergleichen lassen.
+
+Der Autarkiegrad wird wie in der [Autarkie-Ansicht](#autarkiegrad) nur aus
+Tagen mit Netzmessung berechnet. Die Veränderung zum Vorjahr bzw. zum selben
+Monat im Vorjahr erscheint nur, wenn beide Zeiträume vollständig erfasst und
+abgeschlossen sind. Angebrochene Zeiträume (laufender Monat, Beginn der
+Aufzeichnung) sind als „läuft“ bzw. „lückenhaft“ markiert und werden nicht
+hochgerechnet.
+
+Alle Werte stammen aus den vorhandenen Tages-Caches (siehe
+[Energie-Zeitraum-Cache](#performance-energie-zeitraum-cache)). Beim ersten
+Aufruf werden die noch nicht gecachten Tage der gesamten Historie einmalig
+nachgerechnet, das kann einige Sekunden dauern.
 
 ## Speicher-Erweiterung: lohnt sich ein größerer Speicher?
 
