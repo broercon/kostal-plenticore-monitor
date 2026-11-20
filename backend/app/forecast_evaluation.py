@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, exists, select
 # Das "INSERT ... ON CONFLICT DO UPDATE" in save_forecast_predictions() ist
 # kein Standard-SQL und kommt deshalb aus dem Dialekt-Modul statt aus
 # sqlalchemy selbst.
@@ -14,7 +14,8 @@ from sqlalchemy.dialects.postgresql import insert
 from .config import settings
 from .daily_report_config import InvalidReportTime, parse_report_time
 from .database import SessionLocal
-from .models import ForecastPrediction
+from .models import ForecastModelRun, ForecastPrediction, ForecastWeatherSnapshot
+from .weather_cache import _round_coord
 
 
 def _utc(value: datetime) -> datetime:
@@ -52,11 +53,14 @@ def save_forecast_predictions(
     predictions: dict[str, dict[datetime, tuple[float, float, float]]],
     methods: dict[str, str],
     generated_at: datetime,
-) -> None:
+) -> int:
     """Speichert die letzte Vorhersage je noch nicht begonnener UND noch
     nicht eingefrorener Stunde (siehe _freeze_cutoff_utc). Bereits
     eingefrorene Zielstunden werden bewusst NICHT mehr angefasst, auch wenn
-    sie noch in der Zukunft liegen."""
+    sie noch in der Zukunft liegen.
+
+    Rueckgabe: Anzahl geschriebener Zeilen - 0 heisst, dieser Lauf hat
+    keine gespeicherte Prognose beeinflusst (siehe save_model_runs)."""
     generated_at = _utc(generated_at)
     candidates: list[tuple[str, datetime, tuple[float, float, float]]] = []
     for device_id, device_predictions in predictions.items():
@@ -66,7 +70,7 @@ def save_forecast_predictions(
                 continue
             candidates.append((device_id, target, values))
     if not candidates:
-        return
+        return 0
 
     session = SessionLocal()
     try:
@@ -97,7 +101,7 @@ def save_forecast_predictions(
             if (device_id, target) not in already_frozen
         ]
         if not rows:
-            return
+            return 0
 
         statement = insert(ForecastPrediction).values(rows)
         statement = statement.on_conflict_do_update(
@@ -111,6 +115,165 @@ def save_forecast_predictions(
             },
         )
         session.execute(statement)
+        session.commit()
+        return len(rows)
+    finally:
+        session.close()
+
+
+_WEATHER_FIELDS = (
+    "shortwave_w_m2",
+    "direct_w_m2",
+    "diffuse_w_m2",
+    "temperature_c",
+    "cloud_cover_percent",
+    "wind_speed_ms",
+    "humidity_percent",
+    "snow_depth_m",
+    "pressure_hpa",
+)
+
+
+def save_forecast_weather(
+    latitude: float,
+    longitude: float,
+    points: list,
+    generated_at: datetime,
+) -> None:
+    """Speichert die Wetter-Vorhersage (forecast_weather.WeatherPoint), aus
+    der dieser Lauf seine Prognose berechnet hat - nach genau denselben
+    Regeln wie save_forecast_predictions(): nur Stunden, die noch nicht
+    begonnen haben, und eingefrorene Stunden bleiben unangetastet. So steht
+    neben jeder eingefrorenen Prognose das Wetter, aus dem sie entstand.
+
+    point.timestamp ist das ENDE des Stundenintervalls (Open-Meteo), die
+    Prognose-Zielstunde also point.timestamp - 1 Stunde."""
+    generated_at = _utc(generated_at)
+    lat = _round_coord(latitude)
+    lon = _round_coord(longitude)
+    candidates = [
+        point
+        for point in points
+        if _utc(point.timestamp) - timedelta(hours=1) > generated_at
+    ]
+    if not candidates:
+        return
+
+    session = SessionLocal()
+    try:
+        timestamps = [_utc(point.timestamp) for point in candidates]
+        already_frozen: set[datetime] = set()
+        for row in session.execute(
+            select(
+                ForecastWeatherSnapshot.timestamp, ForecastWeatherSnapshot.generated_at
+            ).where(
+                ForecastWeatherSnapshot.latitude == lat,
+                ForecastWeatherSnapshot.longitude == lon,
+                ForecastWeatherSnapshot.timestamp.in_(timestamps),
+            )
+        ):
+            timestamp = _utc(row.timestamp)
+            cutoff = _freeze_cutoff_utc(timestamp - timedelta(hours=1))
+            if _utc(row.generated_at) >= cutoff:
+                already_frozen.add(timestamp)
+
+        rows = [
+            {
+                "latitude": lat,
+                "longitude": lon,
+                "timestamp": _utc(point.timestamp),
+                **{field: getattr(point, field) for field in _WEATHER_FIELDS},
+                "first_generated_at": generated_at,
+                "generated_at": generated_at,
+            }
+            for point in candidates
+            if _utc(point.timestamp) not in already_frozen
+        ]
+        if not rows:
+            return
+
+        statement = insert(ForecastWeatherSnapshot).values(rows)
+        statement = statement.on_conflict_do_update(
+            index_elements=["latitude", "longitude", "timestamp"],
+            set_={
+                **{field: statement.excluded[field] for field in _WEATHER_FIELDS},
+                "generated_at": statement.excluded.generated_at,
+            },
+        )
+        session.execute(statement)
+        session.commit()
+    finally:
+        session.close()
+
+
+def load_forecast_weather_history(
+    latitude: float, longitude: float, since: datetime, until: datetime
+) -> list:
+    """Gespeicherte Wetter-Vorhersagen (siehe save_forecast_weather) fuer
+    bereits vergangene Stunden - Trainingsgrundlage fuer
+    energy_forecast.choose_training(). Jede Zeile ist der letzte Stand vor
+    Beginn ihrer Stunde, also genau die Vorhersage, mit der die Prognose
+    damals gerechnet hat."""
+    from .forecast_weather import WeatherPoint
+
+    session = SessionLocal()
+    try:
+        rows = session.scalars(
+            select(ForecastWeatherSnapshot)
+            .where(
+                ForecastWeatherSnapshot.latitude == _round_coord(latitude),
+                ForecastWeatherSnapshot.longitude == _round_coord(longitude),
+                ForecastWeatherSnapshot.timestamp > _utc(since),
+                ForecastWeatherSnapshot.timestamp <= _utc(until),
+            )
+            .order_by(ForecastWeatherSnapshot.timestamp)
+        ).all()
+    finally:
+        session.close()
+    return [
+        WeatherPoint(
+            timestamp=_utc(row.timestamp),
+            **{field: getattr(row, field) for field in _WEATHER_FIELDS},
+        )
+        for row in rows
+    ]
+
+
+def save_model_runs(runs: list[dict], generated_at: datetime) -> None:
+    """Speichert den Modellzustand je Wechselrichter (siehe
+    ForecastModelRun) und raeumt danach alle Laeufe ab, auf die keine
+    gespeicherte Prognose mehr verweist.
+
+    Der Verweis laeuft ueber ForecastPrediction.updated_at == generated_at:
+    save_forecast_predictions() setzt updated_at auf den Zeitstempel des
+    Laufs. Wird eine noch nicht eingefrorene Prognose von einem spaeteren
+    Lauf ueberschrieben, verliert der alte Lauf seinen Verweis und
+    verschwindet beim naechsten Aufraeumen - der Lauf hinter einer
+    eingefrorenen Prognose bleibt dagegen fuer immer erhalten."""
+    generated_at = _utc(generated_at)
+    session = SessionLocal()
+    try:
+        if runs:
+            statement = insert(ForecastModelRun).values(
+                [{**run, "generated_at": generated_at} for run in runs]
+            )
+            # Gleicher Lauf zweimal gespeichert (z.B. ein Test oder ein
+            # wiederholter Aufruf mit identischem Zeitstempel) - der erste
+            # Stand gilt.
+            statement = statement.on_conflict_do_nothing(
+                index_elements=["device_id", "generated_at"]
+            )
+            session.execute(statement)
+        session.execute(
+            delete(ForecastModelRun).where(
+                ~exists().where(
+                    and_(
+                        ForecastPrediction.device_id == ForecastModelRun.device_id,
+                        ForecastPrediction.updated_at == ForecastModelRun.generated_at,
+                    )
+                )
+            )
+        )
         session.commit()
     finally:
         session.close()

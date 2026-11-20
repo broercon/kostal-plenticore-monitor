@@ -580,3 +580,180 @@ def test_accuracy_endpoint_requires_login(client):
     response = client.get("/api/forecast/accuracy")
     assert response.status_code == 200
     assert response.json()["available"] is False
+
+
+def _forecast_point(timestamp: datetime, radiation: float):
+    from app.forecast_weather import WeatherPoint
+
+    return WeatherPoint(
+        timestamp=timestamp,
+        shortwave_w_m2=radiation,
+        direct_w_m2=radiation * 0.7,
+        diffuse_w_m2=radiation * 0.3,
+        temperature_c=18.0,
+        cloud_cover_percent=20.0,
+        wind_speed_ms=3.0,
+    )
+
+
+def test_forecast_weather_follows_the_freeze_rule_of_the_predictions(client):
+    """Die Wetter-Vorhersage wird bis zur Einfrier-Grenze ueberschrieben und
+    bleibt danach auf genau dem Stand stehen, aus dem die eingefrorene
+    Prognose berechnet wurde."""
+    from app.forecast_evaluation import save_forecast_weather
+    from app.models import ForecastWeatherSnapshot
+
+    # Intervallende 13 Uhr UTC -> Zielstunde 12-13 Uhr UTC am 2.6. Die
+    # Einfrier-Grenze liegt am 1.6. um 20 Uhr UTC (22 Uhr Berlin).
+    point_time = datetime(2026, 6, 2, 13, tzinfo=timezone.utc)
+    save_forecast_weather(
+        52.12346, 8.98765, [_forecast_point(point_time, 500)],
+        datetime(2026, 5, 31, 8, tzinfo=timezone.utc),
+    )
+    frozen_run = datetime(2026, 6, 1, 21, tzinfo=timezone.utc)
+    save_forecast_weather(
+        52.12346, 8.98765, [_forecast_point(point_time, 600)], frozen_run
+    )
+    # Nach der Grenze: darf nichts mehr aendern.
+    save_forecast_weather(
+        52.12346, 8.98765, [_forecast_point(point_time, 900)],
+        datetime(2026, 6, 2, 6, tzinfo=timezone.utc),
+    )
+
+    session = SessionLocal()
+    try:
+        rows = session.scalars(select(ForecastWeatherSnapshot)).all()
+        assert len(rows) == 1
+        assert rows[0].shortwave_w_m2 == 600
+        assert rows[0].wind_speed_ms == 3.0
+        assert _utc(rows[0].generated_at) == frozen_run
+        assert _utc(rows[0].first_generated_at) == datetime(
+            2026, 5, 31, 8, tzinfo=timezone.utc
+        )
+        # Gleiche Rundung wie der Ist-Wetter-Cache (weather_hourly), damit
+        # sich beide Tabellen direkt verknuepfen lassen.
+        assert rows[0].latitude == 52.1235
+    finally:
+        session.close()
+
+
+def test_forecast_weather_skips_hours_that_already_started(client):
+    from app.forecast_evaluation import save_forecast_weather
+    from app.models import ForecastWeatherSnapshot
+
+    generated_at = datetime(2026, 6, 2, 12, 30, tzinfo=timezone.utc)
+    save_forecast_weather(
+        52.0, 9.0,
+        [
+            _forecast_point(datetime(2026, 6, 2, 13, tzinfo=timezone.utc), 500),
+            _forecast_point(datetime(2026, 6, 2, 14, tzinfo=timezone.utc), 400),
+        ],
+        generated_at,
+    )
+
+    session = SessionLocal()
+    try:
+        timestamps = [
+            _utc(value)
+            for value in session.scalars(select(ForecastWeatherSnapshot.timestamp))
+        ]
+        assert timestamps == [datetime(2026, 6, 2, 14, tzinfo=timezone.utc)]
+    finally:
+        session.close()
+
+
+def _run(device_id: str = "wr1") -> dict:
+    return {
+        "device_id": device_id,
+        "model_version": 1,
+        "method": "learned",
+        "weights": {"hour": 1.5, "ghi": 2.0},
+        "validation_samples": 400,
+        "validation_error_percent": 12.5,
+        "interval_error_fraction": 0.3,
+        "training_samples": 5000,
+        "training_start": datetime(2025, 6, 1, tzinfo=timezone.utc),
+        "training_end": datetime(2026, 5, 31, tzinfo=timezone.utc),
+        "latitude": 52.0,
+        "longitude": 9.0,
+    }
+
+
+def test_model_run_behind_frozen_prediction_is_kept_superseded_run_removed(client):
+    """Nur Laeufe, auf die eine gespeicherte Prognose verweist, bleiben
+    erhalten: der vor der Einfrier-Grenze ueberschriebene Lauf verschwindet,
+    der Lauf hinter der eingefrorenen Prognose bleibt."""
+    from app.forecast_evaluation import save_model_runs
+    from app.models import ForecastModelRun
+
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    superseded = datetime(2026, 5, 31, 8, tzinfo=timezone.utc)
+    frozen = datetime(2026, 6, 1, 21, tzinfo=timezone.utc)
+    later = datetime(2026, 6, 2, 6, tzinfo=timezone.utc)
+    next_day_target = datetime(2026, 6, 3, 12, tzinfo=timezone.utc)
+
+    for generated_at, targets in (
+        (superseded, [target]),
+        (frozen, [target]),
+        # Spaeterer Lauf: Zielstunde am 2.6. ist eingefroren, er schreibt
+        # nur noch fuer den 3.6.
+        (later, [target, next_day_target]),
+    ):
+        save_forecast_predictions(
+            {"wr1": {t: (1000.0, 800.0, 1200.0) for t in targets}},
+            {"wr1": "learned"},
+            generated_at,
+        )
+        save_model_runs([_run()], generated_at)
+
+    session = SessionLocal()
+    try:
+        runs = session.scalars(
+            select(ForecastModelRun).order_by(ForecastModelRun.generated_at)
+        ).all()
+        assert [_utc(run.generated_at) for run in runs] == [frozen, later]
+        assert runs[0].weights == {"hour": 1.5, "ghi": 2.0}
+        assert runs[0].model_version == 1
+    finally:
+        session.close()
+
+
+def test_save_forecast_predictions_reports_number_of_written_rows(client):
+    target = datetime(2026, 6, 2, 12, tzinfo=timezone.utc)
+    assert save_forecast_predictions(
+        {"wr1": {target: (1.0, 1.0, 1.0)}},
+        {"wr1": "standard"},
+        datetime(2026, 6, 1, 21, tzinfo=timezone.utc),
+    ) == 1
+    # Eingefroren -> nichts mehr geschrieben.
+    assert save_forecast_predictions(
+        {"wr1": {target: (2.0, 2.0, 2.0)}},
+        {"wr1": "standard"},
+        datetime(2026, 6, 2, 6, tzinfo=timezone.utc),
+    ) == 0
+
+
+def test_load_forecast_weather_history_returns_stored_forecast_points(client):
+    from app.forecast_evaluation import load_forecast_weather_history, save_forecast_weather
+
+    point_time = datetime(2026, 6, 2, 13, tzinfo=timezone.utc)
+    save_forecast_weather(
+        52.0, 9.0, [_forecast_point(point_time, 500)],
+        datetime(2026, 6, 1, 21, tzinfo=timezone.utc),
+    )
+
+    points = load_forecast_weather_history(
+        52.0, 9.0,
+        datetime(2026, 6, 2, tzinfo=timezone.utc),
+        datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+    assert len(points) == 1
+    assert points[0].timestamp == point_time
+    assert points[0].shortwave_w_m2 == 500
+    assert points[0].wind_speed_ms == 3.0
+    # Anderer Standort: nichts.
+    assert load_forecast_weather_history(
+        48.0, 11.0,
+        datetime(2026, 6, 2, tzinfo=timezone.utc),
+        datetime(2026, 6, 3, tzinfo=timezone.utc),
+    ) == []

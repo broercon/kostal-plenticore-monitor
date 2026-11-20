@@ -3,7 +3,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -147,6 +158,98 @@ class ForecastPrediction(Base):
         DateTime(timezone=True), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ForecastWeatherSnapshot(Base):
+    """Wetter-VORHERSAGE, auf der die gespeicherten Prognosen beruhen.
+
+    Gegenstueck zu WeatherHourly (dort steht das spaetere Ist-Wetter): ohne
+    diese Werte liesse sich bei einer danebenliegenden Prognose nie
+    unterscheiden, ob die Wettervorhersage falsch war oder das Modell bei
+    richtigem Wetter falsch gerechnet hat. Ausserdem sammelt sich hier die
+    Grundlage, um das Modell spaeter auch auf Vorhersage- statt nur auf
+    Ist-Wetter zu trainieren (und so systematische Vorhersagefehler, z.B.
+    unterschaetzten Hochnebel, mitzulernen).
+
+    Es gilt dieselbe Einfrier-Regel wie fuer ForecastPrediction (siehe
+    forecast_evaluation._freeze_cutoff_utc): bis zur Einfrier-Grenze
+    ueberschreibt jeder Lauf den Wert, danach bleibt genau der Stand stehen,
+    aus dem die eingefrorene Prognose berechnet wurde. generated_at ist
+    dabei derselbe Zeitstempel wie ForecastPrediction.updated_at und
+    ForecastModelRun.generated_at des Laufs, der die Zeile zuletzt
+    geschrieben hat.
+
+    timestamp folgt der Open-Meteo-Konvention von WeatherHourly (ENDE des
+    Stundenintervalls), damit sich Vorhersage und Ist-Wetter direkt per
+    Gleichheit verknuepfen lassen. Die zugehoerige Prognose-Zielstunde
+    (ForecastPrediction.target_timestamp) ist timestamp - 1 Stunde."""
+
+    __tablename__ = "forecast_weather_snapshots"
+
+    latitude: Mapped[float] = mapped_column(Float, primary_key=True)
+    longitude: Mapped[float] = mapped_column(Float, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True
+    )
+    shortwave_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    direct_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    diffuse_w_m2: Mapped[float] = mapped_column(Float, nullable=False)
+    temperature_c: Mapped[float] = mapped_column(Float, nullable=False)
+    cloud_cover_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    wind_speed_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    humidity_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    snow_depth_m: Mapped[float] = mapped_column(Float, nullable=False)
+    pressure_hpa: Mapped[float] = mapped_column(Float, nullable=False)
+    first_generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ForecastModelRun(Base):
+    """Modellzustand eines Prognoselaufs je Wechselrichter.
+
+    Die gelernten Gewichte werden bei jedem Lauf neu berechnet und waeren
+    sonst verloren. Gespeichert wird nur, was spaeter noch gebraucht wird:
+    forecast_evaluation.save_model_runs() loescht jeden Lauf, auf den keine
+    ForecastPrediction mehr verweist (Verknuepfung ueber device_id +
+    generated_at == ForecastPrediction.updated_at). Uebrig bleiben damit
+    die Laeufe hinter den eingefrorenen Prognosen - etwa einer pro Tag -
+    plus der jeweils juengste.
+
+    model_version (energy_forecast.MODEL_VERSION) wird von Hand erhoeht,
+    sobald sich die Rechenlogik aendert - so lassen sich Spruenge in der
+    Prognosegenauigkeit einer Code-Aenderung zuordnen."""
+
+    __tablename__ = "forecast_model_runs"
+    __table_args__ = (
+        UniqueConstraint("device_id", "generated_at", name="ux_forecast_model_run"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    # DistanceWeights als {feldname: wert} - JSON statt eigener Spalten,
+    # damit ein kuenftig ergaenztes Merkmal keine Migration braucht.
+    weights: Mapped[dict] = mapped_column(JSON, nullable=False)
+    validation_samples: Mapped[int] = mapped_column(Integer, nullable=False)
+    validation_error_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    interval_error_fraction: Mapped[float | None] = mapped_column(Float, nullable=True)
+    training_samples: Mapped[int] = mapped_column(Integer, nullable=False)
+    training_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    training_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Mit welchem Wetter das Modell trainiert wurde: "ist" (nur weather_hourly)
+    # oder "vorhersage" (wo vorhanden, ersetzt die gespeicherte Wetter-
+    # Vorhersage das Ist-Wetter), siehe energy_forecast.choose_training().
+    weather_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="ist")
+    # Ergebnis des Rueckvergleichs beider Varianten ({validation_samples,
+    # ist_error_percent, vorhersage_error_percent}); None, solange noch zu
+    # wenige Vorhersage-Tage gesammelt sind.
+    basis_comparison: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class DailyEnergyCache(Base):

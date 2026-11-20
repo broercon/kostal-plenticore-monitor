@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,18 @@ MIN_TRAINING_SAMPLES = 48
 BACKTEST_MIN_SAMPLES = 14 * 24
 BACKTEST_MIN_DAYLIGHT_SAMPLES = 24
 CACHE_TTL = timedelta(minutes=30)
+
+# Ab so vielen Tagen gespeicherter Wetter-Vorhersage (siehe
+# forecast_evaluation.save_forecast_weather) tritt in choose_training() die
+# Variante "auf Vorhersage-Wetter trainiert" gegen das reine Ist-Wetter an.
+# Vorher ist der Rueckvergleich zu duenn, um einem Sieger zu trauen.
+FORECAST_TRAINING_MIN_DAYS = 60
+
+# Wird mit jedem gespeicherten Modelllauf abgelegt (ForecastModelRun). Von
+# Hand erhoehen, sobald sich die Rechenlogik aendert (Merkmale, Gewichte,
+# Nachbarsuche, Intervalle ...) - so laesst sich ein Sprung in der
+# Prognosegenauigkeit spaeter einer Code-Aenderung zuordnen.
+MODEL_VERSION = 2
 
 # Regularisierungsstaerke der Ridge-Regression in fit_distance_weights()
 # (auf standardisierten Merkmalen, siehe dort). Kein Gradientenabstieg
@@ -78,6 +90,10 @@ class ModelProfile:
     validation_samples: int
     validation_error_percent: float | None
     interval_error_fraction: float | None
+    # Siehe choose_training(): mit welchem Wetter trainiert wurde und wie
+    # der Rueckvergleich beider Varianten ausging.
+    weather_basis: str = "ist"
+    basis_comparison: dict | None = None
 
 
 # Bisherige, von Hand geschaetzte Gewichte - Fallback, wenn fit_distance_
@@ -732,6 +748,91 @@ def select_model(training: list[TrainingPoint]) -> ModelProfile:
     )
 
 
+def merge_forecast_training(
+    actual_weather: list[TrainingPoint], forecast_weather: list[TrainingPoint]
+) -> list[TrainingPoint]:
+    """Trainingsdaten, in denen jede Stunde mit gespeicherter Wetter-
+    Vorhersage diese statt des Ist-Wetters traegt. Stunden ohne Vorhersage
+    (vor Beginn der Sammlung, Ausfaelle) behalten das Ist-Wetter - sonst
+    bliebe nur der kurze Sammelzeitraum uebrig und die Jahreszeiten davor
+    fehlten der Analogie-Suche komplett."""
+    by_hour = {_hour_key(sample.weather.timestamp): sample for sample in actual_weather}
+    for sample in forecast_weather:
+        by_hour[_hour_key(sample.weather.timestamp)] = sample
+    return sorted(by_hour.values(), key=lambda sample: sample.weather.timestamp)
+
+
+def choose_training(
+    actual_weather: list[TrainingPoint], forecast_weather: list[TrainingPoint]
+) -> tuple[list[TrainingPoint], ModelProfile]:
+    """Entscheidet, ob das Modell mit Ist- oder mit Vorhersage-Wetter
+    trainiert wird.
+
+    Hintergrund: Vorhergesagt wird immer aus der Wetter-VORHERSAGE, trainiert
+    wurde bisher aber nur mit dem spaeteren Ist-Wetter. Systematische Fehler
+    der Wettervorhersage (z.B. unterschaetzter Hochnebel) kann das Modell so
+    nie lernen. Trainiert es dagegen auf Vorhersage-Wetter, lernt es "bei
+    dieser VORHERSAGE kam tatsaechlich so viel Strom".
+
+    Ob das hilft, entscheidet ein zeitlich getrennter Rueckvergleich - und
+    zwar genau unter Einsatzbedingungen: Eingabe ist die damalige
+    Wetter-Vorhersage der juengsten 20 % der Vorhersage-Stunden, verglichen
+    mit der tatsaechlich gemessenen Leistung. Beide Varianten lernen nur aus
+    der Zeit davor. Die Vorhersage-Variante gewinnt nur bei mindestens 1 %
+    kleinerem Fehler (wie in select_model()), sonst bleibt alles beim
+    Alten. Unterhalb von FORECAST_TRAINING_MIN_DAYS gesammelter Tage findet
+    gar kein Vergleich statt."""
+    baseline = select_model(actual_weather)
+    forecast_days = {sample.weather.timestamp.date() for sample in forecast_weather}
+    if len(forecast_days) < FORECAST_TRAINING_MIN_DAYS:
+        return actual_weather, baseline
+
+    ordered = sorted(forecast_weather, key=lambda sample: sample.weather.timestamp)
+    split_at = int(len(ordered) * 0.8)
+    validation_start = ordered[split_at].weather.timestamp
+    validation = [
+        sample
+        for sample in ordered[split_at:]
+        if sample.weather.shortwave_w_m2 >= 20 and sample.power_w >= 0
+    ]
+    fit_actual = [
+        sample for sample in actual_weather if sample.weather.timestamp < validation_start
+    ]
+    if (
+        len(validation) < BACKTEST_MIN_DAYLIGHT_SAMPLES
+        or len(fit_actual) < MIN_TRAINING_SAMPLES
+    ):
+        return actual_weather, baseline
+    fit_forecast = merge_forecast_training(fit_actual, ordered[:split_at])
+
+    def validation_error(fit: list[TrainingPoint]) -> float:
+        weights = select_model(fit).weights
+        arrays = _prepare_training_arrays(fit)
+        return sum(
+            abs(predict_power(fit, sample.weather, weights, arrays)[0] - sample.power_w)
+            for sample in validation
+        )
+
+    actual_error = validation_error(fit_actual)
+    forecast_error = validation_error(fit_forecast)
+    actual_total = sum(sample.power_w for sample in validation)
+    comparison = {
+        "validation_samples": len(validation),
+        "ist_error_percent": (
+            round(100 * actual_error / actual_total, 1) if actual_total > 0 else None
+        ),
+        "vorhersage_error_percent": (
+            round(100 * forecast_error / actual_total, 1) if actual_total > 0 else None
+        ),
+    }
+    if forecast_error < actual_error * 0.99:
+        merged = merge_forecast_training(actual_weather, forecast_weather)
+        return merged, replace(
+            select_model(merged), weather_basis="vorhersage", basis_comparison=comparison
+        )
+    return actual_weather, replace(baseline, basis_comparison=comparison)
+
+
 def _predict_with_profile(
     training: list[TrainingPoint],
     target: WeatherPoint,
@@ -796,6 +897,9 @@ def _summarize(
     *,
     persist: bool = False,
     generated_at: datetime | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    forecast_training: dict[str, list[TrainingPoint]] | None = None,
 ) -> dict:
     device_names = {device.id: device.name for device in settings.inverters}
     local_tz = ZoneInfo(settings.timezone_name)
@@ -809,8 +913,10 @@ def _summarize(
     for device_id, samples in training.items():
         if len(samples) < MIN_TRAINING_SAMPLES:
             continue
+        samples, profile = choose_training(
+            samples, (forecast_training or {}).get(device_id, [])
+        )
         used_samples[device_id] = samples
-        profile = select_model(samples)
         profiles[device_id] = profile
         arrays = _prepare_training_arrays(samples)
         per_device_hour[device_id] = {
@@ -827,13 +933,52 @@ def _summarize(
 
     generated_at = generated_at or datetime.now(timezone.utc)
     if persist:
-        from .forecast_evaluation import load_frozen_predictions, save_forecast_predictions
+        from .forecast_evaluation import (
+            load_frozen_predictions,
+            save_forecast_predictions,
+            save_forecast_weather,
+            save_model_runs,
+        )
 
-        save_forecast_predictions(
+        written = save_forecast_predictions(
             per_device_hour,
             {device_id: profile.method for device_id, profile in profiles.items()},
             generated_at,
         )
+        # Eingaben des Laufs mitspeichern, damit eine eingefrorene Prognose
+        # spaeter nachvollziehbar bleibt (siehe ForecastWeatherSnapshot/
+        # ForecastModelRun). Hat der Lauf keine einzige Prognose geschrieben
+        # (alles schon eingefroren), wuerde sein Modellzustand ohnehin sofort
+        # wieder aufgeraeumt - dann gar nicht erst speichern.
+        if latitude is not None and longitude is not None:
+            save_forecast_weather(latitude, longitude, forecast_weather, generated_at)
+        if written:
+            save_model_runs(
+                [
+                    {
+                        "device_id": device_id,
+                        "model_version": MODEL_VERSION,
+                        "method": profile.method,
+                        "weights": asdict(profile.weights),
+                        "validation_samples": profile.validation_samples,
+                        "validation_error_percent": profile.validation_error_percent,
+                        "interval_error_fraction": profile.interval_error_fraction,
+                        "training_samples": len(used_samples[device_id]),
+                        "training_start": min(
+                            sample.weather.timestamp for sample in used_samples[device_id]
+                        ),
+                        "training_end": max(
+                            sample.weather.timestamp for sample in used_samples[device_id]
+                        ),
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "weather_basis": profile.weather_basis,
+                        "basis_comparison": profile.basis_comparison,
+                    }
+                    for device_id, profile in profiles.items()
+                ],
+                generated_at,
+            )
         # Fuer bereits eingefrorene Zielstunden (siehe FORECAST_FREEZE_TIME)
         # den gespeicherten (nicht mehr den frischen live berechneten) Wert
         # verwenden, BEVOR daraus combined_hours/days gebaut werden - so
@@ -971,6 +1116,7 @@ def _summarize(
                 "device_id": device_id,
                 "device_name": device_names.get(device_id, device_id),
                 "method": profile.method,
+                "weather_basis": profile.weather_basis,
                 "validation_samples": profile.validation_samples,
                 "validation_error_percent": (
                     round(profile.validation_error_percent, 1)
@@ -1021,11 +1167,24 @@ async def build_forecast() -> dict:
         settings.timezone_name,
     )
     training = build_training_data(history, historical_weather)
+    # Gespeicherte Wetter-Vorhersagen vergangener Stunden, siehe
+    # choose_training() - liegen noch keine vor, ist das Ergebnis leer.
+    from .forecast_evaluation import load_forecast_weather_history
+
+    forecast_training = build_training_data(
+        history,
+        await asyncio.to_thread(
+            load_forecast_weather_history, latitude, longitude, since, until
+        ),
+    )
     return _summarize(
         training,
         forecast_weather,
         persist=True,
         generated_at=datetime.now(timezone.utc),
+        latitude=latitude,
+        longitude=longitude,
+        forecast_training=forecast_training,
     )
 
 
