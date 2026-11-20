@@ -94,6 +94,15 @@ curl -b cookies.txt http://localhost:8000/api/devices
   - PV-Ertrag (kWh) je Kalendertag und Wechselrichter (reine PV-Erzeugung,
     gleiche Formel wie die PV-Ertrag-Leiste). Jeder Tag des Zeitraums ist
     enthalten, Geräte ohne Messwerte stehen als `null` darin.
+- `GET /api/readings/energy-balance`
+  - Energiebilanz je Kalendermonat über die gesamte Historie: `pv_kwh`
+    (Erzeugung), `feed_in_kwh`, `battery_charge_kwh`,
+    `battery_discharge_kwh`, Hausverbrauch nach Quelle (`home_pv_kwh`,
+    `home_battery_kwh`, `home_grid_kwh`) sowie `autarky_home_kwh` und
+    `autarky_grid_kwh` als Grundlage für den Autarkiegrad (nur Tage mit
+    Netzmessung). Dazu `days` (Tage mit Messwerten) und `days_in_month`.
+    `today` ist das lokale Datum der Anlage. Hausweit, keine Parameter.
+    Siehe [Dashboard und Berechnungen](CALCULATIONS.md#energiebilanz-erzeugung-und-verbrauch-je-jahr-oder-monat).
 - `GET /api/readings/battery-sizing`
   - Speicher-Erweiterung: simulierter zusätzlich vermiedener Netzbezug bei
     +1 / +2 Speichermodulen – gesamt, letzte 365 Tage, je Monat und je Tag,

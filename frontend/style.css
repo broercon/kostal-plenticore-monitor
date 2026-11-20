@@ -1152,3 +1152,182 @@ canvas {
   white-space: normal;
   vertical-align: bottom;
 }
+
+/* ---- Energiebilanz (Auswertungen) ---- */
+
+.balance-toolbar {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.balance-period-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.balance-period-nav button {
+  min-width: 34px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.balance-period-nav button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.balance-coverage {
+  margin: 10px 0 4px;
+}
+
+.balance-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.balance-card {
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.balance-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.balance-card-head h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.balance-card-total {
+  font-size: 1.6rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance-delta {
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.balance-bar {
+  display: flex;
+  height: 14px;
+  margin: 12px 0 10px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--panel-border);
+}
+
+.balance-bar-seg {
+  display: block;
+  height: 100%;
+}
+
+.balance-bar-seg + .balance-bar-seg {
+  box-shadow: inset 1px 0 0 var(--bg);
+}
+
+.balance-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance-legend li {
+  display: grid;
+  grid-template-columns: 12px 1fr auto 3.5em;
+  align-items: center;
+  gap: 8px;
+}
+
+.balance-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.balance-legend-value {
+  font-weight: 600;
+}
+
+.balance-legend-share {
+  color: var(--muted);
+  text-align: right;
+}
+
+.balance-kpis {
+  margin-top: 12px;
+}
+
+.balance-table .balance-mix-col {
+  width: 28%;
+  min-width: 120px;
+}
+
+.balance-table .balance-bar {
+  height: 10px;
+  margin: 0;
+}
+
+.balance-table td small {
+  font-size: 0.75rem;
+}
+
+.balance-row {
+  cursor: pointer;
+}
+
+.balance-row:hover td {
+  background: var(--panel-hover);
+}
+
+.balance-row:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}
+
+.balance-row-active td {
+  background: var(--panel-hover);
+}
+
+.balance-row-active td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+  font-weight: 600;
+}
+
+.balance-row-group td {
+  padding-top: 16px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-align: left;
+}
+
+@media (max-width: 640px) {
+  .balance-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .balance-card-total {
+    font-size: 1.35rem;
+  }
+}

@@ -568,13 +568,21 @@ def build_energy_period_summary(field: str) -> list[FeedInPeriod]:
     periods = _energy_period_ranges()
     earliest = min(start for _, start, _ in periods)
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    per_day = _cached_field_days(field, earliest, today)
+    return _periods_from_per_day(periods, per_day)
+
+
+def _cached_field_days(field: str, earliest: date, today: date) -> dict[str, float | None]:
+    """Integrierte Tageswerte (kWh) eines Leistungsfeldes fuer [earliest,
+    today], ueber den Tages-Cache. Gemeinsam genutzt von den
+    Zeitraum-Leisten (build_energy_period_summary) und der Energiebilanz
+    (build_energy_balance), damit beide denselben Cache-Inhalt teilen."""
 
     def compute(start: date, end_exclusive: date) -> dict[str, float | None]:
         rows = _load_rows_for_range(start, end_exclusive)
         return {d["date"]: d["kwh"] for d in daily_kwh_totals(rows, field, settings.timezone_name)}
 
-    per_day = _cached_daily_totals(f"field:{field}", earliest, today, compute)
-    return _periods_from_per_day(periods, per_day)
+    return _cached_daily_totals(f"field:{field}", earliest, today, compute)
 
 
 def build_feed_in_summary() -> list[FeedInPeriod]:
@@ -689,6 +697,17 @@ def build_battery_energy_summary() -> dict[str, list[FeedInPeriod]]:
     periods = _energy_period_ranges()
     earliest = min(start for _, start, _ in periods)
     today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    per_direction = _cached_battery_flow_days(earliest, today)
+    return {
+        f"{direction}_periods": _periods_from_per_day(periods, per_day)
+        for direction, per_day in per_direction.items()
+    }
+
+
+def _cached_battery_flow_days(earliest: date, today: date) -> dict[str, dict[str, float | None]]:
+    """Speicher geladen/entladen (kWh) je Tag fuer [earliest, today]:
+    {BATTERY_CHARGE: {date: kwh}, BATTERY_DISCHARGE: {date: kwh}}. Beide
+    Richtungen kommen aus EINEM Rohdaten-Scan je Cache-Luecke."""
     inverted = _battery_inverted_map()
     config_key = hashlib.sha256(
         repr((settings.timezone_name, sorted(inverted.items()))).encode()
@@ -706,11 +725,10 @@ def build_battery_energy_summary() -> dict[str, list[FeedInPeriod]]:
 
     result = {}
     for direction in (BATTERY_CHARGE, BATTERY_DISCHARGE):
-        per_day = _cached_daily_totals(
+        result[direction] = _cached_daily_totals(
             f"battery:v2:{config_key}:{direction}", earliest, today,
             lambda start, end: {d["date"]: d[direction] for d in compute(start, end)},
         )
-        result[f"{direction}_periods"] = _periods_from_per_day(periods, per_day)
     return result
 
 
@@ -1160,3 +1178,104 @@ def build_autarky_yearly_comparison(granularity: str = "month", years: int | Non
         )
 
     return {"granularity": granularity, "labels": labels, "years": result_years}
+
+
+# Felder je Monat der Energiebilanz, in der Reihenfolge der Antwort.
+_ENERGY_BALANCE_FIELDS = (
+    "pv_kwh",
+    "feed_in_kwh",
+    "battery_charge_kwh",
+    "battery_discharge_kwh",
+    "home_pv_kwh",
+    "home_battery_kwh",
+    "home_grid_kwh",
+    "autarky_home_kwh",
+    "autarky_grid_kwh",
+)
+
+
+def build_energy_balance() -> dict:
+    """Energiebilanz je Kalendermonat ueber die gesamte Historie: Erzeugung,
+    Einspeisung, Speicher geladen/entladen und der Hausverbrauch nach
+    Quelle (PV direkt, Speicher, Netz) - fuer "Auswertungen >
+    Energiebilanz". Das Frontend fasst Monate selbst zu Jahren zusammen,
+    daher genuegt eine Monatsliste.
+
+    Alle Werte kommen aus den vorhandenen Tages-Caches (PV-Ertrag,
+    Einspeisung, Speicherfluesse, Hausverbrauchs-Aufteilung) und sind
+    damit identisch mit den uebrigen Ansichten: die Aufteilung entspricht
+    dem Tagesverbrauch-Diagramm (milde Lesart), autarky_home_kwh/
+    autarky_grid_kwh der Autarkie-Ansicht (strenge Lesart, nur Messpunkte
+    mit echtem Netzwert - siehe _home_source_breakdown_with_grid). Ohne
+    diese zweite Lesart waeren Monate aus importierten Altdaten ohne
+    Netzmessung faelschlich 100 % autark.
+
+    Ein Monatswert ist None, wenn an keinem Tag des Monats ein Wert fuer
+    diese Groesse vorlag (statt 0). `days` zaehlt die Tage mit mindestens
+    einem Wert, `days_in_month` die Kalendertage - damit kann das Frontend
+    angebrochene Monate (Inbetriebnahme, laufender Monat) erkennen.
+    """
+    earliest = _earliest_reading_date()
+    today = datetime.now(ZoneInfo(settings.timezone_name)).date()
+    if earliest is None or earliest > today:
+        return {"today": today.isoformat(), "months": []}
+
+    pv = _cached_daily_totals("pv_yield", earliest, today, _compute_pv_yield_days)
+    feed_in = _cached_field_days("feed_in_power_w", earliest, today)
+    battery = _cached_battery_flow_days(earliest, today)
+    breakdown = _cached_home_source_breakdown(
+        earliest, today, (_BREAKDOWN_VARIANT, _AUTARKY_VARIANT)
+    )
+
+    months: dict[str, dict] = {}
+    day = earliest
+    while day <= today:
+        date_str = day.strftime("%Y-%m-%d")
+        variants = breakdown.get(date_str, {})
+        mild = variants.get(_BREAKDOWN_VARIANT.name, {})
+        strict = variants.get(_AUTARKY_VARIANT.name, {})
+        strict_parts = [strict.get(key) for key in _BREAKDOWN_OUT_KEYS]
+        values = {
+            "pv_kwh": pv.get(date_str),
+            "feed_in_kwh": feed_in.get(date_str),
+            "battery_charge_kwh": battery[BATTERY_CHARGE].get(date_str),
+            "battery_discharge_kwh": battery[BATTERY_DISCHARGE].get(date_str),
+            "home_pv_kwh": mild.get("pv_kwh"),
+            "home_battery_kwh": mild.get("battery_kwh"),
+            "home_grid_kwh": mild.get("grid_kwh"),
+            # Nur vollstaendige Tage zaehlen fuer den Autarkiegrad, wie
+            # bei _autarky_percent: fehlt ein Anteil, ist der Tag unbekannt.
+            "autarky_home_kwh": (
+                sum(strict_parts) if all(v is not None for v in strict_parts) else None
+            ),
+            "autarky_grid_kwh": (
+                strict.get("grid_kwh") if all(v is not None for v in strict_parts) else None
+            ),
+        }
+
+        month_key = day.strftime("%Y-%m")
+        entry = months.get(month_key)
+        if entry is None:
+            next_month = (day.replace(day=28) + timedelta(days=4)).replace(day=1)
+            entry = months[month_key] = {
+                "month": month_key,
+                "days": 0,
+                "days_in_month": (next_month - day.replace(day=1)).days,
+                **{field: None for field in _ENERGY_BALANCE_FIELDS},
+            }
+        if any(value is not None for value in values.values()):
+            entry["days"] += 1
+        for field, value in values.items():
+            if value is not None:
+                entry[field] = (entry[field] or 0.0) + value
+        day += timedelta(days=1)
+
+    result = []
+    for entry in months.values():
+        if entry["days"] == 0:
+            continue
+        for field in _ENERGY_BALANCE_FIELDS:
+            if entry[field] is not None:
+                entry[field] = round(entry[field], 3)
+        result.append(entry)
+    return {"today": today.isoformat(), "months": result}

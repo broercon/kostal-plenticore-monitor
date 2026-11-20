@@ -72,6 +72,13 @@ const state = {
     // automatischer Aktualisierung erhalten.
     expanded: new Set(),
   },
+  // Energiebilanz (Auswertungen-Tab): Monatswerte vom Backend, gewaehlte
+  // Granularitaet und Zeitraum ("YYYY" bzw. "YYYY-MM", null = neuester).
+  energyBalance: {
+    data: null,
+    granularity: "year", // "year" | "month"
+    period: null,
+  },
   forecastChart: null,
   forecastAccuracyChart: null,
   forecastHoursTodayChart: null,
@@ -2253,6 +2260,7 @@ function setupTrendSubView() {
 // ueber das Flyout-Menue am Reiter (siehe setupViewTabs/SUBVIEW_SETTERS). ---
 
 const EVALUATION_SUBVIEW_SECTIONS = {
+  balance: () => el("evaluation-view-balance"),
   pvdaily: () => el("evaluation-view-pvdaily"),
   dailytotals: () => el("consumption-view-dailytotals"),
   hourly: () => el("hourly-section"),
@@ -2709,6 +2717,413 @@ async function refreshBatterySizing() {
     const data = await fetchJson("/api/readings/battery-sizing");
     state.batterySizing.data = data;
     renderBatterySizing(data);
+  });
+}
+
+// --- Energiebilanz: Erzeugung und Hausverbrauch nach Quelle je Jahr oder
+// Monat, als Kennzahlen mit Anteilsbalken statt Diagramm, dazu eine
+// Vergleichstabelle. Das Backend liefert Monatswerte
+// (/api/readings/energy-balance), Jahre werden hier zusammengefasst.
+// Hausweit, daher unabhaengig vom oben gewaehlten Wechselrichter. ---
+
+const BALANCE_SUM_FIELDS = [
+  "pv_kwh",
+  "feed_in_kwh",
+  "battery_charge_kwh",
+  "battery_discharge_kwh",
+  "home_pv_kwh",
+  "home_battery_kwh",
+  "home_grid_kwh",
+  "autarky_home_kwh",
+  "autarky_grid_kwh",
+];
+
+const BALANCE_HOME_PARTS = [
+  { key: "home_pv_kwh", label: "Direkt von der PV-Anlage", short: "PV", color: "#60a5fa" },
+  { key: "home_battery_kwh", label: "Aus dem Speicher", short: "Speicher", color: "#c084fc" },
+  { key: "home_grid_kwh", label: "Aus dem Netz", short: "Netz", color: "#facc15" },
+];
+
+const BALANCE_MONTH_LONG = [
+  "Januar", "Februar", "März", "April", "Mai", "Juni",
+  "Juli", "August", "September", "Oktober", "November", "Dezember",
+];
+
+// Große Jahreswerte ohne Nachkommastelle, kleine Monatswerte mit einer.
+function fmtBalanceKwh(value) {
+  if (value === null || value === undefined) return "–";
+  return (Math.abs(value) >= 100 ? Math.round(value) : value.toFixed(1)) + " kWh";
+}
+
+function fmtShare(part, total) {
+  if (part === null || part === undefined || !total) return "–";
+  return Math.round((100 * part) / total) + " %";
+}
+
+function balancePeriodLabel(granularity, key) {
+  if (granularity === "year") return key;
+  const [y, m] = key.split("-");
+  return `${BALANCE_MONTH_LONG[Number(m) - 1]} ${y}`;
+}
+
+// Fasst Monatswerte zu einem Zeitraum zusammen. Ein Feld bleibt null, wenn
+// es in keinem der Monate einen Wert hatte (statt 0).
+function sumBalanceMonths(months) {
+  const result = { days: 0, days_total: 0 };
+  for (const field of BALANCE_SUM_FIELDS) result[field] = null;
+  for (const m of months) {
+    result.days += m.days;
+    result.days_total += m.days_in_month;
+    for (const field of BALANCE_SUM_FIELDS) {
+      if (m[field] !== null && m[field] !== undefined) result[field] = (result[field] ?? 0) + m[field];
+    }
+  }
+  const parts = BALANCE_HOME_PARTS.map((p) => result[p.key]);
+  result.home_kwh = parts.some((v) => v !== null) ? parts.reduce((a, v) => a + (v ?? 0), 0) : null;
+  return result;
+}
+
+// Wie die Autarkie-Ansicht (Backend _autarky_percent_rounded_kwh):
+// Verbrauch und Netzbezug vorher auf ganze kWh runden.
+function balanceAutarky(p) {
+  if (p.autarky_home_kwh === null) return null;
+  const home = Math.floor(p.autarky_home_kwh + 0.5);
+  const grid = Math.floor(p.autarky_grid_kwh + 0.5);
+  return home > 0 ? (100 * (home - grid)) / home : null;
+}
+
+// Anteil der Erzeugung, der nicht eingespeist wurde.
+function balanceSelfUse(p) {
+  if (!p.pv_kwh || p.feed_in_kwh === null) return null;
+  return Math.max(0, Math.min(100, (100 * (p.pv_kwh - p.feed_in_kwh)) / p.pv_kwh));
+}
+
+// Alle Zeitraeume einer Granularitaet: {key -> {months, days_total, ...summe}}.
+function balancePeriods(data, granularity) {
+  const groups = new Map();
+  for (const m of data.months) {
+    const key = granularity === "year" ? m.month.slice(0, 4) : m.month;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  }
+  const periods = new Map();
+  for (const [key, months] of groups) {
+    const sum = sumBalanceMonths(months);
+    // Ein Jahr umfasst immer 12 Monate, auch wenn nicht alle Daten haben.
+    if (granularity === "year") {
+      const y = Number(key);
+      sum.days_total = (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 366 : 365;
+    }
+    periods.set(key, sum);
+  }
+  return periods;
+}
+
+function balanceIsRunning(granularity, key, today) {
+  return today.startsWith(granularity === "year" ? key : key + "-");
+}
+
+function balanceIsComplete(p, granularity, key, today) {
+  return p.days === p.days_total && !balanceIsRunning(granularity, key, today);
+}
+
+// Vergleichszeitraum ein Jahr frueher (Vorjahr bzw. gleicher Monat im Vorjahr).
+function balancePreviousKey(granularity, key) {
+  if (granularity === "year") return String(Number(key) - 1);
+  return `${Number(key.slice(0, 4)) - 1}${key.slice(4)}`;
+}
+
+function balanceDelta(current, previous) {
+  if (current === null || !previous) return null;
+  return (100 * (current - previous)) / previous;
+}
+
+function balanceEl(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// Horizontaler Anteilsbalken. `scale` (0..1) verkuerzt den ganzen Balken,
+// damit Tabellenzeilen untereinander vergleichbar sind.
+function balanceBar(segments, total, scale = 1) {
+  const bar = balanceEl("div", "balance-bar");
+  bar.style.width = `${Math.max(0, Math.min(1, scale)) * 100}%`;
+  if (!total) return bar;
+  for (const seg of segments) {
+    if (!seg.value || seg.value <= 0) continue;
+    const part = balanceEl("span", "balance-bar-seg");
+    part.style.width = `${(100 * seg.value) / total}%`;
+    part.style.background = seg.color;
+    part.title = `${seg.label}: ${fmtBalanceKwh(seg.value)} (${fmtShare(seg.value, total)})`;
+    bar.append(part);
+  }
+  return bar;
+}
+
+function balanceLegend(segments, total) {
+  const list = balanceEl("ul", "balance-legend");
+  for (const seg of segments) {
+    const li = balanceEl("li");
+    const dot = balanceEl("span", "balance-dot");
+    dot.style.background = seg.color;
+    li.append(
+      dot,
+      balanceEl("span", "balance-legend-label", seg.label),
+      balanceEl("span", "balance-legend-value", fmtBalanceKwh(seg.value)),
+      balanceEl("span", "balance-legend-share", fmtShare(seg.value, total))
+    );
+    list.append(li);
+  }
+  return list;
+}
+
+function balanceCard(node, { title, total, deltaText, segments, base }) {
+  const head = balanceEl("div", "balance-card-head");
+  head.append(balanceEl("h3", null, title), balanceEl("span", "balance-card-total", fmtBalanceKwh(total)));
+  const children = [head];
+  if (deltaText) children.push(balanceEl("p", "balance-delta muted", deltaText));
+  children.push(balanceBar(segments, base), balanceLegend(segments, base));
+  node.replaceChildren(...children);
+}
+
+function balanceGenerationSegments(p) {
+  const segments = [
+    { label: "Direkt im Haus verbraucht", value: p.home_pv_kwh, color: "#60a5fa" },
+    { label: "In den Speicher geladen", value: p.battery_charge_kwh, color: "#c084fc" },
+    { label: "Ins Netz eingespeist", value: p.feed_in_kwh, color: "#2dd4bf" },
+  ];
+  const used = segments.reduce((a, s) => a + (s.value ?? 0), 0);
+  const rest = (p.pv_kwh ?? 0) - used;
+  // Nur nennenswerte Reste zeigen; ein Minus entsteht, wenn der Speicher
+  // auch aus dem Netz geladen wurde.
+  if (p.pv_kwh && rest > 0.01 * p.pv_kwh) {
+    segments.push({ label: "Wandlungsverluste & Sonstiges", value: rest, color: "#475569" });
+  }
+  return { segments, base: Math.max(p.pv_kwh ?? 0, used) };
+}
+
+function balanceDeltaText(granularity, key, periods, today, getValue) {
+  const prevKey = balancePreviousKey(granularity, key);
+  const current = periods.get(key);
+  const previous = periods.get(prevKey);
+  if (!previous) return null;
+  if (!balanceIsComplete(current, granularity, key, today) || !balanceIsComplete(previous, granularity, prevKey, today)) {
+    return null;
+  }
+  const delta = balanceDelta(getValue(current), getValue(previous));
+  if (delta === null) return null;
+  const sign = delta > 0 ? "+" : delta < 0 ? "−" : "±";
+  return `${sign}${Math.abs(Math.round(delta))} % gegenüber ${balancePeriodLabel(granularity, prevKey)} (${fmtBalanceKwh(getValue(previous))})`;
+}
+
+function renderBalanceDetail(periods, granularity, key, today) {
+  const p = periods.get(key);
+  const label = balancePeriodLabel(granularity, key);
+  let coverage;
+  if (balanceIsRunning(granularity, key, today)) {
+    coverage = `${label} läuft noch – Stand heute, ${p.days} von ${p.days_total} Tagen erfasst.`;
+  } else if (p.days < p.days_total) {
+    coverage = `${label}: nur ${p.days} von ${p.days_total} Tagen erfasst – die Summen sind entsprechend kleiner.`;
+  } else {
+    coverage = `${label}: alle ${p.days} Tage erfasst.`;
+  }
+  el("balance-coverage").textContent = coverage;
+
+  const homeSegments = BALANCE_HOME_PARTS.map((part) => ({ label: part.label, value: p[part.key], color: part.color }));
+  balanceCard(el("balance-consumption"), {
+    title: "Hausverbrauch",
+    total: p.home_kwh,
+    deltaText: balanceDeltaText(granularity, key, periods, today, (x) => x.home_kwh),
+    segments: homeSegments,
+    base: p.home_kwh,
+  });
+  const gen = balanceGenerationSegments(p);
+  balanceCard(el("balance-generation"), {
+    title: "Erzeugt",
+    total: p.pv_kwh,
+    deltaText: balanceDeltaText(granularity, key, periods, today, (x) => x.pv_kwh),
+    segments: gen.segments,
+    base: gen.base,
+  });
+
+  const kpis = [
+    { title: "Autarkiegrad", value: fmtPercent(balanceAutarky(p)), hint: "Verbrauch ohne Netzbezug" },
+    { title: "Eigenverbrauch", value: fmtPercent(balanceSelfUse(p)), hint: "Anteil der Erzeugung, der nicht eingespeist wurde" },
+    { title: "Speicher geladen", value: fmtBalanceKwh(p.battery_charge_kwh), hint: "Energie in den Speicher" },
+    { title: "Speicher entladen", value: fmtBalanceKwh(p.battery_discharge_kwh), hint: "Energie aus dem Speicher" },
+  ];
+  el("balance-kpis").replaceChildren(
+    ...kpis.map((k) => {
+      const box = balanceEl("div", "sizing-kpi");
+      box.append(balanceEl("strong", null, k.title), balanceEl("span", "sizing-kpi-value", k.value), balanceEl("span", "muted", k.hint));
+      return box;
+    })
+  );
+}
+
+// Zeilen der Vergleichstabelle: im Jahresmodus alle Jahre, im Monatsmodus
+// alle Monate des gewaehlten Jahres und darunter derselbe Monat in den
+// anderen Jahren.
+function balanceTableGroups(periods, granularity, key) {
+  const keys = [...periods.keys()].sort();
+  if (granularity === "year") return [{ title: null, keys }];
+  const year = key.slice(0, 4);
+  const month = key.slice(5);
+  const groups = [{ title: null, keys: keys.filter((k) => k.startsWith(year + "-")) }];
+  const sameMonth = keys.filter((k) => k.endsWith("-" + month) && !k.startsWith(year + "-"));
+  if (sameMonth.length) {
+    groups.push({ title: `${BALANCE_MONTH_LONG[Number(month) - 1]} in anderen Jahren`, keys: sameMonth });
+  }
+  return groups;
+}
+
+function renderBalanceTable(periods, granularity, key, today) {
+  el("balance-compare-title").textContent =
+    granularity === "year" ? "Jahre im Vergleich" : `Monate ${key.slice(0, 4)} im Vergleich`;
+  const groups = balanceTableGroups(periods, granularity, key);
+  const shown = groups.flatMap((g) => g.keys);
+  const maxHome = Math.max(0, ...shown.map((k) => periods.get(k).home_kwh ?? 0));
+
+  const rows = [];
+  for (const group of groups) {
+    if (group.title) {
+      const tr = balanceEl("tr", "balance-row-group");
+      const td = balanceEl("td", null, group.title);
+      td.colSpan = 9;
+      tr.append(td);
+      rows.push(tr);
+    }
+    for (const k of group.keys) {
+      const p = periods.get(k);
+      const tr = balanceEl("tr", "balance-row");
+      tr.dataset.period = k;
+      tr.tabIndex = 0;
+      if (k === key) tr.classList.add("balance-row-active");
+      let label = granularity === "year" ? k : fmtMonth(k);
+      if (balanceIsRunning(granularity, k, today)) label += " (läuft)";
+      else if (p.days < p.days_total) label += " (lückenhaft)";
+      const mix = balanceEl("td", "balance-mix-col");
+      mix.append(
+        balanceBar(
+          BALANCE_HOME_PARTS.map((part) => ({ label: part.short, value: p[part.key], color: part.color })),
+          p.home_kwh,
+          maxHome ? (p.home_kwh ?? 0) / maxHome : 0
+        )
+      );
+      const cells = [
+        balanceEl("td", null, label),
+        balanceEl("td", null, fmtBalanceKwh(p.home_kwh)),
+        mix,
+        ...BALANCE_HOME_PARTS.map((part) => {
+          const td = balanceEl("td", null, fmtBalanceKwh(p[part.key]));
+          td.append(balanceEl("small", "muted", " " + fmtShare(p[part.key], p.home_kwh)));
+          return td;
+        }),
+        balanceEl("td", null, fmtPercent(balanceAutarky(p))),
+        balanceEl("td", "sizing-group-start", fmtBalanceKwh(p.pv_kwh)),
+        balanceEl("td", null, fmtBalanceKwh(p.feed_in_kwh)),
+      ];
+      tr.append(...cells);
+      rows.push(tr);
+    }
+  }
+  el("balance-body").replaceChildren(...rows);
+}
+
+function renderBalancePeriodSelect(keys, granularity, key) {
+  const select = el("balance-period");
+  select.replaceChildren(
+    ...[...keys].reverse().map((k) => {
+      const opt = document.createElement("option");
+      opt.value = k;
+      opt.textContent = balancePeriodLabel(granularity, k);
+      return opt;
+    })
+  );
+  select.value = key;
+  const index = keys.indexOf(key);
+  el("balance-prev").disabled = index <= 0;
+  el("balance-next").disabled = index >= keys.length - 1;
+}
+
+function renderEnergyBalance() {
+  const b = state.energyBalance;
+  const data = b.data;
+  for (const btn of document.querySelectorAll("#balance-granularity-buttons button")) {
+    btn.classList.toggle("active", btn.dataset.granularity === b.granularity);
+  }
+  const hasData = !!data?.months?.length;
+  el("balance-cards").classList.toggle("hidden", !hasData);
+  el("balance-kpis").classList.toggle("hidden", !hasData);
+  if (!hasData) {
+    el("balance-coverage").textContent = "Noch keine Messdaten vorhanden.";
+    el("balance-period").replaceChildren();
+    el("balance-body").replaceChildren();
+    return;
+  }
+  const periods = balancePeriods(data, b.granularity);
+  const keys = [...periods.keys()].sort();
+  if (!periods.has(b.period)) b.period = keys[keys.length - 1];
+  renderBalancePeriodSelect(keys, b.granularity, b.period);
+  renderBalanceDetail(periods, b.granularity, b.period, data.today);
+  renderBalanceTable(periods, b.granularity, b.period, data.today);
+}
+
+function setBalancePeriod(key) {
+  state.energyBalance.period = key;
+  renderEnergyBalance();
+}
+
+function setBalanceGranularity(granularity) {
+  const b = state.energyBalance;
+  if (b.granularity === granularity) return;
+  const months = (b.data?.months ?? []).map((m) => m.month);
+  if (granularity === "year") {
+    b.period = b.period?.slice(0, 4) ?? null;
+  } else {
+    // Beim Wechsel auf Monate: letzten Monat des gewaehlten Jahres zeigen.
+    const inYear = months.filter((m) => b.period && m.startsWith(b.period + "-"));
+    b.period = inYear[inYear.length - 1] ?? null;
+  }
+  b.granularity = granularity;
+  renderEnergyBalance();
+}
+
+function stepBalancePeriod(delta) {
+  const keys = [...el("balance-period").options].map((o) => o.value).reverse();
+  const next = keys[keys.indexOf(state.energyBalance.period) + delta];
+  if (next) setBalancePeriod(next);
+}
+
+function setupEnergyBalanceControls() {
+  el("balance-granularity-buttons").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-granularity]");
+    if (btn) setBalanceGranularity(btn.dataset.granularity);
+  });
+  el("balance-period").addEventListener("change", (e) => setBalancePeriod(e.target.value));
+  el("balance-prev").addEventListener("click", () => stepBalancePeriod(-1));
+  el("balance-next").addEventListener("click", () => stepBalancePeriod(1));
+  const body = el("balance-body");
+  body.addEventListener("click", (e) => {
+    const row = e.target.closest("tr.balance-row");
+    if (row) setBalancePeriod(row.dataset.period);
+  });
+  body.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const row = e.target.closest("tr.balance-row");
+    if (!row) return;
+    e.preventDefault();
+    setBalancePeriod(row.dataset.period);
+    body.querySelector(`tr[data-period="${row.dataset.period}"]`)?.focus();
+  });
+}
+
+async function refreshEnergyBalance() {
+  return withLoading(["#balance-cards"], async () => {
+    state.energyBalance.data = await fetchJson("/api/readings/energy-balance");
+    renderEnergyBalance();
   });
 }
 
@@ -3617,6 +4032,7 @@ function refreshEvaluationTab() {
     refreshDailyTotalsChart(),
     refreshHourlyCompareChart(),
     refreshBatterySizing(),
+    refreshEnergyBalance(),
   ]);
 }
 
@@ -3939,6 +4355,7 @@ async function init() {
   setupEvaluationSubView();
   setupPvDailyControls();
   setupSizingTable();
+  setupEnergyBalanceControls();
   setupDailyTotalsControls();
   setupYearCompareControls();
   setupBatterySocControls();
