@@ -930,3 +930,87 @@ def test_historical_error_calibrates_forecast_range(monkeypatch):
     assert expected == 1000.0
     assert low == 800.0
     assert high == 1200.0
+
+
+def _daylight_samples(days: int, *, start: datetime, forecast_factor: float = 1.0):
+    """Je Tag die Stunden 8-16 UTC mit wechselnder Strahlung. Die Leistung
+    richtet sich immer nach der ECHTEN Strahlung; forecast_factor verzerrt
+    nur die Strahlung, die im Wetterpunkt steht (eine systematisch falsche
+    Wettervorhersage)."""
+    samples = []
+    for day in range(days):
+        for hour in range(8, 17):
+            timestamp = start + timedelta(days=day, hours=hour)
+            true_ghi = 150 + ((day * 37 + hour * 53) % 600)
+            ghi = true_ghi * forecast_factor
+            samples.append(
+                TrainingPoint(
+                    WeatherPoint(
+                        timestamp=timestamp,
+                        shortwave_w_m2=ghi,
+                        direct_w_m2=ghi * 0.7,
+                        diffuse_w_m2=ghi * 0.3,
+                        temperature_c=15.0,
+                    ),
+                    true_ghi * 5,
+                )
+            )
+    return samples
+
+
+def test_choose_training_stays_on_actual_weather_until_enough_forecast_days():
+    from app.energy_forecast import FORECAST_TRAINING_MIN_DAYS, choose_training
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    actual = _daylight_samples(200, start=start)
+    forecast = _daylight_samples(
+        FORECAST_TRAINING_MIN_DAYS - 1,
+        start=start + timedelta(days=200 - FORECAST_TRAINING_MIN_DAYS + 1),
+        forecast_factor=0.5,
+    )
+
+    samples, profile = choose_training(actual, forecast)
+
+    assert samples is actual
+    assert profile.weather_basis == "ist"
+    assert profile.basis_comparison is None
+
+
+def test_choose_training_switches_when_forecast_weather_is_systematically_off():
+    """Sagt die Wettervorhersage dauerhaft nur halb so viel Strahlung voraus
+    wie tatsaechlich kommt, lernt nur das auf Vorhersage-Wetter trainierte
+    Modell diesen Fehler - es muss im Rueckvergleich gewinnen."""
+    from app.energy_forecast import choose_training
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    actual = _daylight_samples(200, start=start)
+    forecast = _daylight_samples(
+        90, start=start + timedelta(days=110), forecast_factor=0.5
+    )
+
+    samples, profile = choose_training(actual, forecast)
+
+    assert profile.weather_basis == "vorhersage"
+    comparison = profile.basis_comparison
+    assert comparison["vorhersage_error_percent"] < comparison["ist_error_percent"]
+    # Vorhersage-Stunden ersetzen das Ist-Wetter, aeltere Stunden bleiben.
+    assert len(samples) == len(actual)
+    by_time = {sample.weather.timestamp: sample for sample in samples}
+    assert by_time[forecast[0].weather.timestamp] is forecast[0]
+    assert by_time[actual[0].weather.timestamp] is actual[0]
+
+
+def test_choose_training_keeps_actual_weather_when_forecast_brings_no_gain():
+    """Ist die Wettervorhersage so gut wie das Ist-Wetter, gibt es keinen
+    Grund zu wechseln - der Vergleich wird aber protokolliert."""
+    from app.energy_forecast import choose_training
+
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    actual = _daylight_samples(200, start=start)
+    forecast = _daylight_samples(90, start=start + timedelta(days=110))
+
+    samples, profile = choose_training(actual, forecast)
+
+    assert samples is actual
+    assert profile.weather_basis == "ist"
+    assert profile.basis_comparison["validation_samples"] > 0

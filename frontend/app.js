@@ -714,7 +714,8 @@ async function refreshForecast() {
       : data.models;
     if (relevantModels?.length) {
       const modelText = relevantModels.map((model) => {
-        const method = model.method === "learned" ? "gelernt" : "Standard";
+        let method = model.method === "learned" ? "gelernt" : "Standard";
+        if (model.weather_basis === "vorhersage") method += " auf Vorhersage-Wetter";
         const error = model.validation_error_percent === null
           ? "noch ohne Rückvergleich"
           : `${model.validation_error_percent.toFixed(1)} % historischer Fehler`;

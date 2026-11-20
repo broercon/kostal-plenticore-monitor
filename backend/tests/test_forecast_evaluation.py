@@ -731,3 +731,29 @@ def test_save_forecast_predictions_reports_number_of_written_rows(client):
         {"wr1": "standard"},
         datetime(2026, 6, 2, 6, tzinfo=timezone.utc),
     ) == 0
+
+
+def test_load_forecast_weather_history_returns_stored_forecast_points(client):
+    from app.forecast_evaluation import load_forecast_weather_history, save_forecast_weather
+
+    point_time = datetime(2026, 6, 2, 13, tzinfo=timezone.utc)
+    save_forecast_weather(
+        52.0, 9.0, [_forecast_point(point_time, 500)],
+        datetime(2026, 6, 1, 21, tzinfo=timezone.utc),
+    )
+
+    points = load_forecast_weather_history(
+        52.0, 9.0,
+        datetime(2026, 6, 2, tzinfo=timezone.utc),
+        datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+    assert len(points) == 1
+    assert points[0].timestamp == point_time
+    assert points[0].shortwave_w_m2 == 500
+    assert points[0].wind_speed_ms == 3.0
+    # Anderer Standort: nichts.
+    assert load_forecast_weather_history(
+        48.0, 11.0,
+        datetime(2026, 6, 2, tzinfo=timezone.utc),
+        datetime(2026, 6, 3, tzinfo=timezone.utc),
+    ) == []

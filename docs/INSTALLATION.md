@@ -90,6 +90,17 @@ So lässt sich später nachvollziehen, warum eine Prognose danebenlag:
   `generated_at = forecast_predictions.updated_at`. Überholte Läufe werden
   automatisch gelöscht, es bleibt etwa ein Lauf pro Tag.
 
+Sobald 60 Tage Wetter-Vorhersage gesammelt sind
+(`energy_forecast.FORECAST_TRAINING_MIN_DAYS`), prüft jeder Prognoselauf
+zusätzlich, ob das Modell besser wird, wenn es auf Vorhersage- statt auf
+Ist-Wetter trainiert. Dafür sagen beide Varianten die jüngsten 20 % der
+gesammelten Stunden aus der damaligen Wetter-Vorhersage voraus, gelernt wird
+nur aus der Zeit davor. Die Vorhersage-Variante wird nur genommen, wenn ihr
+Fehler mindestens 1 % kleiner ist. Welche Variante gerade läuft und wie der
+Vergleich ausging, steht in `forecast_model_runs.weather_basis` und
+`basis_comparison`. Im Dashboard steht dann zusätzlich „auf
+Vorhersage-Wetter“ beim Modell. Es ist nichts einzustellen.
+
 Zusätzlich zum 30-Minuten-Takt wird die Prognose garantiert kurz nach
 Mitternacht (00:01 Uhr lokal) neu berechnet, unabhängig davon, wie frisch
 der bisherige Cache-Eintrag noch ist. Damit zeigen "Heute"/"Morgen" im

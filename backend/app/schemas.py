@@ -394,6 +394,8 @@ class ForecastModelOut(BaseModel):
     device_id: str
     device_name: str
     method: str
+    # "ist" oder "vorhersage", siehe energy_forecast.choose_training()
+    weather_basis: str = "ist"
     validation_samples: int
     validation_error_percent: float | None = None
 

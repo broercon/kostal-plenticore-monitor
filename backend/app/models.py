@@ -242,6 +242,14 @@ class ForecastModelRun(Base):
     training_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Mit welchem Wetter das Modell trainiert wurde: "ist" (nur weather_hourly)
+    # oder "vorhersage" (wo vorhanden, ersetzt die gespeicherte Wetter-
+    # Vorhersage das Ist-Wetter), siehe energy_forecast.choose_training().
+    weather_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="ist")
+    # Ergebnis des Rueckvergleichs beider Varianten ({validation_samples,
+    # ist_error_percent, vorhersage_error_percent}); None, solange noch zu
+    # wenige Vorhersage-Tage gesammelt sind.
+    basis_comparison: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class DailyEnergyCache(Base):

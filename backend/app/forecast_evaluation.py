@@ -206,6 +206,39 @@ def save_forecast_weather(
         session.close()
 
 
+def load_forecast_weather_history(
+    latitude: float, longitude: float, since: datetime, until: datetime
+) -> list:
+    """Gespeicherte Wetter-Vorhersagen (siehe save_forecast_weather) fuer
+    bereits vergangene Stunden - Trainingsgrundlage fuer
+    energy_forecast.choose_training(). Jede Zeile ist der letzte Stand vor
+    Beginn ihrer Stunde, also genau die Vorhersage, mit der die Prognose
+    damals gerechnet hat."""
+    from .forecast_weather import WeatherPoint
+
+    session = SessionLocal()
+    try:
+        rows = session.scalars(
+            select(ForecastWeatherSnapshot)
+            .where(
+                ForecastWeatherSnapshot.latitude == _round_coord(latitude),
+                ForecastWeatherSnapshot.longitude == _round_coord(longitude),
+                ForecastWeatherSnapshot.timestamp > _utc(since),
+                ForecastWeatherSnapshot.timestamp <= _utc(until),
+            )
+            .order_by(ForecastWeatherSnapshot.timestamp)
+        ).all()
+    finally:
+        session.close()
+    return [
+        WeatherPoint(
+            timestamp=_utc(row.timestamp),
+            **{field: getattr(row, field) for field in _WEATHER_FIELDS},
+        )
+        for row in rows
+    ]
+
+
 def save_model_runs(runs: list[dict], generated_at: datetime) -> None:
     """Speichert den Modellzustand je Wechselrichter (siehe
     ForecastModelRun) und raeumt danach alle Laeufe ab, auf die keine
