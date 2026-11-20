@@ -77,6 +77,19 @@ festen Uhrzeit (`FORECAST_FREEZE_TIME`, Standard 22:00 Uhr lokal am Vortag)
 endgültig festgeschrieben und danach nicht mehr verändert - unabhängig
 davon, ob die jeweilige Stunde selbst schon begonnen hat.
 
+Mit jeder festgeschriebenen Prognose bleiben auch ihre Eingaben erhalten.
+So lässt sich später nachvollziehen, warum eine Prognose danebenlag:
+
+- `forecast_weather_snapshots`: die Wetter-*Vorhersage* je Stunde, aus der
+  die Prognose berechnet wurde. Das spätere Ist-Wetter steht in
+  `weather_hourly` mit demselben Zeitstempel (Ende der Stunde), beide lassen
+  sich also direkt vergleichen.
+- `forecast_model_runs`: der Modellzustand je Wechselrichter (Methode,
+  gelernte Gewichte, Rückvergleichsfehler, Trainingszeitraum,
+  `MODEL_VERSION`). Verknüpft über `device_id` und
+  `generated_at = forecast_predictions.updated_at`. Überholte Läufe werden
+  automatisch gelöscht, es bleibt etwa ein Lauf pro Tag.
+
 Zusätzlich zum 30-Minuten-Takt wird die Prognose garantiert kurz nach
 Mitternacht (00:01 Uhr lokal) neu berechnet, unabhängig davon, wie frisch
 der bisherige Cache-Eintrag noch ist. Damit zeigen "Heute"/"Morgen" im

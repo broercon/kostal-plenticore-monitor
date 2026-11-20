@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -25,6 +25,12 @@ MIN_TRAINING_SAMPLES = 48
 BACKTEST_MIN_SAMPLES = 14 * 24
 BACKTEST_MIN_DAYLIGHT_SAMPLES = 24
 CACHE_TTL = timedelta(minutes=30)
+
+# Wird mit jedem gespeicherten Modelllauf abgelegt (ForecastModelRun). Von
+# Hand erhoehen, sobald sich die Rechenlogik aendert (Merkmale, Gewichte,
+# Nachbarsuche, Intervalle ...) - so laesst sich ein Sprung in der
+# Prognosegenauigkeit spaeter einer Code-Aenderung zuordnen.
+MODEL_VERSION = 1
 
 # Regularisierungsstaerke der Ridge-Regression in fit_distance_weights()
 # (auf standardisierten Merkmalen, siehe dort). Kein Gradientenabstieg
@@ -796,6 +802,8 @@ def _summarize(
     *,
     persist: bool = False,
     generated_at: datetime | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> dict:
     device_names = {device.id: device.name for device in settings.inverters}
     local_tz = ZoneInfo(settings.timezone_name)
@@ -827,13 +835,50 @@ def _summarize(
 
     generated_at = generated_at or datetime.now(timezone.utc)
     if persist:
-        from .forecast_evaluation import load_frozen_predictions, save_forecast_predictions
+        from .forecast_evaluation import (
+            load_frozen_predictions,
+            save_forecast_predictions,
+            save_forecast_weather,
+            save_model_runs,
+        )
 
-        save_forecast_predictions(
+        written = save_forecast_predictions(
             per_device_hour,
             {device_id: profile.method for device_id, profile in profiles.items()},
             generated_at,
         )
+        # Eingaben des Laufs mitspeichern, damit eine eingefrorene Prognose
+        # spaeter nachvollziehbar bleibt (siehe ForecastWeatherSnapshot/
+        # ForecastModelRun). Hat der Lauf keine einzige Prognose geschrieben
+        # (alles schon eingefroren), wuerde sein Modellzustand ohnehin sofort
+        # wieder aufgeraeumt - dann gar nicht erst speichern.
+        if latitude is not None and longitude is not None:
+            save_forecast_weather(latitude, longitude, forecast_weather, generated_at)
+        if written:
+            save_model_runs(
+                [
+                    {
+                        "device_id": device_id,
+                        "model_version": MODEL_VERSION,
+                        "method": profile.method,
+                        "weights": asdict(profile.weights),
+                        "validation_samples": profile.validation_samples,
+                        "validation_error_percent": profile.validation_error_percent,
+                        "interval_error_fraction": profile.interval_error_fraction,
+                        "training_samples": len(used_samples[device_id]),
+                        "training_start": min(
+                            sample.weather.timestamp for sample in used_samples[device_id]
+                        ),
+                        "training_end": max(
+                            sample.weather.timestamp for sample in used_samples[device_id]
+                        ),
+                        "latitude": latitude,
+                        "longitude": longitude,
+                    }
+                    for device_id, profile in profiles.items()
+                ],
+                generated_at,
+            )
         # Fuer bereits eingefrorene Zielstunden (siehe FORECAST_FREEZE_TIME)
         # den gespeicherten (nicht mehr den frischen live berechneten) Wert
         # verwenden, BEVOR daraus combined_hours/days gebaut werden - so
@@ -1026,6 +1071,8 @@ async def build_forecast() -> dict:
         forecast_weather,
         persist=True,
         generated_at=datetime.now(timezone.utc),
+        latitude=latitude,
+        longitude=longitude,
     )
 
 

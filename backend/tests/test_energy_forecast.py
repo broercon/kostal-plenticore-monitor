@@ -476,6 +476,49 @@ def test_summary_keeps_devices_separate_and_adds_total(monkeypatch):
     assert round(hour_wr1["expected_kw"] + hour_wr2["expected_kw"], 3) == hour["expected_kw"]
 
 
+def test_summarize_persists_forecast_weather_and_model_state(client, monkeypatch):
+    """Ein gespeicherter Lauf legt neben der Prognose auch die
+    Wetter-Vorhersage und den Modellzustand ab, damit sich die Prognose
+    spaeter nachvollziehen laesst."""
+    import app.energy_forecast as module
+    from app.database import SessionLocal
+    from app.models import ForecastModelRun, ForecastWeatherSnapshot
+
+    class Device:
+        def __init__(self, device_id, name):
+            self.id = device_id
+            self.name = name
+
+    monkeypatch.setattr(module.settings, "inverters", [Device("wr1", "Dach")])
+    training = {
+        "wr1": [
+            TrainingPoint(_weather(12, 600, day=(i % 27) + 1), 3000)
+            for i in range(MIN_TRAINING_SAMPLES)
+        ]
+    }
+    module._summarize(
+        training,
+        [_weather(13, 600, day=28)],
+        persist=True,
+        generated_at=datetime(2026, 6, 20, 6, tzinfo=timezone.utc),
+        latitude=52.0,
+        longitude=9.0,
+    )
+
+    session = SessionLocal()
+    try:
+        weather = session.query(ForecastWeatherSnapshot).one()
+        assert weather.shortwave_w_m2 == 600
+        run = session.query(ForecastModelRun).one()
+        assert run.device_id == "wr1"
+        assert run.model_version == module.MODEL_VERSION
+        assert run.method == "standard"
+        assert run.weights["ghi"] == module.DEFAULT_DISTANCE_WEIGHTS.ghi
+        assert run.training_samples == MIN_TRAINING_SAMPLES
+    finally:
+        session.close()
+
+
 def test_summarize_and_empty_result_report_configured_freeze_time(monkeypatch):
     """Das Frontend zeigt in der "Morgen"-Ansicht einen Hinweis, ab welcher
     Uhrzeit die Prognose fuer den Folgetag feststeht (siehe
